@@ -19,7 +19,7 @@ import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSett
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInfo;
-import nodomain.freeyourgadget.gadgetbridge.devices.cycling_sensor.db.CyclingSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.devices.CyclingSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.CyclingSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
@@ -27,9 +27,6 @@ import nodomain.freeyourgadget.gadgetbridge.entities.User;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.NotifyAction;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.ReadAction;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfoProfile;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
@@ -128,18 +125,15 @@ public class CyclingSensorSupport extends CyclingSensorBaseSupport {
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
-        BluetoothGattCharacteristic measurementCharacteristic =
-                getCharacteristic(UUID_CYCLING_SENSOR_CSC_MEASUREMENT);
+        builder.notify(UUID_CYCLING_SENSOR_CSC_MEASUREMENT, true);
 
-        builder.add(new NotifyAction(measurementCharacteristic, true));
-
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
         batteryCharacteristic = getCharacteristic(BatteryInfoProfile.UUID_CHARACTERISTIC_BATTERY_LEVEL);
 
         if(batteryCharacteristic != null){
-            builder.add(new ReadAction(batteryCharacteristic));
+            builder.read(batteryCharacteristic);
         }
 
         loadConfiguration();
@@ -149,8 +143,7 @@ public class CyclingSensorSupport extends CyclingSensorBaseSupport {
         return builder;
     }
 
-    private void handleMeasurementCharacteristic(BluetoothGattCharacteristic characteristic){
-        byte[] value = characteristic.getValue();
+    private void handleMeasurementCharacteristic(byte[] value){
         if(value == null || value.length < 7){
             logger.error("Measurement characteristic value length smaller than 7");
             return;
@@ -245,12 +238,10 @@ public class CyclingSensorSupport extends CyclingSensorBaseSupport {
     }
 
     @Override
-    public boolean onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-        byte[] value = characteristic.getValue();
-
+    public boolean onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
         if(characteristic.equals(batteryCharacteristic) && value != null && value.length == 1){
             GBDeviceEventBatteryInfo info = new GBDeviceEventBatteryInfo();
-            info.level = characteristic.getValue()[0];
+            info.level = value[0];
             handleGBDeviceEvent(info);
         }
 
@@ -258,9 +249,9 @@ public class CyclingSensorSupport extends CyclingSensorBaseSupport {
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
         if(characteristic.getUuid().equals(UUID_CYCLING_SENSOR_CSC_MEASUREMENT)){
-            handleMeasurementCharacteristic(characteristic);
+            handleMeasurementCharacteristic(value);
             return true;
         }
         return false;

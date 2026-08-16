@@ -24,7 +24,6 @@ import android.content.IntentFilter;
 import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.InputType;
-import android.widget.ArrayAdapter;
 import android.widget.Toast;
 
 import androidx.annotation.DrawableRes;
@@ -56,7 +55,9 @@ import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.AbstractPreferenceFragment;
+import nodomain.freeyourgadget.gadgetbridge.adapter.SimpleIconListAdapter;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.model.RunnableListIconItem;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiSettingsService;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiSmartProto;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
@@ -73,8 +74,6 @@ public class GarminRealtimeSettingsFragment extends AbstractPreferenceFragment {
     public static final String PREF_DEBUG = "garmin_rt_debug_mode";
 
     public static final int ROOT_SCREEN_ID = 36352;
-
-    static final String FRAGMENT_TAG = "GARMIN_REALTIME_SETTINGS_FRAGMENT";
 
     private GBDevice device;
     private int screenId = ROOT_SCREEN_ID;
@@ -300,18 +299,21 @@ public class GarminRealtimeSettingsFragment extends AbstractPreferenceFragment {
                     case 1: // list preference
                         pref = new ListPreference(activity);
                         final CharSequence[] entries = new String[entry.getTarget().getOptions().getOptionList().size()];
+                        final CharSequence[] values = new String[entry.getTarget().getOptions().getOptionList().size()];
                         int optionIndex = 0;
                         for (final GdiSettingsService.TargetOptionEntry option : entry.getTarget().getOptions().getOptionList()) {
-                            entries[optionIndex++] = option.getTitle().getText();
+                            entries[optionIndex] = option.getTitle().getText().replace("%", "%%");
+                            values[optionIndex] = option.getTitle().getText();
+                            optionIndex++;
                         }
                         final ListPreference listPreference = (ListPreference) pref;
                         listPreference.setEntries(entries);
-                        listPreference.setEntryValues(entries);
-                        listPreference.setValue(entries[Objects.requireNonNull(state).getSummary().getValueList().getIndex()].toString());
+                        listPreference.setEntryValues(values);
+                        listPreference.setValue(values[Objects.requireNonNull(state).getSummary().getValueList().getIndex()].toString());
                         listPreference.setOnPreferenceChangeListener((preference, newValue) -> {
                             int newValueIdx = -1;
-                            for (int i = 0; i < entries.length; i++) {
-                                if (entries[i].equals(newValue.toString())) {
+                            for (int i = 0; i < values.length; i++) {
+                                if (values[i].equals(newValue.toString())) {
                                     newValueIdx = i;
                                     break;
                                 }
@@ -577,23 +579,50 @@ public class GarminRealtimeSettingsFragment extends AbstractPreferenceFragment {
                         break;
                     case 15: // sortable + delete
                         // Add all sortable items and then continue
-                        final String moveUpStr = activity.getString(R.string.widget_move_up);
-                        final String moveDownStr = activity.getString(R.string.widget_move_down);
-                        final String deleteStr = activity.getString(R.string.appmananger_app_delete);
-
                         for (int i = 0; i < entry.getSortOptions().getEntriesCount(); i++) {
                             final GdiSettingsService.SortEntry sortEntry = entry.getSortOptions().getEntries(i);
-                            final List<String> sortableOptions = new ArrayList<>(3);
+                            final Preference sortPref = new Preference(activity);
+                            final int iFinal = i;
+
+                            final List<RunnableListIconItem> sortableOptions = new ArrayList<>(3);
                             if (i > 0) {
-                                sortableOptions.add(moveUpStr);
+                                sortableOptions.add(new RunnableListIconItem(activity.getString(R.string.widget_move_up), R.drawable.ic_arrow_upward, () -> {
+                                    sortPref.setEnabled(false);
+                                    sendChangeRequest(
+                                            GdiSettingsService.ChangeRequest.newBuilder()
+                                                    .setScreenId(screenId)
+                                                    .setEntryId(sortEntry.getId())
+                                                    .setPosition(GdiSettingsService.ChangeRequest.Position.newBuilder()
+                                                            .setIndex(iFinal - 1)
+                                                    )
+                                    );
+                                }));
                             }
                             if (i < entry.getSortOptions().getEntriesCount() - 1) {
-                                sortableOptions.add(moveDownStr);
+                                sortableOptions.add(new RunnableListIconItem(activity.getString(R.string.widget_move_down), R.drawable.ic_arrow_downward, () -> {
+                                    sortPref.setEnabled(false);
+                                    sendChangeRequest(
+                                            GdiSettingsService.ChangeRequest.newBuilder()
+                                                    .setScreenId(screenId)
+                                                    .setEntryId(sortEntry.getId())
+                                                    .setPosition(GdiSettingsService.ChangeRequest.Position.newBuilder()
+                                                            .setIndex(iFinal + 1)
+                                                    )
+                                    );
+                                }));
                             }
-                            sortableOptions.add(deleteStr);
-                            final ArrayAdapter<String> sortOptionsAdapter = new ArrayAdapter<>(activity, android.R.layout.simple_list_item_1, sortableOptions);
-                            final int iFinal = i;
-                            final Preference sortPref = new Preference(activity);
+                            sortableOptions.add(new RunnableListIconItem(activity.getString(R.string.appmananger_app_delete), R.drawable.ic_delete, () -> {
+                                sortPref.setEnabled(false);
+                                sendChangeRequest(
+                                        GdiSettingsService.ChangeRequest.newBuilder()
+                                                .setScreenId(screenId)
+                                                .setEntryId(sortEntry.getId())
+                                                .setPosition(GdiSettingsService.ChangeRequest.Position.newBuilder()
+                                                        .setDelete(true)
+                                                )
+                                );
+                            }));
+                            final SimpleIconListAdapter sortOptionsAdapter = new SimpleIconListAdapter(activity, sortableOptions);
                             sortPref.setTitle(sortEntry.getTitle().getText());
                             sortPref.setPersistent(false);
                             sortPref.setIconSpaceReserved(false);
@@ -601,40 +630,8 @@ public class GarminRealtimeSettingsFragment extends AbstractPreferenceFragment {
                             sortPref.setOnPreferenceClickListener(preference -> {
                                 new MaterialAlertDialogBuilder(activity)
                                         .setTitle(sortPref.getTitle())
-                                        .setAdapter(sortOptionsAdapter, (dialogInterface, j) -> {
-                                            final String option = sortableOptions.get(j);
-                                            int moveOffset = 0;
-                                            if (option.equals(moveUpStr)) {
-                                                moveOffset = -1;
-                                            } else if (option.equals(moveDownStr)) {
-                                                moveOffset = 1;
-                                            }
-
-                                            if (moveOffset != 0) {
-                                                sortPref.setEnabled(false);
-                                                sendChangeRequest(
-                                                        GdiSettingsService.ChangeRequest.newBuilder()
-                                                                .setScreenId(screenId)
-                                                                .setEntryId(sortEntry.getId())
-                                                                .setPosition(GdiSettingsService.ChangeRequest.Position.newBuilder()
-                                                                        .setIndex(iFinal + moveOffset)
-                                                                )
-                                                );
-                                                return;
-                                            }
-
-                                            if (option.equals(deleteStr)) {
-                                                sortPref.setEnabled(false);
-                                                sendChangeRequest(
-                                                        GdiSettingsService.ChangeRequest.newBuilder()
-                                                                .setScreenId(screenId)
-                                                                .setEntryId(sortEntry.getId())
-                                                                .setPosition(GdiSettingsService.ChangeRequest.Position.newBuilder()
-                                                                        .setDelete(true)
-                                                                )
-                                                );
-                                            }
-                                        }).setNegativeButton(android.R.string.cancel, null)
+                                        .setAdapter(sortOptionsAdapter, (dialogInterface, j) -> sortableOptions.get(j).getAction().run())
+                                        .setNegativeButton(android.R.string.cancel, null)
                                         .create().show();
                                 return true;
                             });
@@ -690,7 +687,7 @@ public class GarminRealtimeSettingsFragment extends AbstractPreferenceFragment {
             }
 
             if (state != null && !StringUtils.isEmpty(state.getSummary().getTitle().getText())) {
-                pref.setSummary(state.getSummary().getTitle().getText());
+                pref.setSummary(state.getSummary().getTitle().getText().replace("%", "%%"));
             }
 
             if (state != null && state.hasState()) {
@@ -775,7 +772,7 @@ public class GarminRealtimeSettingsFragment extends AbstractPreferenceFragment {
                 //
                 // Main menu
                 case 20: // Garmin Pay
-                    return 0;
+                    return R.drawable.ic_credit_card;
                 case 21: // Text Responses
                     return R.drawable.ic_reply;
                 case 4: // Clocks
@@ -835,6 +832,15 @@ public class GarminRealtimeSettingsFragment extends AbstractPreferenceFragment {
                 // Sortable screens (glances, apps, etc)
                 case 33:
                     return R.drawable.ic_add_gray;
+                case 35: // inReach tracking
+                    return R.drawable.ic_share_location;
+                case 36: // inReach remote
+                    return R.drawable.ic_settings_remote;
+                case 37: // sound settings
+                    return R.drawable.ic_notifications_active;
+                default:
+                    LOG.info("no icon mapping found for: {}", entry.getIcon());
+                    return 0;
             }
         }
 

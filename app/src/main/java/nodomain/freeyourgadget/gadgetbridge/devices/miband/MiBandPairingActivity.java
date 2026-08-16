@@ -52,7 +52,6 @@ import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
 import nodomain.freeyourgadget.gadgetbridge.util.AndroidUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.BondingInterface;
 import nodomain.freeyourgadget.gadgetbridge.util.BondingUtil;
@@ -154,7 +153,7 @@ public class MiBandPairingActivity extends AbstractGBActivity implements Bonding
                     BondingUtil.attemptToFirstConnect(getCurrentTarget().getDevice());
                 })
                 .setPositiveButton(getContext().getString(R.string.discovery_yes_pair), (dialog, which) -> {
-                    BondingUtil.tryBondThenComplete(thiz, deviceCandidate.getDevice(), deviceCandidate.getMacAddress());
+                    BondingUtil.tryBondThenComplete(thiz, deviceCandidate.getDevice());
                 })
                 .show();
     }
@@ -189,7 +188,7 @@ public class MiBandPairingActivity extends AbstractGBActivity implements Bonding
                     DBHelper.getDevice(gbDevice, daoSession);
                     gbDevice.sendDeviceUpdateIntent(this);
                 } catch (final Exception e) {
-                    GB.log("Error accessing database", GB.ERROR, e);
+                    LOG.error("Error accessing database", e);
                 }
             }
             Intent intent = new Intent(this, ControlCenterv2.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -207,11 +206,6 @@ public class MiBandPairingActivity extends AbstractGBActivity implements Bonding
     protected void onResume() {
         registerBroadcastReceivers();
         super.onResume();
-    }
-
-    @Override
-    public String getMacAddress() {
-        return deviceCandidate.getDevice().getAddress();
     }
 
     @Override
@@ -250,16 +244,19 @@ public class MiBandPairingActivity extends AbstractGBActivity implements Bonding
         super.onPause();
     }
 
+    @Override
     public void unregisterBroadcastReceivers() {
         AndroidUtils.safeUnregisterBroadcastReceiver(LocalBroadcastManager.getInstance(this), pairingReceiver);
         AndroidUtils.safeUnregisterBroadcastReceiver(this, bondingReceiver);
     }
 
+    @Override
     public void registerBroadcastReceivers() {
         LocalBroadcastManager.getInstance(this).registerReceiver(pairingReceiver, new IntentFilter(GBDevice.ACTION_DEVICE_CHANGED));
         ContextCompat.registerReceiver(this, bondingReceiver, new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED), ContextCompat.RECEIVER_EXPORTED);
     }
 
+    @Override
     public Context getContext() {
         return this;
     }

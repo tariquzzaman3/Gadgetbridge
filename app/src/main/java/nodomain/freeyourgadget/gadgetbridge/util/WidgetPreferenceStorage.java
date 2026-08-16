@@ -21,6 +21,8 @@ import android.content.SharedPreferences;
 import android.preference.PreferenceManager;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.slf4j.Logger;
@@ -36,6 +38,7 @@ public class WidgetPreferenceStorage {
     boolean isWidgetInPrefs = false;
     String PREFS_WIDGET_SETTINGS = "widget_settings";
 
+    @Nullable
     public String getSavedDeviceAddress(Context context, int appWidgetId) {
         String savedDeviceAddress = null;
 
@@ -139,19 +142,20 @@ public class WidgetPreferenceStorage {
         editor.apply();
     }
 
-    public void showAppWidgetsPrefs(Context context) {
+    public String getAppWidgetsPrefs(Context context) {
         SharedPreferences sharedPrefs = PreferenceManager.getDefaultSharedPreferences(context);
         String savedWidgetsPreferencesData = sharedPrefs.getString(PREFS_WIDGET_SETTINGS, "");
-        JSONArray savedWidgetsPreferencesDataArray = null;
-        try {
-            savedWidgetsPreferencesDataArray = new JSONArray(savedWidgetsPreferencesData);
-        } catch (
-                JSONException e) {
-            LOG.error(e.getMessage());
+        if (savedWidgetsPreferencesData.isBlank()) {
+            return "";
         }
-        GB.toast("Saved app widget preferences: " + savedWidgetsPreferencesDataArray, Toast.LENGTH_SHORT, GB.INFO);
+        try {
+            return new JSONArray(savedWidgetsPreferencesData).toString();
+        } catch (JSONException e) {
+            return e.getMessage();
+        }
     }
 
+    @Nullable
     public GBDevice getDeviceForWidget(int appWidgetId) {
         Context context = GBApplication.getContext();
         if (!(context instanceof GBApplication)) {
@@ -166,6 +170,7 @@ public class WidgetPreferenceStorage {
         return null;
     }
 
+    @Nullable
     private GBDevice getDeviceByMAC(Context appContext, String HwAddress) {
         GBApplication gbApp = (GBApplication) appContext;
         List<? extends GBDevice> devices = gbApp.getDeviceManager().getDevices();

@@ -22,6 +22,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -48,7 +49,7 @@ public class StringUtils {
 
     /**
      * Truncate a string to a certain maximum number of bytes, assuming UTF-8 encoding.
-     * Does not include the null terminator. Due to multi-byte characters, it's possible
+     * Does not include the null terminator. Due to multibyte characters, it's possible
      * that the resulting array is smaller than len, but never larger.
      */
     public static byte[] truncateToBytes(final String s, final int len) {
@@ -56,15 +57,50 @@ public class StringUtils {
             return new byte[]{};
         }
 
-        int i = 0;
-        while (++i < s.length()) {
-            final String subString = s.substring(0, i + 1);
-            if (subString.getBytes(StandardCharsets.UTF_8).length > len) {
-                break;
-            }
+        return truncateToBytes(s, len, "").getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Truncate a string to a certain maximum number of bytes, assuming UTF-8 encoding, appending
+     * suffix if truncation occurs.
+     */
+    public static String truncateToBytes(final String s, final int maxBytes, final String suffix) {
+        if (StringUtils.isNullOrEmpty(s)) {
+            return s;
         }
 
-        return s.substring(0, i).getBytes(StandardCharsets.UTF_8);
+        if (maxBytes <= 0) {
+            return "";
+        }
+
+        if (s.getBytes(StandardCharsets.UTF_8).length <= maxBytes) {
+            return s;
+        }
+
+        final int suffixLength = suffix.getBytes(StandardCharsets.UTF_8).length;
+
+        if (maxBytes < suffixLength) {
+            // No room left for the suffix, so truncate without it.
+            return s.substring(0, longestPrefixCharCount(s, maxBytes));
+        }
+
+        return s.substring(0, longestPrefixCharCount(s, maxBytes - suffixLength)) + suffix;
+    }
+
+    // Longest prefix of s (in chars) whose UTF-8 encoding fits byteBudget, without splitting a surrogate pair.
+    private static int longestPrefixCharCount(final String s, final int byteBudget) {
+        int i = 0;
+        while (i < s.length()) {
+            int next = i + 1;
+            if (Character.isHighSurrogate(s.charAt(i)) && next < s.length() && Character.isLowSurrogate(s.charAt(next))) {
+                next++;
+            }
+            if (s.substring(0, next).getBytes(StandardCharsets.UTF_8).length > byteBudget) {
+                break;
+            }
+            i = next;
+        }
+        return i;
     }
 
     public static int utf8ByteLength(String string, int length) {
@@ -222,5 +258,26 @@ public class StringUtils {
             result.append(parts[index].charAt(0)).append(".");
         }
         return result.toString();
+    }
+
+    public static byte[] truncateUtf16BE(final String str, final int maxBytes) {
+        final byte[] utf16Bytes = str.getBytes(StandardCharsets.UTF_16BE);
+
+        // UTF-16 code units are 2 bytes, so truncate at even boundary
+        int limit = Math.min(maxBytes, utf16Bytes.length);
+        if (limit % 2 != 0) {
+            limit -= 1;
+        }
+
+        // Check for surrogate pair at the cut point
+        int highByte = utf16Bytes[limit - 2] & 0xFF;
+        int lowByte = utf16Bytes[limit - 1] & 0xFF;
+        int lastCodeUnit = (highByte << 8) | lowByte;
+        // If it's a high surrogate (0xD800 to 0xDBFF), remove 2 more bytes to drop the full pair
+        if (lastCodeUnit >= 0xD800 && lastCodeUnit <= 0xDBFF) {
+            limit -= 2;
+        }
+
+        return Arrays.copyOfRange(utf16Bytes, 0, limit);
     }
 }

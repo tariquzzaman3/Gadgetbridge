@@ -1,4 +1,4 @@
-/*  Copyright (C) 2023-2024 Andreas Shimokawa, José Rebelo, Yoran Vulker
+/*  Copyright (C) 2023-2026 Andreas Shimokawa, José Rebelo, Yoran Vulker
 
     This file is part of Gadgetbridge.
 
@@ -17,32 +17,31 @@
 package nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi;
 
 
-import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_FORCE_CONNECTION_TYPE;
-
 import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 import android.location.Location;
 import android.net.Uri;
-import android.os.Handler;
-import android.widget.Toast;
+import android.os.Bundle;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.sql.Timestamp;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Calendar;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
-import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventUpdatePreferences;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.xiaomi.XiaomiCoordinator;
@@ -57,12 +56,11 @@ import nodomain.freeyourgadget.gadgetbridge.model.MusicSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.Reminder;
-import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.WorldClock;
+import nodomain.freeyourgadget.gadgetbridge.externalevents.sleepasandroid.SleepAsAndroidAction;
 import nodomain.freeyourgadget.gadgetbridge.proto.xiaomi.XiaomiProto;
 import nodomain.freeyourgadget.gadgetbridge.service.AbstractDeviceSupport;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.activity.XiaomiActivityFileId;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.activity.XiaomiActivityParser;
+import nodomain.freeyourgadget.gadgetbridge.service.SleepAsAndroidSender;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.AbstractXiaomiService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiCalendarService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiDataUploadService;
@@ -70,11 +68,12 @@ import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.Xiao
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiMusicService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiNotificationService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiPhonebookService;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiRpkService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiScheduleService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiSystemService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiWatchfaceService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.services.XiaomiWeatherService;
-import nodomain.freeyourgadget.gadgetbridge.util.FileUtils;
+import nodomain.freeyourgadget.gadgetbridge.util.AlarmUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
@@ -92,11 +91,16 @@ public class XiaomiSupport extends AbstractDeviceSupport {
     private final XiaomiWatchfaceService watchfaceService = new XiaomiWatchfaceService(this);
     private final XiaomiDataUploadService dataUploadService = new XiaomiDataUploadService(this);
     private final XiaomiPhonebookService phonebookService = new XiaomiPhonebookService(this);
+    private final XiaomiRpkService rpkService = new XiaomiRpkService(this);
+
 
     private String cachedFirmwareVersion = null;
     private XiaomiConnectionSupport connectionSupport = null;
+    private SleepAsAndroidSender sleepAsAndroidSender;
+    private ScheduledExecutorService saaHintScheduler;
+    private ScheduledExecutorService saaAlarmScheduler;
 
-    private final Map<Integer, AbstractXiaomiService> mServiceMap = new LinkedHashMap<Integer, AbstractXiaomiService>() {{
+    private final Map<Integer, AbstractXiaomiService> mServiceMap = new LinkedHashMap<>() {{
         put(XiaomiAuthService.COMMAND_TYPE, authService);
         put(XiaomiMusicService.COMMAND_TYPE, musicService);
         put(XiaomiHealthService.COMMAND_TYPE, healthService);
@@ -108,6 +112,7 @@ public class XiaomiSupport extends AbstractDeviceSupport {
         put(XiaomiWatchfaceService.COMMAND_TYPE, watchfaceService);
         put(XiaomiDataUploadService.COMMAND_TYPE, dataUploadService);
         put(XiaomiPhonebookService.COMMAND_TYPE, phonebookService);
+        put(XiaomiRpkService.COMMAND_TYPE, rpkService);
     }};
 
     @Override
@@ -123,37 +128,18 @@ public class XiaomiSupport extends AbstractDeviceSupport {
         }
     }
 
-    private DeviceCoordinator.ConnectionType getForcedConnectionTypeFromPrefs() {
-        final String connTypeAuto = getContext().getString(R.string.pref_force_connection_type_auto_value);
-        String connTypePref = getDevicePrefs().getString(PREF_FORCE_CONNECTION_TYPE, connTypeAuto);
-
-        if (getContext().getString(R.string.pref_force_connection_type_ble_value).equals(connTypePref))
-            return DeviceCoordinator.ConnectionType.BLE;
-
-        if (getContext().getString(R.string.pref_force_connection_type_bt_classic_value).equals(connTypePref))
-            return DeviceCoordinator.ConnectionType.BT_CLASSIC;
-
-        // either set to default, unknown option selected, or has not been set
-        return DeviceCoordinator.ConnectionType.BOTH;
-    }
-
     private XiaomiConnectionSupport createConnectionSpecificSupport() {
         DeviceCoordinator.ConnectionType connType = getCoordinator().getConnectionType();
 
         if (connType == DeviceCoordinator.ConnectionType.BOTH) {
-            connType = getForcedConnectionTypeFromPrefs();
+            connType = getDevicePrefs().getForcedConnectionTypeFromPrefs();
         }
 
-        switch (connType) {
-            case BLE:
-            case BOTH:
-                return new XiaomiBleSupport(this);
-            case BT_CLASSIC:
-                return new XiaomiSppSupport(this);
-        }
+        return switch (connType) {
+            case BLE, BOTH -> new XiaomiBleSupport(this);
+            case BT_CLASSIC -> new XiaomiSppSupport(this);
+        };
 
-        LOG.error("Cannot create connection-specific support, unhanded {} connection type", connType);
-        return null;
     }
 
     public XiaomiConnectionSupport getConnectionSpecificSupport() {
@@ -175,6 +161,10 @@ public class XiaomiSupport extends AbstractDeviceSupport {
 
     @Override
     public void dispose() {
+        for (final AbstractXiaomiService service : mServiceMap.values()) {
+            service.dispose();
+        }
+
         if (this.connectionSupport != null) {
             XiaomiConnectionSupport connectionSupport = this.connectionSupport;
             this.connectionSupport = null;
@@ -182,6 +172,7 @@ public class XiaomiSupport extends AbstractDeviceSupport {
         }
     }
 
+    @Override
     public void setContext(final GBDevice device, final BluetoothAdapter adapter, final Context context) {
         // FIXME unsetDynamicState unsets the fw version, which causes problems..
         if (device.getFirmwareVersion() != null) {
@@ -197,6 +188,15 @@ public class XiaomiSupport extends AbstractDeviceSupport {
         if (getConnectionSpecificSupport() != null) {
             getConnectionSpecificSupport().setContext(device, adapter, context);
         }
+
+        if (device.getDeviceCoordinator().supportsSleepAsAndroid(device)) {
+            sleepAsAndroidSender = new SleepAsAndroidSender(device);
+            healthService.setSleepAsAndroidSender(sleepAsAndroidSender);
+        }
+    }
+
+    public SleepAsAndroidSender getSleepAsAndroidSender() {
+        return sleepAsAndroidSender;
     }
 
     public String getCachedFirmwareVersion() {
@@ -252,16 +252,15 @@ public class XiaomiSupport extends AbstractDeviceSupport {
     public void onSetTime() {
         systemService.setCurrentTime();
 
-        if (getCoordinator().supportsCalendarEvents()) {
+        if (getCoordinator().supportsCalendarEvents(getDevice())) {
             // TODO this should not be done here
             calendarService.syncCalendar();
         }
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
         //sendCommand("test new function", 2, 29);
-        parseAllActivityFilesFromStorage();
     }
 
     @Override
@@ -330,7 +329,7 @@ public class XiaomiSupport extends AbstractDeviceSupport {
     }
 
     @Override
-    public void onInstallApp(final Uri uri) {
+    public void onInstallApp(final Uri uri, @NonNull final Bundle options) {
         final XiaomiFWHelper fwHelper = new XiaomiFWHelper(uri, getContext());
 
         if (!fwHelper.isValid()) {
@@ -342,6 +341,8 @@ public class XiaomiSupport extends AbstractDeviceSupport {
             systemService.installFirmware(fwHelper);
         } else if (fwHelper.isWatchface()) {
             watchfaceService.installWatchface(fwHelper);
+        }else if (fwHelper.isRpk()) {
+            rpkService.installRpk(fwHelper);
         } else {
             LOG.warn("Unknown fwhelper for {}", uri);
         }
@@ -350,6 +351,7 @@ public class XiaomiSupport extends AbstractDeviceSupport {
     @Override
     public void onAppInfoReq() {
         watchfaceService.requestWatchfaceList();
+        rpkService.requestRpkList();
     }
 
     @Override
@@ -362,6 +364,7 @@ public class XiaomiSupport extends AbstractDeviceSupport {
     @Override
     public void onAppDelete(final UUID uuid) {
         watchfaceService.deleteWatchface(uuid);
+        rpkService.deleteRpk(uuid);
     }
 
     @Override
@@ -405,8 +408,8 @@ public class XiaomiSupport extends AbstractDeviceSupport {
     }
 
     @Override
-    public void onSendWeather(final ArrayList<WeatherSpec> weatherSpecs) {
-        weatherService.onSendWeather(weatherSpecs);
+    public void onSendWeather() {
+        weatherService.onSendWeather();
     }
 
     @Override
@@ -424,7 +427,7 @@ public class XiaomiSupport extends AbstractDeviceSupport {
 
         getConnectionSpecificSupport().onAuthSuccess();
 
-        if (GBApplication.getPrefs().getBoolean("datetime_synconconnect", true)) {
+        if (GBApplication.getPrefs().syncTime()) {
             systemService.setCurrentTime();
         }
 
@@ -459,116 +462,140 @@ public class XiaomiSupport extends AbstractDeviceSupport {
         return this.healthService;
     }
 
+    public XiaomiRpkService getRpkService() {
+        return this.rpkService;
+    }
+
+    public XiaomiWatchfaceService getWatchfaceService() {
+        return this.watchfaceService;
+    }
+
+    @Override
+    public void onSleepAsAndroidAction(final String action, final Bundle extras) {
+        if (sleepAsAndroidSender == null) {
+            LOG.warn("SaA sender not initialized, dropping {}", action);
+            return;
+        }
+        if (!gbDevice.isInitialized()) {
+            LOG.warn("Device not initialized, dropping SaA action {}", action);
+            return;
+        }
+        try {
+            sleepAsAndroidSender.validateAction(action);
+        } catch (UnsupportedOperationException e) {
+            return;
+        }
+        switch (action) {
+            case SleepAsAndroidAction.CHECK_CONNECTED:
+                sleepAsAndroidSender.confirmConnected();
+                break;
+            case SleepAsAndroidAction.START_TRACKING:
+                healthService.startRawSensor();
+                sleepAsAndroidSender.startTracking();
+                break;
+            case SleepAsAndroidAction.STOP_TRACKING:
+                healthService.stopRawSensor();
+                sleepAsAndroidSender.stopTracking();
+                break;
+            case SleepAsAndroidAction.SET_PAUSE: {
+                long pauseTimestamp = extras.getLong("TIMESTAMP");
+                long delay = pauseTimestamp > 0 ? pauseTimestamp - System.currentTimeMillis() : 0;
+                sleepAsAndroidSender.pauseTracking(delay);
+                break;
+            }
+            case SleepAsAndroidAction.SET_SUSPENDED: {
+                boolean suspended = extras.getBoolean("SUSPENDED", false);
+                sleepAsAndroidSender.pauseTracking(suspended);
+                break;
+            }
+            case SleepAsAndroidAction.SET_BATCH_SIZE:
+                sleepAsAndroidSender.setBatchSize(extras.getLong("SIZE", 12L));
+                break;
+            case SleepAsAndroidAction.HINT:
+                triggerSleepAsAndroidHint(extras.getInt("REPEAT", 1));
+                break;
+            case SleepAsAndroidAction.SHOW_NOTIFICATION: {
+                NotificationSpec spec = new NotificationSpec();
+                spec.title = extras.getString("TITLE");
+                spec.body = extras.getString("TEXT");
+                notificationService.onNotification(spec);
+                break;
+            }
+            case SleepAsAndroidAction.UPDATE_ALARM:
+                setSleepAsAndroidAlarm(extras.getLong("TIMESTAMP"));
+                break;
+            case SleepAsAndroidAction.START_ALARM:
+                scheduleSleepAsAndroidAlarmVibration(extras.getInt("DELAY", 60000));
+                break;
+            case SleepAsAndroidAction.STOP_ALARM:
+                cancelSleepAsAndroidAlarmVibration();
+                break;
+            default:
+                LOG.warn("Received unsupported SaA action: {}", action);
+                break;
+        }
+    }
+
+    private void setSleepAsAndroidAlarm(long alarmTimestamp) {
+        Calendar calendar = Calendar.getInstance();
+        calendar.setTimeInMillis(new Timestamp(alarmTimestamp).getTime());
+        Alarm alarm = AlarmUtils.createSingleShot(SleepAsAndroidSender.getAlarmSlot(), false, false, calendar);
+        ArrayList<Alarm> alarms = new ArrayList<>(1);
+        alarms.add(alarm);
+        GBApplication.deviceService(gbDevice).onSetAlarms(alarms);
+    }
+
+    private void triggerSleepAsAndroidHint(int repeat) {
+        if (repeat <= 0) return;
+        if (saaHintScheduler != null) {
+            saaHintScheduler.shutdownNow();
+        }
+        saaHintScheduler = Executors.newSingleThreadScheduledExecutor();
+        final int repeats = repeat;
+        saaHintScheduler.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    for (int i = 0; i < repeats; i++) {
+                        systemService.onFindWatch(true);
+                        Thread.sleep(500);
+                        systemService.onFindWatch(false);
+                        if (i + 1 < repeats) Thread.sleep(300);
+                    }
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+    }
+
+    private void scheduleSleepAsAndroidAlarmVibration(int delayMs) {
+        cancelSleepAsAndroidAlarmVibration();
+        if (delayMs == -1) return;
+        saaAlarmScheduler = Executors.newSingleThreadScheduledExecutor();
+        saaAlarmScheduler.schedule(new Runnable() {
+            @Override
+            public void run() {
+                triggerSleepAsAndroidHint(3);
+            }
+        }, Math.max(0, delayMs), TimeUnit.MILLISECONDS);
+    }
+
+    private void cancelSleepAsAndroidAlarmVibration() {
+        if (saaAlarmScheduler != null) {
+            saaAlarmScheduler.shutdownNow();
+            saaAlarmScheduler = null;
+        }
+        if (saaHintScheduler != null) {
+            saaHintScheduler.shutdownNow();
+            saaHintScheduler = null;
+        }
+        systemService.onFindWatch(false);
+    }
+
     @Override
     public String customStringFilter(final String inputString) {
         return StringUtils.replaceEach(inputString, EMOJI_SOURCE, EMOJI_TARGET);
-    }
-
-    boolean parsingActivityFilesFromStorage = false;
-
-    private void parseAllActivityFilesFromStorage() {
-        if (parsingActivityFilesFromStorage) {
-            GB.toast(getContext(), "Already parsing!", Toast.LENGTH_LONG, GB.ERROR);
-            return;
-        }
-
-        parsingActivityFilesFromStorage = true;
-
-        LOG.info("Parsing all activity files from storage");
-
-        final File[] activityFiles;
-        try {
-            final File externalFilesDir = getCoordinator().getWritableExportDirectory(getDevice());
-            final File exportDir = new File(externalFilesDir, "rawFetchOperations");
-
-            if (!exportDir.exists() || !exportDir.isDirectory()) {
-                LOG.error("export directory {} not found", exportDir);
-                GB.toast(getContext(), "export directory " + exportDir + " not found", Toast.LENGTH_LONG, GB.ERROR);
-                return;
-            }
-
-            activityFiles = exportDir.listFiles((dir, name) -> name.startsWith("xiaomi_"));
-            if (activityFiles == null) {
-                LOG.error("activityFiles is null for {}", exportDir);
-                GB.toast(getContext(), "activityFiles is null for " + exportDir, Toast.LENGTH_LONG, GB.ERROR);
-                return;
-            }
-            if (activityFiles.length == 0) {
-                LOG.error("No activity files found in {}", exportDir);
-                GB.toast(getContext(), "No activity files found in " + exportDir, Toast.LENGTH_LONG, GB.ERROR);
-                return;
-            }
-        } catch (final Exception e) {
-            LOG.error("Failed to parse from storage", e);
-            GB.toast(getContext(), "Failed to parse from storage", Toast.LENGTH_LONG, GB.ERROR, e);
-            return;
-        }
-
-        GB.toast(getContext(), "Check notification for progress", Toast.LENGTH_LONG, GB.INFO);
-        GB.updateTransferNotification("Parsing activity files", "...", true, 0, getContext());
-        final long[] lastNotificationUpdateTs = new long[]{System.currentTimeMillis()};
-
-        final Handler handler = new Handler(getContext().getMainLooper());
-        new Thread(() -> {
-            try {
-                int[] i = new int[]{0};
-                for (final File activityFile : activityFiles) {
-                    i[0]++;
-
-                    LOG.debug("Parsing {}", activityFile);
-
-                    final long now = System.currentTimeMillis();
-                    if (now - lastNotificationUpdateTs[0] > 1500L) {
-                        lastNotificationUpdateTs[0] = now;
-                        handler.post(() -> {
-                            GB.updateTransferNotification(
-                                    "Parsing activity files", "File " + i[0] + " of " + activityFiles.length,
-                                    true,
-                                    (i[0] * 100) / activityFiles.length, getContext()
-                            );
-                            ;
-                        });
-                    }
-
-                    // The logic below just replicates XiaomiActivityFileFetcher
-
-                    final byte[] data;
-                    try (InputStream in = new FileInputStream(activityFile)) {
-                        data = FileUtils.readAll(in, 999999);
-                    } catch (final IOException ioe) {
-                        LOG.error("Failed to read {}", activityFile, ioe);
-                        continue;
-                    }
-
-                    final byte[] fileIdBytes = Arrays.copyOfRange(data, 0, 7);
-                    final XiaomiActivityFileId fileId = XiaomiActivityFileId.from(fileIdBytes);
-
-                    final XiaomiActivityParser activityParser = XiaomiActivityParser.create(fileId);
-                    if (activityParser == null) {
-                        LOG.warn("Failed to find parser for {}", fileId);
-                        continue;
-                    }
-
-                    try {
-                        if (activityParser.parse(this, fileId, data)) {
-                            LOG.info("Successfully parsed {}", fileId);
-                        } else {
-                            LOG.warn("Failed to parse {}", fileId);
-                        }
-                    } catch (final Exception ex) {
-                        LOG.error("Exception while parsing {}", fileId, ex);
-                    }
-                }
-            } catch (final Exception e) {
-                LOG.error("Failed to parse from storage", e);
-            }
-
-            handler.post(() -> {
-                parsingActivityFilesFromStorage = false;
-                GB.updateTransferNotification("", "", false, 100, getContext());
-                GB.signalActivityDataFinish(getDevice());
-            });
-        }).start();
     }
 
     public void setFeatureSupported(final String featureKey, final boolean supported) {

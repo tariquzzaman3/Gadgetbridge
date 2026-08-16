@@ -91,8 +91,9 @@ class PebbleGATTServer extends BluetoothGattServerCallback {
         mWaitWriteCompleteLatch = null;
     }
 
+    @Override
     public void onCharacteristicReadRequest(BluetoothDevice device, int requestId, int offset, BluetoothGattCharacteristic characteristic) {
-        if (!mPebbleLESupport.isExpectedDevice(device)) {
+        if (mPebbleLESupport.isUnexpectedDevice(device)) {
             return;
         }
 
@@ -108,9 +109,10 @@ class PebbleGATTServer extends BluetoothGattServerCallback {
     }
 
 
+    @Override
     public void onCharacteristicWriteRequest(BluetoothDevice device, int requestId, BluetoothGattCharacteristic characteristic,
                                              boolean preparedWrite, boolean responseNeeded, int offset, byte[] value) {
-        if (!mPebbleLESupport.isExpectedDevice(device)) {
+        if (mPebbleLESupport.isUnexpectedDevice(device)) {
             return;
         }
 
@@ -121,8 +123,9 @@ class PebbleGATTServer extends BluetoothGattServerCallback {
         mPebbleLESupport.handlePPoGATTPacket(value);
     }
 
+    @Override
     public void onConnectionStateChange(BluetoothDevice device, int status, int newState) {
-        if (!mPebbleLESupport.isExpectedDevice(device)) {
+        if (mPebbleLESupport.isUnexpectedDevice(device)) {
             return;
         }
 
@@ -132,10 +135,11 @@ class PebbleGATTServer extends BluetoothGattServerCallback {
         }
     }
 
+    @Override
     public void onDescriptorWriteRequest(BluetoothDevice device, int requestId, BluetoothGattDescriptor descriptor,
                                          boolean preparedWrite, boolean responseNeeded, int offset, byte[] value) {
 
-        if (!mPebbleLESupport.isExpectedDevice(device)) {
+        if (mPebbleLESupport.isUnexpectedDevice(device)) {
             return;
         }
 
@@ -150,6 +154,7 @@ class PebbleGATTServer extends BluetoothGattServerCallback {
         }
     }
 
+    @Override
     public void onServiceAdded(int status, BluetoothGattService service) {
         LOG.info("onServiceAdded() status = " + status + " service = " + service.getUuid());
         if (status == BluetoothGatt.GATT_SUCCESS && service.getUuid().equals(SERVER_SERVICE)) {
@@ -161,7 +166,7 @@ class PebbleGATTServer extends BluetoothGattServerCallback {
 
     @Override
     public void onMtuChanged(BluetoothDevice device, int mtu) {
-        if (!mPebbleLESupport.isExpectedDevice(device)) {
+        if (mPebbleLESupport.isUnexpectedDevice(device)) {
             return;
         }
 
@@ -169,9 +174,10 @@ class PebbleGATTServer extends BluetoothGattServerCallback {
         mPebbleLESupport.setMTU(mtu);
     }
 
+    @Override
     public void onNotificationSent(BluetoothDevice bluetoothDevice, int status) {
 
-        if (!mPebbleLESupport.isExpectedDevice(bluetoothDevice)) {
+        if (mPebbleLESupport.isUnexpectedDevice(bluetoothDevice)) {
             return;
         }
         if (status != BluetoothGatt.GATT_SUCCESS) {

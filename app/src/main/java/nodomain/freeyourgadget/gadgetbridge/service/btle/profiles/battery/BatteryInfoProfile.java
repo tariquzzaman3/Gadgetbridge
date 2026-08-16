@@ -25,14 +25,14 @@ import org.slf4j.LoggerFactory;
 
 import java.util.UUID;
 
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCharacteristic;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.AbstractBleProfile;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.ValueDecoder;
 
-public class BatteryInfoProfile<T extends AbstractBTLEDeviceSupport> extends AbstractBleProfile {
+public class BatteryInfoProfile<T extends AbstractBTLESingleDeviceSupport> extends AbstractBleProfile {
     private static final Logger LOG = LoggerFactory.getLogger(BatteryInfoProfile.class);
 
     private static final String ACTION_PREFIX = BatteryInfoProfile.class.getName() + "_";
@@ -50,37 +50,36 @@ public class BatteryInfoProfile<T extends AbstractBTLEDeviceSupport> extends Abs
     }
 
     public void requestBatteryInfo(TransactionBuilder builder) {
-        builder.read(getCharacteristic(UUID_CHARACTERISTIC_BATTERY_LEVEL));
+        builder.read(UUID_CHARACTERISTIC_BATTERY_LEVEL);
     }
 
     @Override
     public void enableNotify(TransactionBuilder builder, boolean enable) {
-        builder.notify(getCharacteristic(BatteryInfoProfile.UUID_CHARACTERISTIC_BATTERY_LEVEL), enable);
+        builder.notify(UUID_CHARACTERISTIC_BATTERY_LEVEL, enable);
     }
 
     @Override
-    public boolean onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-        if (status == BluetoothGatt.GATT_SUCCESS) {
-            UUID charUuid = characteristic.getUuid();
-            if (charUuid.equals(UUID_CHARACTERISTIC_BATTERY_LEVEL)) {
-                handleBatteryLevel(gatt, characteristic);
+    public boolean onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+        UUID charUuid = characteristic.getUuid();
+        if (charUuid.equals(UUID_CHARACTERISTIC_BATTERY_LEVEL)) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                handleBatteryLevel(gatt, characteristic, value);
                 return true;
             } else {
-                LOG.info("Unexpected onCharacteristicRead: " + GattCharacteristic.toString(characteristic));
+                LOG.warn("error reading characteristic: {}", GattCharacteristic.toString(characteristic));
+                return false;
             }
-        } else {
-            LOG.warn("error reading from characteristic:" + GattCharacteristic.toString(characteristic));
         }
         return false;
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-        return onCharacteristicRead(gatt, characteristic, BluetoothGatt.GATT_SUCCESS);
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
+        return onCharacteristicRead(gatt, characteristic, value, BluetoothGatt.GATT_SUCCESS);
     }
 
-    private void handleBatteryLevel(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-        int percent = ValueDecoder.decodePercent(characteristic);
+    private void handleBatteryLevel(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
+        int percent = ValueDecoder.decodePercent(characteristic, value);
         batteryInfo.setPercentCharged(percent);
 
         notify(createIntent(batteryInfo));

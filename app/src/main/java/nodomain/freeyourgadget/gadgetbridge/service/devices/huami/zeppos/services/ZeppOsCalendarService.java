@@ -23,12 +23,13 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventUpdatePreferences;
 import nodomain.freeyourgadget.gadgetbridge.model.CalendarEventSpec;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.AbstractZeppOsService;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsTransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
 
 public class ZeppOsCalendarService extends AbstractZeppOsService {
@@ -59,11 +60,11 @@ public class ZeppOsCalendarService extends AbstractZeppOsService {
     }
 
     @Override
-    public void initialize(final TransactionBuilder builder) {
+    public void initialize(final ZeppOsTransactionBuilder builder) {
         requestCapabilities(builder);
     }
 
-    public void requestCapabilities(final TransactionBuilder builder) {
+    public void requestCapabilities(final ZeppOsTransactionBuilder builder) {
         write(builder, CMD_CAPABILITIES_REQUEST);
     }
 
@@ -143,7 +144,8 @@ public class ZeppOsCalendarService extends AbstractZeppOsService {
         buf.putInt(calendarEventSpec.timestamp + calendarEventSpec.durationInSeconds);
 
         // Remind
-        if (calendarEventSpec.reminders != null && !calendarEventSpec.reminders.isEmpty()) {
+        final boolean syncReminders = getDevicePrefs().getBoolean(DeviceSettingsPreferenceConst.PREF_CALENDAR_SYNC_EVENT_REMINDERS, false);
+        if (syncReminders && calendarEventSpec.reminders != null && !calendarEventSpec.reminders.isEmpty()) {
             buf.putInt((int) (calendarEventSpec.reminders.get(0) / 1000L));
         } else {
             buf.putInt(0);

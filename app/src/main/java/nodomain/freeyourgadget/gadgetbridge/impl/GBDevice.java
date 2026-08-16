@@ -1,6 +1,6 @@
-/*  Copyright (C) 2015-2024 Andreas Shimokawa, Arjan Schrijver, Carsten
+/*  Copyright (C) 2015-2026 Andreas Shimokawa, Arjan Schrijver, Carsten
     Pfeiffer, Daniel Dakhno, Daniele Gobbetti, José Rebelo, Petr Vaněk, Taavi
-    Eomäe, Uwe Hermann
+    Eomäe, Uwe Hermann, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -25,8 +25,11 @@ import android.content.Intent;
 import android.os.Parcel;
 import android.os.Parcelable;
 
+import androidx.annotation.DrawableRes;
+import androidx.annotation.IntRange;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.slf4j.Logger;
@@ -37,7 +40,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
-import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryState;
@@ -48,12 +51,14 @@ import nodomain.freeyourgadget.gadgetbridge.model.ItemWithDetails;
 public class GBDevice implements Parcelable {
     public static final String ACTION_DEVICE_CHANGED
             = "nodomain.freeyourgadget.gadgetbridge.gbdevice.action.device_changed";
-    public static final Creator<GBDevice> CREATOR = new Creator<GBDevice>() {
+    public static final Creator<GBDevice> CREATOR = new Creator<>() {
+        @NonNull
         @Override
         public GBDevice createFromParcel(Parcel source) {
             return new GBDevice(source);
         }
 
+        @NonNull
         @Override
         public GBDevice[] newArray(int size) {
             return new GBDevice[size];
@@ -100,7 +105,7 @@ public class GBDevice implements Parcelable {
     private int mNotificationIconDisconnected = R.drawable.ic_notification_disconnected;
     private int mNotificationIconLowBattery = R.drawable.ic_notification_low_battery;
 
-    public static enum DeviceUpdateSubject {
+    public enum DeviceUpdateSubject {
         UNKNOWN,
         NOTHING,
         CONNECTION_STATE,
@@ -121,7 +126,7 @@ public class GBDevice implements Parcelable {
         validate();
     }
 
-    private GBDevice(Parcel in) {
+    private GBDevice(@NonNull Parcel in) {
         mName = in.readString();
         mAlias = in.readString();
         parentFolder = in.readString();
@@ -148,8 +153,8 @@ public class GBDevice implements Parcelable {
         validate();
     }
 
-    public void copyFromDevice(GBDevice device){
-        if(!device.mAddress.equals(mAddress)){
+    public void copyFromDevice(@NonNull GBDevice device) {
+        if (!device.mAddress.equals(mAddress)) {
             throw new RuntimeException("Cannot copy from device with other address");
         }
 
@@ -176,7 +181,7 @@ public class GBDevice implements Parcelable {
     }
 
     @Override
-    public void writeToParcel(Parcel dest, int flags) {
+    public void writeToParcel(@NonNull final Parcel dest, final int flags) {
         dest.writeString(mName);
         dest.writeString(mAlias);
         dest.writeString(parentFolder);
@@ -207,7 +212,8 @@ public class GBDevice implements Parcelable {
         }
     }
 
-    private int[] enumsToOrdinals(BatteryState[] arrayEnum) {
+    @NonNull
+    private static int[] enumsToOrdinals(@NonNull BatteryState[] arrayEnum) {
         int[] ordinals = new int[arrayEnum.length];
         for (int i = 0; i < arrayEnum.length; i++) {
             ordinals[i] = arrayEnum[i].ordinal();
@@ -215,10 +221,11 @@ public class GBDevice implements Parcelable {
         return ordinals;
     }
 
-    private BatteryState[] ordinalsToEnums(int[] arrayInt){
+    @NonNull
+    private static BatteryState[] ordinalsToEnums(@NonNull int[] arrayInt) {
         BatteryState[] enums = new BatteryState[arrayInt.length];
-        for(int i = 0; i<arrayInt.length; i++){
-            enums[i]=BatteryState.values()[arrayInt[i]];
+        for (int i = 0; i < arrayInt.length; i++) {
+            enums[i] = BatteryState.values()[arrayInt[i]];
         }
         return enums;
     }
@@ -240,7 +247,7 @@ public class GBDevice implements Parcelable {
     }
 
     public String getAliasOrName() {
-        if (mAlias != null && !mAlias.equals("")) {
+        if (mAlias != null && !mAlias.isEmpty()) {
             return mAlias;
         }
         return mName;
@@ -248,7 +255,7 @@ public class GBDevice implements Parcelable {
 
     public void setName(String name) {
         if (name == null) {
-            LOG.warn("Ignoring setting of GBDevice name to null for " + this);
+            LOG.warn("Ignoring setting of GBDevice name to null for {}", this);
             return;
         }
         mName = name;
@@ -279,7 +286,6 @@ public class GBDevice implements Parcelable {
 
     /**
      * Sets the second firmware version (HR or GPS or other component)
-     * @param firmwareVersion2
      */
     public void setFirmwareVersion2(String firmwareVersion2) {
         mFirmwareVersion2 = firmwareVersion2;
@@ -324,6 +330,7 @@ public class GBDevice implements Parcelable {
         return mBusyTask != null;
     }
 
+    @Nullable
     public String getBusyTask() {
         return mBusyTask;
     }
@@ -341,7 +348,7 @@ public class GBDevice implements Parcelable {
     }
 
     public void setNotificationIconDisconnected(int notificationIconDisconnected) {
-        this.mNotificationIconDisconnected = notificationIconDisconnected;
+        mNotificationIconDisconnected = notificationIconDisconnected;
     }
 
     public int getNotificationIconLowBattery() {
@@ -356,19 +363,21 @@ public class GBDevice implements Parcelable {
      * Marks the device as busy, performing a certain task. While busy, no other operations will
      * be performed on the device.
      * <p/>
-     * Note that nested busy tasks are not supported, every single call to #setBusyTask()
-     * or unsetBusy() has an effect.
+     * Note that nested busy tasks are not supported, every single call to {@link #setBusyTask(int, Context)}
+     * or {@link #unsetBusyTask()} has an effect.
      *
-     * @param task a textual name of the task to be performed, possibly displayed to the user
+     * @param taskRes string resource for the task to be performed, possibly displayed to the user
      */
-    public void setBusyTask(String task) {
-        if (task == null) {
-            throw new IllegalArgumentException("busy task must not be null");
+    public void setBusyTask(@StringRes int taskRes, @NonNull Context context) {
+        String task = context.getString(taskRes);
+
+        if (mBusyTask == null) {
+            LOG.info("Mark device as busy: {}", task);
+        } else if (task.equals(mBusyTask)) {
+            LOG.debug("Device already busy with: {}", task);
+        } else {
+            LOG.warn("Mark device as busy: {}, but device was already busy with: {}", task, mBusyTask);
         }
-        if (mBusyTask != null) {
-            LOG.warn("Attempt to mark device as busy with: " + task + ", but is already busy with: " + mBusyTask);
-        }
-        LOG.info("Mark device as busy: " + task);
         mBusyTask = task;
     }
 
@@ -380,7 +389,7 @@ public class GBDevice implements Parcelable {
             LOG.error("Attempt to mark device as not busy anymore, but was not busy before.");
             return;
         }
-        LOG.info("Mark device as NOT busy anymore: " + mBusyTask);
+        LOG.info("Mark device as NOT busy anymore: {}", mBusyTask);
         mBusyTask = null;
     }
 
@@ -392,11 +401,19 @@ public class GBDevice implements Parcelable {
         return mState.ordinal();
     }
 
-    public void setState(State state) {
+    /// device specific code must use {@link #setUpdateState} instead
+    public void setState(@NonNull State state) {
         mState = state;
         if (state.ordinal() <= State.CONNECTED.ordinal()) {
             unsetDynamicState();
         }
+    }
+
+    /// shared helper to set device state and broadcast a {@link #ACTION_DEVICE_CHANGED}
+    /// intent with subject {@link DeviceUpdateSubject#DEVICE_STATE}
+    public void setUpdateState(@NonNull State deviceState, @NonNull Context context) {
+        setState(deviceState);
+        sendDeviceUpdateIntent(context, GBDevice.DeviceUpdateSubject.DEVICE_STATE);
     }
 
     private void unsetDynamicState() {
@@ -413,7 +430,8 @@ public class GBDevice implements Parcelable {
         }
     }
 
-    public String getStateString(final Context context) {
+    @NonNull
+    public String getStateString(@NonNull final Context context) {
         return getStateString(context, true);
     }
 
@@ -422,10 +440,11 @@ public class GBDevice implements Parcelable {
      * instead of connecting->connected->initializing->initialized
      * Set simple to true to get this behavior.
      */
-    private String getStateString(Context context, boolean simple) {
-        try{
-            // TODO: not sure if this is really neccessary...
-            if(simple){
+    @NonNull
+    private String getStateString(@NonNull Context context, boolean simple) {
+        try {
+            // TODO: not sure if this is really necessary...
+            if (simple) {
                 return context.getString(mState.getSimpleStringId());
             }
             return context.getString(mState.getStringId());
@@ -436,7 +455,7 @@ public class GBDevice implements Parcelable {
 
     /**
      * Returns the general type of this device. For more detailed information,
-     * soo #getModel()
+     * see {@link #getModel()}
      * @return the general type of this device
      */
     @NonNull
@@ -445,13 +464,13 @@ public class GBDevice implements Parcelable {
     }
 
     @NonNull
-    public DeviceCoordinator getDeviceCoordinator(){
+    public DeviceCoordinator getDeviceCoordinator() {
         return mDeviceType.getDeviceCoordinator();
     }
 
     public void setRssi(short rssi) {
         if (rssi < 0) {
-            LOG.warn("Illegal RSSI value " + rssi + ", setting to RSSI_UNKNOWN");
+            LOG.warn("Illegal RSSI value {}, setting to RSSI_UNKNOWN", rssi);
             mRssi = RSSI_UNKNOWN;
         } else {
             mRssi = rssi;
@@ -459,20 +478,21 @@ public class GBDevice implements Parcelable {
     }
 
     /**
-     * Returns the device specific signal strength value, or #RSSI_UNKNOWN
+     * Returns the device specific signal strength value, or {@link #RSSI_UNKNOWN}
      */
     public short getRssi() {
         return mRssi;
     }
 
     // TODO: this doesn't really belong here
-    public void sendDeviceUpdateIntent(Context context) {
+    public void sendDeviceUpdateIntent(@NonNull Context context) {
         sendDeviceUpdateIntent(context, DeviceUpdateSubject.UNKNOWN);
     }
 
     // TODO: this doesn't really belong here
-    public void sendDeviceUpdateIntent(Context context, DeviceUpdateSubject subject) {
+    public void sendDeviceUpdateIntent(@NonNull final Context context, DeviceUpdateSubject subject) {
         Intent deviceUpdateIntent = new Intent(ACTION_DEVICE_CHANGED);
+        deviceUpdateIntent.setPackage(BuildConfig.APPLICATION_ID);
         deviceUpdateIntent.putExtra(EXTRA_DEVICE, this);
         deviceUpdateIntent.putExtra(EXTRA_UPDATE_SUBJECT, subject);
         LocalBroadcastManager.getInstance(context).sendBroadcast(deviceUpdateIntent);
@@ -484,17 +504,17 @@ public class GBDevice implements Parcelable {
     }
 
     @Override
-    public boolean equals(Object obj) {
+    public boolean equals(@Nullable Object obj) {
         if (obj == this) {
             return true;
         }
         if (obj == null) {
             return false;
         }
-        if (!(obj instanceof GBDevice)) {
-            return false;
+        if (obj instanceof GBDevice gbDevice) {
+            return gbDevice.getAddress().equals(mAddress);
         }
-        return ((GBDevice) obj).getAddress().equals(this.mAddress);
+        return false;
     }
 
     @Override
@@ -508,7 +528,8 @@ public class GBDevice implements Parcelable {
      * @param key the extra info key
      * @return the extra info value if set, null otherwise
      */
-    public Object getExtraInfo(String key) {
+    @Nullable
+    public Object getExtraInfo(@NonNull String key) {
         if (mExtraInfos == null) {
             return null;
         }
@@ -518,10 +539,10 @@ public class GBDevice implements Parcelable {
 
     /**
      * Sets an extra info value, overwriting the current one, if any
-     * @param key the extra info key
+     * @param key  the extra info key
      * @param info the extra info value
      */
-    public void setExtraInfo(String key, Object info) {
+    public void setExtraInfo(@NonNull String key, @Nullable Object info) {
         if (mExtraInfos == null) {
             mExtraInfos = new HashMap<>();
         }
@@ -536,94 +557,87 @@ public class GBDevice implements Parcelable {
         mExtraInfos = null;
     }
 
-    /**
-     * Ranges from 0-100 (percent), or -1 if unknown
-     *
-     * @return the battery level in range 0-100, or -1 if unknown
-     */
+    /// @deprecated use {@link #getBatteryLevel(int)} instead
+    @Deprecated
     public int getBatteryLevel() {
         return getBatteryLevel(0);
     }
 
-    public int getBatteryLevel(int index) {
-        return mBatteryLevel[index];
+    /// @return the battery level in range {@code 0} to {@code 100}, or {@link #BATTERY_UNKNOWN} if unknown
+    /// @see #setBatteryLevel(int, int)
+    public int getBatteryLevel(@IntRange(from = 0, to = 2) int batteryIndex) {
+        return mBatteryLevel[batteryIndex];
     }
 
-
+    /// @deprecated use {@link #setBatteryLevel(int, int)} instead
+    @Deprecated
     public void setBatteryLevel(int batteryLevel) {
         setBatteryLevel(batteryLevel, 0);
     }
 
-    public void setBatteryLevel(int batteryLevel, int index) {
+    /// Set the battery level in range {@code 0} to {@code 100}, or {@link #BATTERY_UNKNOWN} if unknown
+    /// @see #getBatteryLevel(int)
+    public void setBatteryLevel(@IntRange(from = BATTERY_UNKNOWN, to = 100) int batteryLevel,
+                                @IntRange(from = 0, to = 2) int batteryIndex) {
         if ((batteryLevel >= 0 && batteryLevel <= 100) || batteryLevel == BATTERY_UNKNOWN) {
-            mBatteryLevel[index] = batteryLevel;
+            mBatteryLevel[batteryIndex] = batteryLevel;
         } else {
-            LOG.error("Battery level musts be within range 0-100: " + batteryLevel);
+            LOG.error("Battery level must be within range 0-100: {}", batteryLevel);
         }
     }
 
+    /// @deprecated use {@link #setBatteryVoltage(float, int)} instead
+    @Deprecated
     public void setBatteryVoltage(float batteryVoltage) {
         setBatteryVoltage(batteryVoltage, 0);
     }
 
-
-    public void setBatteryVoltage(float batteryVoltage, int index) {
+    /// @param batteryVoltage Voltage greater than zero (unit: Volt), or {@link #BATTERY_UNKNOWN} if unknown
+    public void setBatteryVoltage(float batteryVoltage,
+                                  @IntRange(from = 0, to = 2) int batteryIndex) {
         if (batteryVoltage >= 0 || batteryVoltage == BATTERY_UNKNOWN) {
-            mBatteryVoltage[index] = batteryVoltage;
+            mBatteryVoltage[batteryIndex] = batteryVoltage;
         } else {
-            LOG.error("Battery voltage must be > 0: " + batteryVoltage);
+            LOG.error("Battery voltage must be > 0: {}", batteryVoltage);
         }
     }
 
-    /**
-     * Voltage greater than zero (unit: Volt), or -1 if unknown
-     *
-     * @return the battery voltage, or -1 if unknown
-     */
+    /// @deprecated use {@link #getBatteryVoltage(int)} instead
+    @Deprecated
     public float getBatteryVoltage() {
         return getBatteryVoltage(0);
     }
 
-    public float getBatteryVoltage(int index) {
-        return mBatteryVoltage[index];
+    /// @return the battery voltage, or {@link #BATTERY_UNKNOWN} if unknown
+    /// @see #setBatteryVoltage(float, int)
+    public float getBatteryVoltage(int batteryIndex) {
+        return mBatteryVoltage[batteryIndex];
     }
 
-    public BatteryState getBatteryState() {
-        return getBatteryState(0);
+    public BatteryState getBatteryState(int batteryIndex) {
+        return mBatteryState[batteryIndex];
     }
 
-    public BatteryState getBatteryState(int index) {
-        return mBatteryState[index];
+    public void setBatteryState(BatteryState mBatteryState, int batteryIndex) {
+        this.mBatteryState[batteryIndex] = mBatteryState;
     }
 
-    public void setBatteryState(BatteryState mBatteryState) {
-        setBatteryState(mBatteryState, 0);
+    @DrawableRes
+    public int getBatteryIcon(int batteryIndex) {
+        return mBatteryIcons[batteryIndex];
     }
 
-    public void setBatteryState(BatteryState mBatteryState, int index) {
-        this.mBatteryState[index] = mBatteryState;
+    public void setBatteryIcon(@DrawableRes int icon, int batteryIndex) {
+        mBatteryIcons[batteryIndex] = icon;
     }
 
-    public int getBatteryIcon(int index) {
-        return this.mBatteryIcons[index];
+    @StringRes
+    public int getBatteryLabel(int batteryIndex) {
+        return mBatteryLabels[batteryIndex];
     }
 
-    public void setBatteryIcon(int icon, int index) {
-        this.mBatteryIcons[index] = icon;
-    }
-
-    public int getBatteryLabel(int index) {
-        return this.mBatteryLabels[index];
-    }
-
-    public void setBatteryLabel(int label, int index) {
-        this.mBatteryLabels[index] = label;
-    }
-
-    public int getEnabledDisabledIconResource(){
-        return isInitialized() ?
-                getDeviceCoordinator().getDefaultIconResource() :
-                getDeviceCoordinator().getDisabledIconResource();
+    public void setBatteryLabel(@StringRes int label, int batteryIndex) {
+        mBatteryLabels[batteryIndex] = label;
     }
 
     @NonNull
@@ -649,10 +663,11 @@ public class GBDevice implements Parcelable {
     }
 
     public boolean hasDeviceInfos() {
-        return getDeviceInfos().size() > 0;
+        return !getDeviceInfos().isEmpty();
     }
 
-    public ItemWithDetails getDeviceInfo(String name) {
+    @Nullable
+    public ItemWithDetails getDeviceInfo(@NonNull final String name) {
         for (ItemWithDetails item : getDeviceInfos()) {
             if (name.equals(item.getName())) {
                 return item;
@@ -661,8 +676,9 @@ public class GBDevice implements Parcelable {
         return null;
     }
 
+    @NonNull
     public List<ItemWithDetails> getDeviceInfos() {
-        List<ItemWithDetails> result = new ArrayList<>();
+        List<ItemWithDetails> result = new ArrayList<>(6);
         if (mDeviceInfos != null) {
             result.addAll(mDeviceInfos);
         }
@@ -685,10 +701,6 @@ public class GBDevice implements Parcelable {
         return result;
     }
 
-    public void setDeviceInfos(List<ItemWithDetails> deviceInfos) {
-        this.mDeviceInfos = deviceInfos;
-    }
-
     public void addDeviceInfo(ItemWithDetails info) {
         if (mDeviceInfos == null) {
             mDeviceInfos = new ArrayList<>();
@@ -700,13 +712,6 @@ public class GBDevice implements Parcelable {
             }
         }
         mDeviceInfos.add(info);
-    }
-
-    public boolean removeDeviceInfo(ItemWithDetails info) {
-        if (mDeviceInfos == null) {
-            return false;
-        }
-        return mDeviceInfos.remove(info);
     }
 
     public enum State {
@@ -728,26 +733,31 @@ public class GBDevice implements Parcelable {
         INITIALIZED(R.string.initialized, R.string.connected);
 
 
-        private int stringId, simpleStringId;
+        @StringRes
+        private final int stringId;
+        @StringRes
+        private final int simpleStringId;
 
-        State(int stringId, int simpleStringId) {
+        State(@StringRes int stringId, @StringRes int simpleStringId) {
             this.stringId = stringId;
             this.simpleStringId = simpleStringId;
         }
 
-        State(int stringId) {
+        State(@StringRes int stringId) {
             this(stringId, stringId);
         }
 
+        @StringRes
         public int getStringId() {
             return stringId;
         }
 
+        @StringRes
         public int getSimpleStringId() {
             return simpleStringId;
         }
 
-        public boolean equalsOrHigherThan(State otherState){
+        public boolean equalsOrHigherThan(State otherState) {
             return compareTo(otherState) >= 0;
         }
     }

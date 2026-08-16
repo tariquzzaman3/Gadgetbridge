@@ -23,6 +23,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -77,7 +78,7 @@ public class DevicesFragment extends Fragment {
                 case DeviceManager.ACTION_DEVICES_CHANGED:
                 case GBApplication.ACTION_NEW_DATA:
                     if (action.equals(GBApplication.ACTION_NEW_DATA)) {
-                        createRefreshTask("get activity data", requireContext(), device).execute();
+                        createRefreshTask("get activity data", requireContext(), device).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                     }
                     if (device != null) {
                         // Refresh only this device
@@ -129,7 +130,7 @@ public class DevicesFragment extends Fragment {
             @Override
             public void run() {
                 if (getContext() != null) {
-                    createRefreshTask("get activity data", getContext(), null).execute();
+                    createRefreshTask("get activity data", getContext(), null).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                 }
             }
         });
@@ -142,7 +143,7 @@ public class DevicesFragment extends Fragment {
             }
         });
 
-        showFabIfNeccessary();
+        showFabIfNecessary();
 
         /* uncomment to enable fixed-swipe to reveal more actions
 
@@ -189,10 +190,6 @@ public class DevicesFragment extends Fragment {
 
         refreshPairedDevices();
 
-        if (GB.isBluetoothEnabled() && deviceList.isEmpty() && Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            startActivity(new Intent(getActivity(), DiscoveryActivityV2.class));
-        }
-
         return currentView;
     }
 
@@ -200,7 +197,7 @@ public class DevicesFragment extends Fragment {
         startActivity(new Intent(getActivity(), DiscoveryActivityV2.class));
     }
 
-    private void showFabIfNeccessary() {
+    private void showFabIfNecessary() {
         if (GBApplication.getPrefs().getBoolean("display_add_device_fab", true)) {
             fab.show();
         } else {
@@ -246,7 +243,7 @@ public class DevicesFragment extends Fragment {
         private final GBDevice device;
 
         public RefreshTask(final String task, final Context context, final GBDevice device) {
-            super(task, context);
+            super(task, context, false);
             this.device = device;
         }
 
@@ -264,7 +261,7 @@ public class DevicesFragment extends Fragment {
         private void updateDevice(final DBHandler db, final GBDevice gbDevice) {
             final DeviceCoordinator coordinator = gbDevice.getDeviceCoordinator();
             final boolean showActivityCard = GBApplication.getDevicePrefs(gbDevice).getBoolean(DeviceSettingsPreferenceConst.PREFS_ACTIVITY_IN_DEVICE_CARD, true);
-            if (coordinator.supportsActivityTracking() && showActivityCard) {
+            if ((coordinator.supportsStepCounter(gbDevice) || coordinator.supportsSleepMeasurement(gbDevice)) && showActivityCard) {
                 final DailyTotals stepsAndSleepData = getSteps(gbDevice, db);
                 deviceActivityHashMap.put(gbDevice.getAddress(), stepsAndSleepData);
             }

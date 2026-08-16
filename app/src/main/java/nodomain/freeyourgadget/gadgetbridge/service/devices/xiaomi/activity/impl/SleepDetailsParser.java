@@ -16,6 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.activity.impl;
 
+import android.content.Context;
 import android.widget.Toast;
 
 import org.slf4j.Logger;
@@ -31,8 +32,8 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.devices.HeartPulseSampleProvider;
-import nodomain.freeyourgadget.gadgetbridge.devices.xiaomi.XiaomiSleepStageSampleProvider;
-import nodomain.freeyourgadget.gadgetbridge.devices.xiaomi.XiaomiSleepTimeSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.devices.XiaomiSleepStageSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.devices.XiaomiSleepTimeSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.HeartPulseSample;
@@ -40,7 +41,6 @@ import nodomain.freeyourgadget.gadgetbridge.entities.User;
 import nodomain.freeyourgadget.gadgetbridge.entities.XiaomiSleepStageSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.XiaomiSleepTimeSample;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.XiaomiSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.activity.XiaomiActivityFileId;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.activity.XiaomiActivityParser;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
@@ -49,16 +49,27 @@ public class SleepDetailsParser extends XiaomiActivityParser {
     private static final Logger LOG = LoggerFactory.getLogger(SleepDetailsParser.class);
 
     @Override
-    public boolean parse(final XiaomiSupport support, final XiaomiActivityFileId fileId, final byte[] bytes) {
-        // Seems to come both as DetailType.DETAILS (version 2) and DetailType.SUMMARY (version 4)
-        if (fileId.getVersion() > 4) {
-            LOG.warn("Unknown sleep details version {}", fileId.getVersion());
-            return false;
+    public boolean parse(final Context context, final GBDevice gbDevice, final XiaomiActivityFileId fileId, final byte[] bytes) {
+        // Seems to come both as DetailType.DETAILS (version 2) and DetailType.SUMMARY (version 4, 5)
+        final int version = fileId.getVersion();
+        final int headerSize;
+        switch (version) {
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+                headerSize = 1;
+                break;
+            case 5:
+                headerSize = 2;
+                break;
+            default:
+                LOG.warn("Unknown sleep details version {}", fileId.getVersion());
+                return false;
         }
 
-        // Stores number of fields which are only present in certain versions of the message
-        // this is required for correct header offset calculation
-        int versionDependentFields = 0;
+        // Current offset in the header, which only advances if we process a field available in the version
+        int headerIdx = 0;
 
         final ByteBuffer buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         buf.get(new byte[7]); // skip fileId bytes
@@ -67,15 +78,24 @@ public class SleepDetailsParser extends XiaomiActivityParser {
             LOG.warn("Expected 0 padding after fileId, got {} - parsing might fail", fileIdPadding);
         }
 
-        final byte header = buf.get();
+        final byte[] header = new byte[headerSize];
+        buf.get(header);
 
         final int isAwake = buf.get() & 0xff; // 0/1 - more correctly this would be !isSleepFinish
+        headerIdx++;
+
         final int bedTime = buf.getInt();
+        headerIdx++;
+
         final int wakeupTime = buf.getInt();
+        headerIdx++;
+
         int sleepQuality = -1;
         if (fileId.getVersion() >= 4) {
-            versionDependentFields += 1;
-            sleepQuality = buf.get() & 0xff;
+            if (validData(header, headerIdx)) {
+                sleepQuality = buf.get() & 0xff;
+            }
+            headerIdx++;
         }
 
         // note on RR-intervals (msg type 1) on Xiaomi band 9, FW 2.3.93, HW M2345B1:
@@ -100,8 +120,15 @@ public class SleepDetailsParser extends XiaomiActivityParser {
         sample.setWakeupTime(wakeupTime * 1000L);
         sample.setIsAwake(isAwake == 1);
 
+        if (fileId.getVersion() >= 5) {
+            buf.get(new byte[9]); // ?
+            final int bedTime2 = buf.getInt(); // around ~30 min before bedTime, is previous one fall asleep time?
+            final int wakeupTime2 = buf.getInt(); // == wakeupTime
+            headerIdx += 5;
+        }
+
         // Heart rate samples
-        if ((header & (1 << (5 - versionDependentFields))) != 0) {
+        if (validData(header, headerIdx)) {
             LOG.debug("Heart rate samples from offset {}", Integer.toHexString(buf.position()));
             final int unit = buf.getShort(); // Time unit (i.e sample rate)
             final int count = buf.getShort();
@@ -117,9 +144,10 @@ public class SleepDetailsParser extends XiaomiActivityParser {
                 buf.position(buf.position() + count);
             }
         }
+        headerIdx++;
 
         // SpO2 samples
-        if ((header & (1 << (4 - versionDependentFields))) != 0) {
+        if (validData(header, headerIdx)) {
             LOG.debug("SpO₂ samples from offset {}", Integer.toHexString(buf.position()));
             final int unit = buf.getShort(); // Time unit (i.e sample rate)
             final int count = buf.getShort();
@@ -135,23 +163,27 @@ public class SleepDetailsParser extends XiaomiActivityParser {
                 buf.position(buf.position() + count);
             }
         }
+        headerIdx++;
 
         // snore samples
-        if (fileId.getVersion() >= 3 && (header & (1 << (3 - versionDependentFields))) != 0) {
-            LOG.debug("Snore level samples from offset {}", Integer.toHexString(buf.position()));
-            final int unit = buf.getShort(); // Time unit (i.e sample rate)
-            final int count = buf.getShort();
+        if (fileId.getVersion() >= 3) {
+            if (validData(header, headerIdx)) {
+                LOG.debug("Snore level samples from offset {}", Integer.toHexString(buf.position()));
+                final int unit = buf.getShort(); // Time unit (i.e sample rate)
+                final int count = buf.getShort();
 
-            if (count > 0) {
-                // If version is less than 2 firstRecordTime is bedTime
-                if (fileId.getVersion() >= 2) {
-                    final int firstRecordTime = buf.getInt();
+                if (count > 0) {
+                    // If version is less than 2 firstRecordTime is bedTime
+                    if (fileId.getVersion() >= 2) {
+                        final int firstRecordTime = buf.getInt();
+                    }
+
+                    // Skip count samples - each sample is a float
+                    //   timestamp of each sample is firstRecordTime + (unit * index)
+                    buf.position(buf.position() + count * 4);
                 }
-
-                // Skip count samples - each sample is a float
-                //   timestamp of each sample is firstRecordTime + (unit * index)
-                buf.position(buf.position() + count * 4);
             }
+            headerIdx++;
         }
 
         final List<XiaomiSleepStageSample> stages = new ArrayList<>();
@@ -282,7 +314,6 @@ public class SleepDetailsParser extends XiaomiActivityParser {
         // save all the samples that we got
         try (DBHandler handler = GBApplication.acquireDB()) {
             final DaoSession session = handler.getDaoSession();
-            final GBDevice gbDevice = support.getDevice();
 
             final XiaomiSleepTimeSampleProvider sampleProvider = new XiaomiSleepTimeSampleProvider(gbDevice, session);
 
@@ -305,7 +336,7 @@ public class SleepDetailsParser extends XiaomiActivityParser {
                 sampleProvider.addSample(summary);
             }
         } catch (final Exception e) {
-            GB.toast(support.getContext(), "Error saving sleep sample", Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(context, "Error saving sleep sample", Toast.LENGTH_LONG, GB.ERROR);
             LOG.error("Error saving sleep sample", e);
             persistSuccess = false;
         }
@@ -316,7 +347,6 @@ public class SleepDetailsParser extends XiaomiActivityParser {
             // Save the sleep stage samples
             try (DBHandler handler = GBApplication.acquireDB()) {
                 final DaoSession session = handler.getDaoSession();
-                final GBDevice gbDevice = support.getDevice();
                 final Device device = DBHelper.getDevice(gbDevice, session);
                 final User user = DBHelper.getUser(session);
 
@@ -329,7 +359,7 @@ public class SleepDetailsParser extends XiaomiActivityParser {
 
                 sampleProvider.addSamples(stages);
             } catch (final Exception e) {
-                GB.toast(support.getContext(), "Error saving sleep stage samples", Toast.LENGTH_LONG, GB.ERROR);
+                GB.toast(context, "Error saving sleep stage samples", Toast.LENGTH_LONG, GB.ERROR);
                 LOG.error("Error saving sleep stage samples", e);
                 persistSuccess = false;
             }
@@ -338,7 +368,6 @@ public class SleepDetailsParser extends XiaomiActivityParser {
         // Save the heart pulse samples
         try (DBHandler handler = GBApplication.acquireDB()) {
             final DaoSession session = handler.getDaoSession();
-            final GBDevice gbDevice = support.getDevice();
             final Device device = DBHelper.getDevice(gbDevice, session);
             final User user = DBHelper.getUser(session);
 
@@ -351,7 +380,7 @@ public class SleepDetailsParser extends XiaomiActivityParser {
 
             sampleProvider.addSamples(heartPulseSamples);
         } catch (final Exception e) {
-            GB.toast(support.getContext(), "Error saving heart pulse samples", Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(context, "Error saving heart pulse samples", Toast.LENGTH_LONG, GB.ERROR);
             LOG.error("Error saving heart pulse samples", e);
             persistSuccess = false;
         }

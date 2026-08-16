@@ -1,4 +1,4 @@
-/*  Copyright (C) 2015-2024 Andreas Shimokawa, Carsten Pfeiffer
+/*  Copyright (C) 2015-2026 Andreas Shimokawa, Carsten Pfeiffer, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -16,7 +16,11 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices;
 
-import nodomain.freeyourgadget.gadgetbridge.activities.InstallActivity;
+import android.app.Activity;
+
+import androidx.annotation.NonNull;
+
+import nodomain.freeyourgadget.gadgetbridge.activities.install.InstallActivity;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 /**
@@ -24,6 +28,9 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
  * gadget device. The actual element to install will be passed in the constructor.
  */
 public interface InstallHandler {
+
+    @NonNull
+    Class<? extends Activity> getInstallActivity();
 
     /**
      * Returns true if this handler is able to install the element.
@@ -34,17 +41,17 @@ public interface InstallHandler {
     /**
      * Checks whether the installation of the 'element' on the device is possible
      * and configures the InstallActivity accordingly (sets helpful texts,
-     * enables/disables the "Install" button, etc.
+     * enables/disables the "Install" button, etc.)
      * <p/>
      * Note: may only be called if #isValid previously returned true.
      *
      * @param installActivity the activity to interact with
      * @param device          the device to which the element shall be installed
      */
-    void validateInstallation(InstallActivity installActivity, GBDevice device);
+    void validateInstallation(@NonNull InstallActivity installActivity, @NonNull GBDevice device);
 
     /**
      * Allows device specific code to be executed just before the installation starts
      */
-    void onStartInstall(GBDevice device);
+    void onStartInstall(@NonNull GBDevice device);
 }

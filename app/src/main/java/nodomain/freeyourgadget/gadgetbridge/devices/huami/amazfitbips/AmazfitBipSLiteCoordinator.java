@@ -18,6 +18,7 @@ package nodomain.freeyourgadget.gadgetbridge.devices.huami.amazfitbips;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 
@@ -25,6 +26,7 @@ import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.amazfitbips.AmazfitBipSLiteSupport;
 
@@ -35,7 +37,7 @@ public class AmazfitBipSLiteCoordinator extends AmazfitBipSCoordinator {
     }
 
     @Override
-    public InstallHandler findInstallHandler(final Uri uri, final Context context) {
+    public InstallHandler findInstallHandler(final Uri uri, final Bundle options, final Context context) {
         final AmazfitBipSLiteFWInstallHandler handler = new AmazfitBipSLiteFWInstallHandler(uri, context);
         return handler.isValid() ? handler : null;
     }
@@ -47,7 +49,7 @@ public class AmazfitBipSLiteCoordinator extends AmazfitBipSCoordinator {
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return AmazfitBipSLiteSupport.class;
     }
 }

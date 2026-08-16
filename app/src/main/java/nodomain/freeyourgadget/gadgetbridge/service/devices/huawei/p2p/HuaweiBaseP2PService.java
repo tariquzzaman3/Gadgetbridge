@@ -1,3 +1,19 @@
+/*  Copyright (C) 2024-2025 Me7c7, José Rebelo
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p;
 
 import org.slf4j.Logger;
@@ -13,7 +29,6 @@ import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.Send
 
 public abstract class HuaweiBaseP2PService {
     private final Logger LOG = LoggerFactory.getLogger(HuaweiBaseP2PService.class);
-
 
     public interface HuaweiP2PCallback {
         void onResponse(int code, byte[] data);
@@ -51,64 +66,76 @@ public abstract class HuaweiBaseP2PService {
 
     private final Map<Short, HuaweiP2PCallback> waitPackets = new ConcurrentHashMap<>();
 
-    private Short getNextSequence() {
+    private short getNextSequence() {
         return manager.getNextSequence();
     }
 
-    public void sendCommand(byte[] sendData, HuaweiP2PCallback callback) {
+    private void sendP2PCommand(byte cmdId,
+                               String srcPackage,
+                               String dstPackage,
+                               String srcFingerprint,
+                               String dstFingerprint,
+                               byte[] sendData,
+                               HuaweiP2PCallback callback) {
         try {
             short seq = this.getNextSequence();
-            SendP2PCommand test = new SendP2PCommand(this.manager.getSupportProvider(), (byte) 2, seq, this.getModule(), this.getPackage(), this.getLocalFingerprint(), this.getFingerprint(), sendData, 0);
+            SendP2PCommand cmd = new SendP2PCommand(this.manager.getSupportProvider(), cmdId, seq, srcPackage, dstPackage, srcFingerprint, dstFingerprint, sendData, 0);
             if (callback != null) {
                 this.waitPackets.put(seq, callback);
             }
-            test.doPerform();
+            cmd.doPerform();
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            LOG.error("Failed to send p2p cmdId: {}", cmdId,  e);
         }
     }
 
     public void sendPing(HuaweiP2PCallback callback) {
-        try {
-            short seq = this.getNextSequence();
-            SendP2PCommand test = new SendP2PCommand(this.manager.getSupportProvider(), (byte) 1, seq, this.getPingPackage(), this.getPackage(), null, null, null, 0);
-            if (callback != null) {
-                this.waitPackets.put(seq, callback);
-            }
-            test.doPerform();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        sendP2PCommand((byte) 1, this.getPingPackage(), this.getPackage(), null, null, null, callback);
+    }
+
+    public void sendCommand(byte[] sendData, HuaweiP2PCallback callback) {
+        sendP2PCommand((byte) 2, this.getModule(), this.getPackage(), this.getLocalFingerprint(), this.getFingerprint(), sendData, callback);
+    }
+    public void sendGetVersion(HuaweiP2PCallback callback) {
+        if(manager.getSupportProvider().getDeviceState().supportsP2PGetAppVersion()) {
+            sendP2PCommand((byte) 4, this.getModule(), this.getPackage(), null, null, null, callback);
+        } else {
+            LOG.error("P2P Get App Version is not supported");
         }
     }
 
-    public void sendAck(short sequence, String srcPackage, String dstPackage, int code) {
-        try {
-            SendP2PCommand test = new SendP2PCommand(this.manager.getSupportProvider(), (byte) 3, sequence, srcPackage, dstPackage, null, null, null, code);
-            test.doPerform();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+    protected int onPingPacket(P2P.P2PCommand.Response packet) {
+        return 0xcf;
+    }
+
+    protected int onDataPacket(P2P.P2PCommand.Response packet) {
+        return 0xcf;
     }
 
     public void handlePacket(P2P.P2PCommand.Response packet) {
-        LOG.info("HuaweiP2PCalendarService handlePacket: {} Code: {}", packet.cmdId, packet.respCode);
+        LOG.info("HuaweiBaseP2PService handlePacket: {} Code: {}", packet.cmdId, packet.respCode);
         if (waitPackets.containsKey(packet.sequenceId)) {
-            LOG.info("HuaweiP2PCalendarService handlePacket find handler");
+            LOG.info("HuaweiBaseP2PService handlePacket find handler");
             HuaweiP2PCallback handle = waitPackets.remove(packet.sequenceId);
             if(handle != null) {
                 handle.onResponse(packet.respCode, packet.respData);
             } else {
-                LOG.error("HuaweiP2PCalendarService handler is null");
+                LOG.error("HuaweiBaseP2PService handler is null");
             }
         } else {
-
             if (packet.cmdId == 1) { //Ping
-                sendAck(packet.sequenceId, packet.dstPackage, packet.srcPackage, 0xca);
+                int ret = onPingPacket(packet);
+                manager.sendAck(packet.sequenceId, packet.dstPackage, packet.srcPackage, ret);
             } else if (packet.cmdId == 2) {
+                int ret = onDataPacket(packet);
+                manager.sendAck(packet.sequenceId, packet.dstPackage, packet.srcPackage, ret);
                 handleData(packet.respData);
-                sendAck(packet.sequenceId, packet.dstPackage, packet.srcPackage, 0xca);
             }
         }
+    }
+
+    public void handleFile(String filename, byte[] data) {
+
     }
 
 }

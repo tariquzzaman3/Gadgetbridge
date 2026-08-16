@@ -54,7 +54,7 @@ public class GetSupportedCommandsRequest extends Request {
         DeviceConfig.SupportedCommands.Request commandsRequest = new DeviceConfig.SupportedCommands.Request(paramsProvider);
         byte nextService = activatedServices.remove(0);
         boolean fits = commandsRequest.addCommandsForService(nextService, this.commandsPerService.get((int) nextService));
-        while (fits && activatedServices.size() > 0) {
+        while (fits && !activatedServices.isEmpty()) {
             nextService = activatedServices.remove(0);
             fits = commandsRequest.addCommandsForService(nextService, this.commandsPerService.get((int) nextService));
         }
@@ -82,20 +82,19 @@ public class GetSupportedCommandsRequest extends Request {
             throw new ResponseTypeMismatchException(receivedPacket, DeviceConfig.SupportedCommands.Response.class);
 
         for (DeviceConfig.SupportedCommands.Response.CommandsList commandsList : ((DeviceConfig.SupportedCommands.Response) receivedPacket).commandsLists) {
-            supportProvider.getHuaweiCoordinator().addCommandsForService(
+            supportProvider.getDeviceState().addCommandsForService(
                     commandsList.service,
                     commandsList.commands
             );
         }
 
-        if (activatedServices.size() > 0) {
+        if (!activatedServices.isEmpty()) {
             GetSupportedCommandsRequest nextRequest = new GetSupportedCommandsRequest(supportProvider, activatedServices);
             this.nextRequest(nextRequest);
         } else {
-            supportProvider.getHuaweiCoordinator().printCommandsPerService();
-            if (supportProvider.getHuaweiCoordinator().supportsExpandCapability()) {
+            supportProvider.getDeviceState().printCommandsPerService();
+            if(supportProvider.getDeviceState().supportsExpandCapability()) {
                 GetExpandCapabilityRequest nextRequest = new GetExpandCapabilityRequest(supportProvider);
-                nextRequest.setFinalizeReq(dynamicServicesReq);
                 this.nextRequest(nextRequest);
             } else {
                 dynamicServicesReq.call();

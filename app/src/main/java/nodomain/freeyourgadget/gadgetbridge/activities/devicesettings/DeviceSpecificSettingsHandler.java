@@ -20,7 +20,10 @@ import android.content.Context;
 
 import androidx.activity.result.ActivityResultCaller;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.XmlRes;
 import androidx.preference.Preference;
+import androidx.preference.PreferenceScreen;
 
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
@@ -35,6 +38,7 @@ public interface DeviceSpecificSettingsHandler extends ActivityResultCaller {
      * @param preferenceKey the preference key.
      * @return the preference, if found.
      */
+    @Nullable
     <T extends Preference> T findPreference(@NonNull CharSequence preferenceKey);
 
     /**
@@ -80,4 +84,22 @@ public interface DeviceSpecificSettingsHandler extends ActivityResultCaller {
      * @return the {@link Context}.
      */
     Context getContext();
+
+    /**
+     * Navigate to the given {@link PreferenceScreen}. Used by the programmatic settings renderer to
+     * trigger sub-screen navigation for model-defined screens.
+     *
+     * @param screen the screen to navigate to.
+     */
+    void navigateToScreen(@NonNull PreferenceScreen screen);
+
+    /**
+     * Inflate preferences from an XML resource and add them to the current preference screen at
+     * the current position. Used by the programmatic settings renderer to insert
+     * {@link nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.dsl.XmlScreenSetting}
+     * entries at the position they appear in the DSL rather than appending them at the end.
+     *
+     * @param resId the XML resource ID.
+     */
+    void addXmlPreferences(@XmlRes int resId);
 }

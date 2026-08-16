@@ -1,22 +1,23 @@
 package nodomain.freeyourgadget.gadgetbridge.devices.cycling_sensor.coordinator;
 
 import android.app.Activity;
-import android.content.Context;
-import android.net.Uri;
 
 import androidx.annotation.NonNull;
 
-import nodomain.freeyourgadget.gadgetbridge.GBException;
+import java.util.HashMap;
+import java.util.Map;
+
+import de.greenrobot.dao.AbstractDao;
+import de.greenrobot.dao.Property;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLEDeviceCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
+import nodomain.freeyourgadget.gadgetbridge.devices.CyclingSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.TimeSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.cycling_sensor.activity.CyclingLiveDataActivity;
-import nodomain.freeyourgadget.gadgetbridge.devices.cycling_sensor.db.CyclingSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.CyclingSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.CyclingSampleDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
@@ -24,12 +25,10 @@ import nodomain.freeyourgadget.gadgetbridge.service.devices.cycling_sensor.suppo
 
 public class CyclingSensorCoordinator extends AbstractBLEDeviceCoordinator {
     @Override
-    protected void deleteDevice(@NonNull GBDevice gbDevice, @NonNull Device device, @NonNull DaoSession session) throws GBException {
-        final Long deviceId = device.getId();
-
-        session.getCyclingSampleDao().queryBuilder()
-                .where(CyclingSampleDao.Properties.DeviceId.eq(deviceId))
-                .buildDelete().executeDeleteWithoutDetachingEntities();
+    public Map<AbstractDao<?, ?>, Property> getAllDeviceDao(@NonNull final DaoSession session) {
+        Map<AbstractDao<?, ?>, Property> map = new HashMap<>(1);
+        map.put(session.getCyclingSampleDao(), CyclingSampleDao.Properties.DeviceId);
+        return map;
     }
 
     @Override
@@ -38,12 +37,7 @@ public class CyclingSensorCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsCyclingData() {
-        return true;
-    }
-
-    @Override
-    public boolean supportsActivityTracking() {
+    public boolean supportsCyclingData(@NonNull GBDevice device) {
         return true;
     }
 
@@ -53,25 +47,8 @@ public class CyclingSensorCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsSleepMeasurement() {
-        return false;
-    }
-    @Override
-    public boolean supportsStepCounter() {
-        return false;
-    }
-    @Override
-    public boolean supportsSpeedzones() {
-        return false;
-    }
-    @Override
-    public boolean supportsActivityTabs() {
-        return false;
-    }
-
-    @Override
-    public InstallHandler findInstallHandler(Uri uri, Context context) {
-        return null;
+    public boolean supportsCharts(@NonNull GBDevice device) {
+        return true;
     }
 
     @Override
@@ -80,12 +57,12 @@ public class CyclingSensorCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public Class<? extends Activity> getAppsManagementActivity() {
+    public Class<? extends Activity> getAppsManagementActivity(final GBDevice device) {
         return CyclingLiveDataActivity.class;
     }
 
     @Override
-    public boolean supportsRealtimeData() {
+    public boolean supportsRealtimeData(@NonNull GBDevice device) {
         return false;
     }
 
@@ -103,7 +80,7 @@ public class CyclingSensorCoordinator extends AbstractBLEDeviceCoordinator {
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return CyclingSensorSupport.class;
     }
 
@@ -117,5 +94,8 @@ public class CyclingSensorCoordinator extends AbstractBLEDeviceCoordinator {
         return true;
     }
 
-
+    @Override
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.UNKNOWN;
+    }
 }

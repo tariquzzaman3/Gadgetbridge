@@ -1,7 +1,7 @@
-/*  Copyright (C) 2019-2024 akasaka / Genjitsu Labs, Alicia Hormann, Andreas
+/*  Copyright (C) 2019-2025 akasaka / Genjitsu Labs, Alicia Hormann, Andreas
     Böhler, Andreas Shimokawa, Arjan Schrijver, Cre3per, Damien Gaignon, Daniel
     Dakhno, Daniele Gobbetti, Davis Mosenkovs, foxstidious, José Rebelo, mamucho,
-    NekoBox, opavlov, Petr Vaněk, Yoran Vulker, Yukai Li, Zhong Jianxin
+    NekoBox, opavlov, Petr Vaněk, Yoran Vulker, Yukai Li, Zhong Jianxin, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -35,14 +35,24 @@ import static nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst.PR
 import static nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst.PREF_NIGHT_MODE_SCHEDULED;
 import static nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst.PREF_NIGHT_MODE_START;
 import static nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst.PREF_SWIPE_UNLOCK;
+import static nodomain.freeyourgadget.gadgetbridge.devices.moyoung.MoyoungConstants.PREF_MOYOUNG_DEVICE_VERSION;
+import static nodomain.freeyourgadget.gadgetbridge.devices.moyoung.MoyoungConstants.PREF_MOYOUNG_WATCH_FACE;
 
+import android.Manifest;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.os.Bundle;
 import android.text.InputType;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.preference.EditTextPreference;
 import androidx.preference.ListPreference;
@@ -62,15 +72,26 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.AbstractPreferenceFragment;
-import nodomain.freeyourgadget.gadgetbridge.activities.CalBlacklistActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.CalendarSelectionActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.ConfigureContacts;
 import nodomain.freeyourgadget.gadgetbridge.activities.ConfigureWorldClocks;
+import nodomain.freeyourgadget.gadgetbridge.activities.NotificationsAppIconUploadActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.app_specific_notifications.AppSpecificNotificationSettingsActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.audiorecordings.AudioRecordingsActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.dsl.DeviceSetting;
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.dsl.DeviceSettingRenderer;
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.dsl.DeviceSettingsRefreshHandle;
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.dsl.DeviceSettingsSpec;
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.dsl.ScreenSetting;
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.dsl.XmlScreenSetting;
+import nodomain.freeyourgadget.gadgetbridge.activities.internet.InternetFirewallActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.loyaltycards.LoyaltyCardsSettingsActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.loyaltycards.LoyaltyCardsSettingsConst;
+import nodomain.freeyourgadget.gadgetbridge.activities.multipoint.MultipointPairingActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.musicmanager.MusicManagerActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.widgets.WidgetScreensListActivity;
 import nodomain.freeyourgadget.gadgetbridge.capabilities.HeartRateCapability;
@@ -79,9 +100,11 @@ import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceManager;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiConst;
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst;
+import nodomain.freeyourgadget.gadgetbridge.externalevents.gps.GBLocationService;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryConfig;
 import nodomain.freeyourgadget.gadgetbridge.model.CannedMessagesSpec;
+import nodomain.freeyourgadget.gadgetbridge.util.GBPrefs;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 import nodomain.freeyourgadget.gadgetbridge.util.preferences.GBSimpleSummaryProvider;
 import nodomain.freeyourgadget.gadgetbridge.util.preferences.MinMaxTextWatcher;
@@ -91,11 +114,26 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
 
     private static final Logger LOG = LoggerFactory.getLogger(DeviceSpecificSettingsFragment.class);
 
-    static final String FRAGMENT_TAG = "DEVICE_SPECIFIC_SETTINGS_FRAGMENT";
-
+    private DeviceSpecificSettings deviceSpecificSettings;
     private DeviceSpecificSettingsCustomizer deviceSpecificSettingsCustomizer;
 
     private GBDevice device;
+
+    /**
+     * Handle returned by {@link DeviceSettingRenderer} after rendering model-provided preferences.
+     * Run to re-evaluate conditional visibility; call {@link DeviceSettingsRefreshHandle#cleanup()}
+     * to unregister any SharedPreferences listeners registered for getOnSharedPreferenceChanged callbacks.
+     */
+    @Nullable
+    private DeviceSettingsRefreshHandle modelVisibilityRefresh;
+
+    /**
+     * Preference keys owned by the programmatic model renderer. {@link #addPreferenceHandlerFor}
+     * skips these so that {@link #setChangeListener} cannot overwrite the renderer-registered
+     * change listeners.
+     */
+    @Nullable
+    private java.util.Set<String> modelManagedKeys;
 
     private void setSettingsFileSuffix(String settingsFileSuffix) {
         Bundle args = new Bundle();
@@ -121,6 +159,51 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         setArguments(args);
     }
 
+    private final BroadcastReceiver mDeviceUpdateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(final Context context, final Intent intent) {
+            if (GBDevice.ACTION_DEVICE_CHANGED.equals(intent.getAction())) {
+                final GBDevice changedDevice = intent.getParcelableExtra(GBDevice.EXTRA_DEVICE);
+                if (changedDevice != null && changedDevice.equals(device)) {
+                    device = changedDevice; // update the state
+                    if (deviceSpecificSettingsCustomizer != null) {
+                        LOG.debug("{} changed, notifying customizer", changedDevice);
+                        deviceSpecificSettingsCustomizer.onDeviceChanged(DeviceSpecificSettingsFragment.this);
+                    }
+                    reloadEnabledPreferences();
+                    if (modelVisibilityRefresh != null) {
+                        modelVisibilityRefresh.run();
+                    }
+                }
+            }
+        }
+    };
+
+    @NonNull
+    @Override
+    public View onCreateView(@NonNull final LayoutInflater inflater,
+                             final ViewGroup container,
+                             final Bundle savedInstanceState) {
+        final View view = super.onCreateView(inflater, container, savedInstanceState);
+
+        final IntentFilter commandFilter = new IntentFilter();
+        commandFilter.addAction(GBDevice.ACTION_DEVICE_CHANGED);
+        LocalBroadcastManager.getInstance(requireContext()).registerReceiver(mDeviceUpdateReceiver, commandFilter);
+
+        return view;
+    }
+
+    @Override
+    public void onDestroyView() {
+        if (modelVisibilityRefresh != null) {
+            // Using onDestroyView (rather than onStop) keeps the listeners alive across the onStop -> onStart
+            // cycle that occurs when the user backgrounds the app or navigates into a sub-screen and back.
+            modelVisibilityRefresh.cleanup();
+        }
+        LocalBroadcastManager.getInstance(requireContext()).unregisterReceiver(mDeviceUpdateReceiver);
+        super.onDestroyView();
+    }
+
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         Bundle arguments = getArguments();
@@ -128,7 +211,7 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
             return;
         }
         String settingsFileSuffix = arguments.getString("settingsFileSuffix", null);
-        DeviceSpecificSettings deviceSpecificSettings = arguments.getParcelable("deviceSpecificSettings");
+        this.deviceSpecificSettings = arguments.getParcelable("deviceSpecificSettings");
         this.deviceSpecificSettingsCustomizer = arguments.getParcelable("deviceSpecificSettingsCustomizer");
         this.device = arguments.getParcelable("device");
 
@@ -140,15 +223,96 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
 
         LOG.debug("onCreatePreferences: {}", rootKey);
 
+        final DeviceSettingsSpec modelSpec = device.getDeviceCoordinator().getDeviceSettings(device);
+
+        if (rootKey != null) {
+            // Check whether rootKey belongs to a model-defined ScreenSetting and, if so, render
+            // the screen programmatically, bypassing the XML inflation path entirely.
+            if (modelSpec != null) {
+                final ScreenSetting modelScreen = modelSpec.findScreen(rootKey);
+                if (modelScreen != null) {
+                    final PreferenceScreen prefScreen = getPreferenceManager().createPreferenceScreen(requireContext());
+                    prefScreen.setKey(rootKey);
+                    prefScreen.setTitle(modelScreen.getTitle());
+                    setPreferenceScreen(prefScreen);
+                    final Prefs prefs = new Prefs(getPreferenceManager().getSharedPreferences());
+                    modelVisibilityRefresh = DeviceSettingRenderer.INSTANCE.render(
+                            modelScreen.getChildren(),
+                            prefScreen,
+                            prefs,
+                            this
+                    );
+                    // A model ScreenSetting can share a key with a DeviceSpecificSettingsScreen
+                    // enum entry (e.g. CONNECTION) that also has legacy XML sub-screens registered
+                    // against it (e.g. the generic reconnect/connection-priority settings added
+                    // unconditionally for every coordinator) - append those after the model's own
+                    // children rather than losing them.
+                    final List<Integer> legacySubScreens = deviceSpecificSettings.getScreen(rootKey);
+                    if (legacySubScreens != null) {
+                        // addRootScreen() registers the enum's own folder placeholder XML (an
+                        // empty, title-only PreferenceScreen) as a "sub-screen" of itself - skip
+                        // it, only inline the actual additional content.
+                        int enumPlaceholderXml = 0;
+                        for (final DeviceSpecificSettingsScreen enumScreen : DeviceSpecificSettingsScreen.values()) {
+                            if (enumScreen.getKey().equals(rootKey)) {
+                                enumPlaceholderXml = enumScreen.getXml();
+                                break;
+                            }
+                        }
+                        for (final int subScreen : legacySubScreens) {
+                            if (subScreen != enumPlaceholderXml) {
+                                addPreferencesFromResource(subScreen);
+                            }
+                        }
+                    }
+                    reloadEnabledPreferences();
+                    return;
+                }
+            }
+        }
+
         if (rootKey == null) {
             // we are the main preference screen
-            boolean first = true;
-            for (int setting : deviceSpecificSettings.getRootScreens()) {
-                if (first) {
-                    setPreferencesFromResource(setting, null);
-                    first = false;
-                } else {
-                    addPreferencesFromResource(setting);
+            if (modelSpec != null) {
+                modelManagedKeys = modelSpec.collectAllKeys();
+                setPreferenceScreen(getPreferenceManager().createPreferenceScreen(requireContext()));
+                final Prefs prefs = new Prefs(getPreferenceManager().getSharedPreferences());
+                modelVisibilityRefresh = DeviceSettingRenderer.INSTANCE.render(
+                        modelSpec.getItems(),
+                        getPreferenceScreen(),
+                        prefs,
+                        this
+                );
+                // XmlScreenSetting nodes are inflated inline by the renderer; only add the
+                // remaining XML screens (CONNECTION, BATTERY, DEVELOPER, etc.) at the end.
+                final java.util.Set<Integer> modelXmlScreens = new java.util.HashSet<>();
+                for (final DeviceSetting item : modelSpec.getItems()) {
+                    if (item instanceof XmlScreenSetting) {
+                        modelXmlScreens.add(((XmlScreenSetting) item).getScreen().getXml());
+                    }
+                }
+                for (final int screen : deviceSpecificSettings.getRootScreens()) {
+                    if (modelXmlScreens.contains(screen)) {
+                        continue;
+                    }
+                    // A model ScreenSetting can claim the same key as a DeviceSpecificSettingsScreen
+                    // enum entry (e.g. CONNECTION, which is unconditionally added above) to provide
+                    // its root entry programmatically instead of via the enum's generic XML.
+                    final DeviceSpecificSettingsScreen enumScreen = DeviceSpecificSettingsScreen.fromXml(screen);
+                    if (enumScreen != null && modelSpec.findScreen(enumScreen.getKey()) != null) {
+                        continue;
+                    }
+                    addPreferencesFromResource(screen);
+                }
+            } else {
+                boolean first = true;
+                for (int setting : deviceSpecificSettings.getRootScreens()) {
+                    if (first) {
+                        setPreferencesFromResource(setting, null);
+                        first = false;
+                    } else {
+                        addPreferencesFromResource(setting);
+                    }
                 }
             }
         } else {
@@ -187,6 +351,13 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         for (final DeviceSpecificSettingsScreen value : DeviceSpecificSettingsScreen.values()) {
             final PreferenceScreen prefScreen = findPreference(value.getKey());
             if (prefScreen != null) {
+                if (modelSpec != null && modelSpec.findScreen(value.getKey()) != null) {
+                    // This screen is a model ScreenSetting rendered in-memory by
+                    // DeviceSettingRenderer; it already navigates via the default nested
+                    // PreferenceScreen click handling, so wiring this listener too would push a
+                    // second, redundant navigation onto the back stack.
+                    continue;
+                }
                 prefScreen.setOnPreferenceClickListener(p -> {
                     onNavigateToScreen(prefScreen);
                     return true;
@@ -195,6 +366,19 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         }
 
         setChangeListener(rootKey);
+
+        reloadEnabledPreferences();
+    }
+
+    private void reloadEnabledPreferences() {
+        if (deviceSpecificSettings != null) {
+            for (String connectedPreference : deviceSpecificSettings.getConnectedPreferences()) {
+                final Preference pref = findPreference(connectedPreference);
+                if (pref != null) {
+                    pref.setEnabled(device.isInitialized());
+                }
+            }
+        }
     }
 
     private void addDynamicSettings(final String rootKey) {
@@ -211,7 +395,7 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         }
         final BatteryConfig[] batteryConfigs = coordinator.getBatteryConfig(device);
         for (final BatteryConfig batteryConfig : batteryConfigs) {
-            if (batteryConfigs.length > 1 || coordinator.addBatteryPollingSettings()) {
+            if (batteryConfigs.length > 1) {
                 final Preference prefHeader = new PreferenceCategory(requireContext());
                 prefHeader.setKey("pref_battery_header_" + batteryConfig.getBatteryIndex());
                 prefHeader.setIconSpaceReserved(false);
@@ -344,16 +528,27 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         final ListPreference languageListPreference = findPreference("language");
         if (languageListPreference != null) {
             final String[] supportedLanguages = coordinator.getSupportedLanguageSettings(device);
-            CharSequence[] entries = languageListPreference.getEntries();
-            CharSequence[] values = languageListPreference.getEntryValues();
-            for (int i = entries.length - 1; i >= 0; i--) {
-                if (!ArrayUtils.contains(supportedLanguages, values[i])) {
-                    entries = ArrayUtils.remove(entries, i);
-                    values = ArrayUtils.remove(values, i);
+            if (supportedLanguages != null) {
+                CharSequence[] entries = languageListPreference.getEntries();
+                CharSequence[] values = languageListPreference.getEntryValues();
+                for (int i = entries.length - 1; i >= 0; i--) {
+                    if (!ArrayUtils.contains(supportedLanguages, values[i])) {
+                        entries = ArrayUtils.remove(entries, i);
+                        values = ArrayUtils.remove(values, i);
+                    }
                 }
+                languageListPreference.setEntries(entries);
+                languageListPreference.setEntryValues(values);
             }
-            languageListPreference.setEntries(entries);
-            languageListPreference.setEntryValues(values);
+            DeviceSettingsUtils.sortListPreference(
+                    languageListPreference,
+                    (supportedLanguages != null) && supportedLanguages.length > 0 && "auto".equals(supportedLanguages[0])
+            );
+        }
+
+        final ListPreference transliterationPreference = findPreference(DeviceSettingsPreferenceConst.PREF_TRANSLITERATION_LANGUAGES);
+        if (transliterationPreference != null) {
+            DeviceSettingsUtils.sortListPreference(transliterationPreference, false);
         }
 
         String disconnectNotificationState = prefs.getString(PREF_DISCONNECT_NOTIFICATION, PREF_DO_NOT_DISTURB_OFF);
@@ -553,8 +748,15 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_HEARTRATE_STRESS_RELAXATION_REMINDER);
         addPreferenceHandlerFor(PREF_HEARTRATE_SLEEP_BREATHING_QUALITY_MONITORING);
         addPreferenceHandlerFor(PREF_SPO2_ALL_DAY_MONITORING);
+        addPreferenceHandlerFor(PREF_SPO2_MEASUREMENT_INTERVAL);
+        addPreferenceHandlerFor(PREF_SPO2_MEASUREMENT_TIME);
+        addPreferenceHandlerFor(PREF_SPO2_MEASUREMENT_START);
+        addPreferenceHandlerFor(PREF_SPO2_MEASUREMENT_END);
         addPreferenceHandlerFor(PREF_SPO2_LOW_ALERT_THRESHOLD);
         addPreferenceHandlerFor(PREF_HRV_ALL_DAY_MONITORING);
+        addPreferenceHandlerFor(PREF_TEMPERATURE_ALL_DAY_MONITORING);
+        addPreferenceHandlerFor(PREF_GLUCOSE_THRESHOLD_HIGH);
+        addPreferenceHandlerFor(PREF_GLUCOSE_THRESHOLD_LOW);
         addPreferenceHandlerFor(PREF_DO_NOT_DISTURB_NOAUTO);
         addPreferenceHandlerFor(PREF_DO_NOT_DISTURB_NOAUTO_START);
         addPreferenceHandlerFor(PREF_DO_NOT_DISTURB_NOAUTO_END);
@@ -570,6 +772,8 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_DO_NOT_DISTURB_SU);
         addPreferenceHandlerFor(PREF_DO_NOT_DISTURB_LIFT_WRIST);
         addPreferenceHandlerFor(PREF_DO_NOT_DISTURB_NOT_WEAR);
+        addPreferenceHandlerFor(PREF_DO_NOT_DISTURB_BOOL);
+        addPreferenceHandlerFor(PREF_DO_NOT_DISTURB_FOLLOW_PHONE);
         addPreferenceHandlerFor(PREF_FIND_PHONE);
         addPreferenceHandlerFor(PREF_FIND_PHONE_DURATION);
         addPreferenceHandlerFor(PREF_AUTOLIGHT);
@@ -583,6 +787,7 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_CASIO_ALERT_CALENDAR);
         addPreferenceHandlerFor(PREF_CASIO_ALERT_OTHER);
         addPreferenceHandlerFor(PREF_SCREEN_ON_ON_NOTIFICATIONS);
+        addPreferenceHandlerFor(PREF_SCREEN_ON_ON_NOTIFICATIONS_TIMEOUT);
         addPreferenceHandlerFor(PREF_WORKOUT_KEEP_SCREEN_ON);
         addPreferenceHandlerFor(PREF_KEY_VIBRATION);
         addPreferenceHandlerFor(PREF_OPERATING_SOUNDS);
@@ -593,12 +798,18 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_HYDRATION_DND);
         addPreferenceHandlerFor(PREF_HYDRATION_DND_START);
         addPreferenceHandlerFor(PREF_HYDRATION_DND_END);
+        addPreferenceHandlerFor(PREF_HYDRATION_REMINDER_START);
+        addPreferenceHandlerFor(PREF_HYDRATION_REMINDER_END);
         addPreferenceHandlerFor(PREF_AMPM_ENABLED);
         addPreferenceHandlerFor(PREF_SOUNDS);
         addPreferenceHandlerFor(PREF_CAMERA_REMOTE);
         addPreferenceHandlerFor(PREF_SCREEN_LIFT_WRIST);
-        addPreferenceHandlerFor(PREF_SYNC_CALENDAR);
-        addPreferenceHandlerFor(PREF_CALENDAR_LOOKAHEAD_DAYS);
+
+        final Preference sendGpsToBandPref = findPreference(PREF_WORKOUT_SEND_GPS_TO_BAND);
+        if (sendGpsToBandPref != null && !GBLocationService.isGpsSupportedAndEnabled()) {
+            sendGpsToBandPref.setEnabled(false);
+            sendGpsToBandPref.setSummary(R.string.phone_gps_not_available);
+        }
 
         addPreferenceHandlerFor(PREF_BATTERY_POLLING_ENABLE);
         addPreferenceHandlerFor(PREF_BATTERY_POLLING_INTERVAL);
@@ -609,13 +820,20 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_NOTIFICATION_DELAY_CALLS);
         addPreferenceHandlerFor(PREF_CALL_REJECT_METHOD);
         addPreferenceHandlerFor(PREF_AUTO_REPLY_INCOMING_CALL);
+        addPreferenceHandlerFor(PREF_ENABLE_CALL_REJECT);
+        addPreferenceHandlerFor(PREF_ENABLE_SMS_QUICK_REPLY);
 
         addPreferenceHandlerFor(PREF_SLEEP_MODE_SLEEP_SCREEN);
         addPreferenceHandlerFor(PREF_SLEEP_MODE_SMART_ENABLE);
 
         addPreferenceHandlerFor(PREF_ACTIVE_NOISE_CANCELLING_TOGGLE);
+        addPreferenceHandlerFor(PREF_NOISE_CONTROL_SELECTOR);
         addPreferenceHandlerFor(PREF_WEAR_SENSOR_TOGGLE);
         addPreferenceHandlerFor(PREF_BANDW_PSERIES_GUI_VPT_LEVEL);
+
+        addPreferenceHandlerFor(PREF_EVEN_REALITIES_SCREEN_HEIGHT);
+        addPreferenceHandlerFor(PREF_EVEN_REALITIES_SCREEN_DEPTH);
+        addPreferenceHandlerFor(PREF_EVEN_REALITIES_SCREEN_ACTIVATION_ANGLE);
 
         addPreferenceHandlerFor(PREF_HYBRID_HR_DRAW_WIDGET_CIRCLES);
         addPreferenceHandlerFor(PREF_HYBRID_HR_FORCE_WHITE_COLOR);
@@ -640,9 +858,21 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
 
         addPreferenceHandlerFor(PREF_NOTHING_EAR1_INEAR);
         addPreferenceHandlerFor(PREF_NOTHING_EAR1_AUDIOMODE);
+        addPreferenceHandlerFor(PREF_HEADPHONES_LOW_LATENCY);
+        addPreferenceHandlerFor(PREF_HEADPHONES_EQUALIZER);
+        addPreferenceHandlerFor(PREF_NOTHING_EAR1_ULTRA_BASS_ENABLED);
+        addPreferenceHandlerFor(PREF_NOTHING_EAR1_ULTRA_BASS_LEVEL);
+        addPreferenceHandlerFor(PREF_NOTHING_EAR1_SPATIAL_AUDIO);
 
         addPreferenceHandlerFor(PREF_HUAWEI_FREEBUDS_INEAR);
         addPreferenceHandlerFor(PREF_HUAWEI_FREEBUDS_AUDIOMODE);
+        addPreferenceHandlerFor(PREF_HUAWEI_FREEBUDS_ANC_MODE);
+        addPreferenceHandlerFor(PREF_HUAWEI_FREEBUDS_VOICE_BOOST);
+        addPreferenceHandlerFor(PREF_HUAWEI_FREEBUDS_BETTER_AUDIO_QUALITY);
+        addPreferenceHandlerFor(PREF_HUAWEI_FREEBUDS_ADAPTIVE_VOLUME);
+        addPreferenceHandlerFor(PREF_HUAWEI_FREEBUDS_EXTRA_MEDIA_VOLUME);
+        addPreferenceHandlerFor(PREF_HUAWEI_FREEBUDS_FIND_HEADPHONES);
+
 
         addPreferenceHandlerFor(PREF_GALAXY_BUDS_AMBIENT_VOICE_FOCUS);
         addPreferenceHandlerFor(PREF_GALAXY_BUDS_AMBIENT_VOLUME);
@@ -713,43 +943,51 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_REDMI_BUDS_5_PRO_EQUALIZER_BAND_12k);
         addPreferenceHandlerFor(PREF_REDMI_BUDS_5_PRO_EQUALIZER_BAND_16k);
 
-        addPreferenceHandlerFor(PREF_SONY_AMBIENT_SOUND_CONTROL);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_CONTROL_SINGLE_TAP_LEFT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_CONTROL_SINGLE_TAP_RIGHT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_CONTROL_DOUBLE_TAP_LEFT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_CONTROL_DOUBLE_TAP_RIGHT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_CONTROL_TRIPLE_TAP_LEFT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_CONTROL_TRIPLE_TAP_RIGHT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_CONTROL_LONG_TAP_MODE_LEFT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_CONTROL_LONG_TAP_MODE_RIGHT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_6_ACTIVE_EQUALIZER_PRESET);
+
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_CONTROL_SINGLE_TAP_LEFT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_CONTROL_SINGLE_TAP_RIGHT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_CONTROL_DOUBLE_TAP_LEFT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_CONTROL_DOUBLE_TAP_RIGHT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_CONTROL_TRIPLE_TAP_LEFT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_CONTROL_TRIPLE_TAP_RIGHT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_CONTROL_LONG_TAP_MODE_LEFT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_CONTROL_LONG_TAP_MODE_RIGHT);
+        addPreferenceHandlerFor(PREF_REDMI_BUDS_8_ACTIVE_EQUALIZER_PRESET);
+
         addPreferenceHandlerFor(PREF_SONY_AMBIENT_SOUND_CONTROL_BUTTON_MODE);
-        addPreferenceHandlerFor(PREF_SONY_FOCUS_VOICE);
         addPreferenceHandlerFor(PREF_SONY_AMBIENT_SOUND_LEVEL);
-        addPreferenceHandlerFor(PREF_SONY_SOUND_POSITION);
-        addPreferenceHandlerFor(PREF_SONY_SURROUND_MODE);
-        addPreferenceHandlerFor(PREF_SONY_EQUALIZER_MODE);
-        addPreferenceHandlerFor(PREF_SONY_EQUALIZER_BAND_400);
-        addPreferenceHandlerFor(PREF_SONY_EQUALIZER_BAND_1000);
-        addPreferenceHandlerFor(PREF_SONY_EQUALIZER_BAND_2500);
-        addPreferenceHandlerFor(PREF_SONY_EQUALIZER_BAND_6300);
-        addPreferenceHandlerFor(PREF_SONY_EQUALIZER_BAND_16000);
-        addPreferenceHandlerFor(PREF_SONY_EQUALIZER_BASS);
-        addPreferenceHandlerFor(PREF_SONY_AUDIO_UPSAMPLING);
-        addPreferenceHandlerFor(PREF_SONY_TOUCH_SENSOR);
-        addPreferenceHandlerFor(PREF_SONY_PAUSE_WHEN_TAKEN_OFF);
-        addPreferenceHandlerFor(PREF_SONY_BUTTON_MODE_LEFT);
-        addPreferenceHandlerFor(PREF_SONY_BUTTON_MODE_RIGHT);
-        addPreferenceHandlerFor(PREF_SONY_QUICK_ACCESS_DOUBLE_TAP);
-        addPreferenceHandlerFor(PREF_SONY_QUICK_ACCESS_TRIPLE_TAP);
-        addPreferenceHandlerFor(PREF_SONY_AUTOMATIC_POWER_OFF);
-        addPreferenceHandlerFor(PREF_SONY_NOTIFICATION_VOICE_GUIDE);
-        addPreferenceHandlerFor(PREF_SONY_SPEAK_TO_CHAT);
-        addPreferenceHandlerFor(PREF_SONY_SPEAK_TO_CHAT_SENSITIVITY);
-        addPreferenceHandlerFor(PREF_SONY_SPEAK_TO_CHAT_FOCUS_ON_VOICE);
-        addPreferenceHandlerFor(PREF_SONY_SPEAK_TO_CHAT_TIMEOUT);
-        addPreferenceHandlerFor(PREF_SONY_CONNECT_TWO_DEVICES);
-        addPreferenceHandlerFor(PREF_SONY_ADAPTIVE_VOLUME_CONTROL);
-        addPreferenceHandlerFor(PREF_SONY_WIDE_AREA_TAP);
+
+        addPreferenceHandlerFor(PREF_GYMLINK_ENABLED);
+        addPreferenceHandlerFor(PREF_ANTPLUS_ENABLED);
+        addPreferenceHandlerFor(PREF_HR_BROADCAST);
+        addPreferenceHandlerFor(PREF_DUAL_CONNECTION);
+
+        addPreferenceHandlerFor(PREF_SOS_CONTACT_NAME);
+        addPreferenceHandlerFor(PREF_SOS_CONTACT_NUMBER);
+
+        addPreferenceHandlerFor(PREF_SHOKZ_CONTROLS_LONG_PRESS_MULTI_FUNCTION);
+        addPreferenceHandlerFor(PREF_SHOKZ_CONTROLS_SIMULTANEOUS_VOLUME_UP_DOWN);
 
         addPreferenceHandlerFor(PREF_SOUNDCORE_AMBIENT_SOUND_CONTROL);
         addPreferenceHandlerFor(PREF_SOUNDCORE_WIND_NOISE_REDUCTION);
         addPreferenceHandlerFor(PREF_SOUNDCORE_TRANSPARENCY_VOCAL_MODE);
         addPreferenceHandlerFor(PREF_SOUNDCORE_ADAPTIVE_NOISE_CANCELLING);
+        addPreferenceHandlerFor(PREF_SOUNDCORE_ANC_MODE);
         addPreferenceHandlerFor(PREF_SOUNDCORE_TOUCH_TONE);
         addPreferenceHandlerFor(PREF_SOUNDCORE_WEARING_TONE);
+        addPreferenceHandlerFor(PREF_SOUNDCORE_BATTERY_LOW_TONE);
         addPreferenceHandlerFor(PREF_SOUNDCORE_WEARING_DETECTION);
+        addPreferenceHandlerFor(PREF_SOUNDCORE_DUAL_CONNECTION);
+        addPreferenceHandlerFor(PREF_SOUNDCORE_CONTROL_TOUCH_DISABLED);
         addPreferenceHandlerFor(PREF_SOUNDCORE_CONTROL_SINGLE_TAP_DISABLED);
         addPreferenceHandlerFor(PREF_SOUNDCORE_CONTROL_DOUBLE_TAP_DISABLED);
         addPreferenceHandlerFor(PREF_SOUNDCORE_CONTROL_TRIPLE_TAP_DISABLED);
@@ -765,7 +1003,9 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_SOUNDCORE_VOICE_PROMPTS);
         addPreferenceHandlerFor(PREF_SOUNDCORE_BUTTON_BRIGHTNESS);
         addPreferenceHandlerFor(PREF_SOUNDCORE_AUTO_POWER_OFF);
+        addPreferenceHandlerFor(PREF_SOUNDCORE_3D_SURROUND);
         addPreferenceHandlerFor(PREF_SOUNDCORE_LDAC_MODE);
+        addPreferenceHandlerFor(PREF_SOUNDCORE_GAMING_MODE);
         addPreferenceHandlerFor(PREF_SOUNDCORE_ADAPTIVE_DIRECTION);
         addPreferenceHandlerFor(PREF_SOUNDCORE_EQUALIZER_PRESET);
         addPreferenceHandlerFor(PREF_SOUNDCORE_EQUALIZER_DIRECTION);
@@ -789,6 +1029,7 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_SOUNDCORE_EQUALIZER_BAND9_VALUE);
 
         addPreferenceHandlerFor(PREF_MOONDROP_EQUALIZER_PRESET);
+        addPreferenceHandlerFor(PREF_MOONDROP_ANC_MODE);
         addPreferenceHandlerFor(PREF_MOONDROP_TOUCH_PLAY_PAUSE_EARBUD);
         addPreferenceHandlerFor(PREF_MOONDROP_TOUCH_PLAY_PAUSE_TRIGGER);
         addPreferenceHandlerFor(PREF_MOONDROP_TOUCH_MEDIA_PREV_EARBUD);
@@ -804,7 +1045,6 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_MOONDROP_TOUCH_ANC_MODE_EARBUD);
         addPreferenceHandlerFor(PREF_MOONDROP_TOUCH_ANC_MODE_TRIGGER);
 
-        addPreferenceHandlerFor(PREF_MISCALE_WEIGHT_UNIT);
         addPreferenceHandlerFor(PREF_MISCALE_SMALL_OBJECTS);
 
         addPreferenceHandlerFor(PREF_MIJIA_LYWSD_COMFORT_TEMPERATURE_LOWER);
@@ -814,7 +1054,15 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
 
         addPreferenceHandlerFor(PREF_FEMOMETER_MEASUREMENT_MODE);
 
+        addPreferenceHandlerFor(PREF_MOYOUNG_WATCH_FACE);
+        addPreferenceHandlerFor(PREF_MOYOUNG_DEVICE_VERSION);
+
         addPreferenceHandlerFor(PREF_QC35_NOISE_CANCELLING_LEVEL);
+
+        addPreferenceHandlerFor(PREF_DUAL_DEVICE_SUPPORT);
+
+        addPreferenceHandlerFor(PREF_DEVICE_LOGS_TOGGLE);
+
         addPreferenceHandlerFor(PREF_USER_FITNESS_GOAL);
         addPreferenceHandlerFor(PREF_USER_FITNESS_GOAL_NOTIFICATION);
         addPreferenceHandlerFor(PREF_USER_FITNESS_GOAL_SECONDARY);
@@ -838,6 +1086,7 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_GPS_SATELLITE_SEARCH);
         addPreferenceHandlerFor(PREF_AGPS_EXPIRY_REMINDER_ENABLED);
         addPreferenceHandlerFor(PREF_AGPS_EXPIRY_REMINDER_TIME);
+        addPreferenceHandlerFor(PREF_ALWAYS_ON_DISPLAY);
         addPreferenceHandlerFor(PREF_ALWAYS_ON_DISPLAY_FOLLOW_WATCHFACE);
         addPreferenceHandlerFor(PREF_ALWAYS_ON_DISPLAY_STYLE);
         addPreferenceHandlerFor(PREF_WEARDIRECTION);
@@ -845,9 +1094,11 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
 
         addPreferenceHandlerFor(PREF_VOLUME);
         addPreferenceHandlerFor(PREF_CROWN_VIBRATION);
+        addPreferenceHandlerFor(PREF_PROMPT_TONE);
         addPreferenceHandlerFor(PREF_ALERT_TONE);
         addPreferenceHandlerFor(PREF_COVER_TO_MUTE);
         addPreferenceHandlerFor(PREF_VIBRATE_FOR_ALERT);
+        addPreferenceHandlerFor(PREF_VIBRATION_INTENSITY);
         addPreferenceHandlerFor(PREF_TEXT_TO_SPEECH);
 
         addPreferenceHandlerFor(PREF_OFFLINE_VOICE_RESPOND_TURN_WRIST);
@@ -856,8 +1107,6 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREF_OFFLINE_VOICE_LANGUAGE);
 
         addPreferenceHandlerFor(PREF_VOICE_SERVICE_LANGUAGE);
-
-        addPreferenceHandlerFor(PREF_TEMPERATURE_SCALE_CF);
 
         addPreferenceHandlerFor(PREF_PREFIX_NOTIFICATION_WITH_APP);
 
@@ -879,12 +1128,55 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         addPreferenceHandlerFor(PREFS_KEY_DEVICE_BLE_API_DEVICE_STATE);
         addPreferenceHandlerFor(PREFS_KEY_DEVICE_BLE_API_DEVICE_READ_WRITE);
         addPreferenceHandlerFor(PREFS_KEY_DEVICE_BLE_API_DEVICE_NOTIFY);
+        addPreferenceHandlerFor(PREFS_KEY_DEVICE_BLE_API_CHARACTERISTIC);
         addPreferenceHandlerFor(PREFS_KEY_DEVICE_BLE_API_PACKAGE);
 
         addPreferenceHandlerFor("lock");
 
         addPreferenceHandlerFor(PREF_BATTERY_MINIMUM_CHARGE);
-        addPreferenceHandlerFor(PREF_BATTERY_ALLOW_PASS_THOUGH);
+        addPreferenceHandlerFor(PREF_BATTERY_MAXIMUM_CHARGE);
+        addPreferenceHandlerFor(PREF_BATTERY_ALLOW_PASS_THROUGH);
+        addPreferenceHandlerFor(PREF_BATTERY_ALLOW_BYPASS);
+        addPreferenceHandlerFor(PREF_OUTPUT_POWER_GRID);
+        addPreferenceHandlerFor(PREF_OFFGRID_MODE);
+
+        addPreferenceHandlerFor(PREF_DISPLAY_ENABLED);
+        addPreferenceHandlerFor(PREF_DISPLAY_ENABLED_ALL_DAY);
+        addPreferenceHandlerFor(PREF_DISPLAY_ON_START);
+        addPreferenceHandlerFor(PREF_DISPLAY_ON_END);
+
+        addPreferenceHandlerFor(PREF_CALENDAR_SYNC_EVENTS_AMOUNT);
+        addPreferenceHandlerFor(PREF_CALENDAR_MAX_TITLE_LENGTH);
+        addPreferenceHandlerFor(PREF_CALENDAR_MAX_DESC_LENGTH);
+        addPreferenceHandlerFor(PREF_CALENDAR_TARGET_APP);
+
+        final Preference syncCalendarPreference = findPreference(PREF_SYNC_CALENDAR);
+        if (syncCalendarPreference != null) {
+            if (requireContext().checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
+                syncCalendarPreference.setEnabled(false);
+                syncCalendarPreference.setSummary(R.string.permission_not_granted_calendar);
+            }
+            if (requireContext().checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+                final Preference syncBirthdaysPreference = findPreference(PREF_SYNC_BIRTHDAYS);
+                if (syncBirthdaysPreference != null) {
+                    syncBirthdaysPreference.setEnabled(false);
+                    syncBirthdaysPreference.setSummary(R.string.permission_not_granted_contacts);
+                }
+            }
+            addPreferenceHandlerFor(PREF_SYNC_CALENDAR);
+            addPreferenceHandlerFor(PREF_SYNC_BIRTHDAYS);
+            addPreferenceHandlerFor(PREF_CALENDAR_LOOKAHEAD_DAYS);
+            addPreferenceHandlerFor(PREF_CALENDAR_SYNC_CANCELED);
+            addPreferenceHandlerFor(PREF_CALENDAR_SYNC_DECLINED);
+            addPreferenceHandlerFor(PREF_CALENDAR_SYNC_FOCUS_TIME);
+            addPreferenceHandlerFor(PREF_CALENDAR_SYNC_ALL_DAY);
+            addPreferenceHandlerFor(PREF_CALENDAR_SYNC_WORKING_LOCATION);
+            addPreferenceHandlerFor(PREF_CALENDAR_SYNC_EVENT_REMINDERS);
+        }
+
+        addPreferenceHandlerFor(PREF_ATC_BLE_OEPL_MODEL);
+        addPreferenceHandlerFor(PREF_ATC_BLE_OEPL_BLE_ADV_INTERVAL);
+        addPreferenceHandlerFor(PREF_ATC_BLE_OEPL_OEPL_PROTOCOL_ENABLE);
 
         final Preference dischargeIntervalsSet = findPreference(PREF_BATTERY_DISCHARGE_INTERVALS_SET);
         if (dischargeIntervalsSet != null) {
@@ -1113,6 +1405,19 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
             });
         }
 
+        final Preference notifications_app_icon_upload = findPreference(PREF_UPLOAD_NOTIFICATIONS_APP_ICON);
+        if (notifications_app_icon_upload != null) {
+            notifications_app_icon_upload.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference preference) {
+                    final Intent intent = new Intent(getContext(), NotificationsAppIconUploadActivity.class);
+                    intent.putExtra(GBDevice.EXTRA_DEVICE, device);
+                    startActivity(intent);
+                    return true;
+                }
+            });
+        }
+
         final Preference widgets = findPreference(PREF_WIDGETS);
         if (widgets != null) {
             widgets.setOnPreferenceClickListener(preference -> {
@@ -1123,15 +1428,13 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
             });
         }
 
-        final Preference calendarBlacklist = findPreference("blacklist_calendars");
+        final Preference calendarBlacklist = findPreference(GBPrefs.CALENDAR_BLACKLIST);
         if (calendarBlacklist != null) {
-            calendarBlacklist.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
-                public boolean onPreferenceClick(Preference preference) {
-                    Intent intent = new Intent(getContext(), CalBlacklistActivity.class);
-                    intent.putExtra(GBDevice.EXTRA_DEVICE, device);
-                    startActivity(intent);
-                    return true;
-                }
+            calendarBlacklist.setOnPreferenceClickListener(preference -> {
+                Intent intent = new Intent(getContext(), CalendarSelectionActivity.class);
+                intent.putExtra(GBDevice.EXTRA_DEVICE, device);
+                startActivity(intent);
+                return true;
             });
         }
 
@@ -1140,6 +1443,7 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         final Preference cannedMessagesDismissCall = findPreference("canned_messages_dismisscall_send");
         if (cannedMessagesDismissCall != null) {
             cannedMessagesDismissCall.setOnPreferenceClickListener(new androidx.preference.Preference.OnPreferenceClickListener() {
+                @Override
                 public boolean onPreferenceClick(androidx.preference.Preference preference) {
                     ArrayList<String> messages = new ArrayList<>();
                     for (int i = 1; i <= cannedRepliesSlotCount; i++) {
@@ -1169,6 +1473,7 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         if (cannedMessagesGeneric != null) {
 
             cannedMessagesGeneric.setOnPreferenceClickListener(new androidx.preference.Preference.OnPreferenceClickListener() {
+                @Override
                 public boolean onPreferenceClick(androidx.preference.Preference preference) {
                     final ArrayList<String> messages = new ArrayList<>();
                     for (int i = 1; i <= cannedRepliesSlotCount; i++) {
@@ -1215,71 +1520,87 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         setInputTypeFor(DeviceSettingsPreferenceConst.PREF_BANGLEJS_TEXT_BITMAP_SIZE, InputType.TYPE_CLASS_NUMBER);
         setInputTypeFor(DeviceSettingsPreferenceConst.PREF_AUTO_REPLY_INCOMING_CALL_DELAY, InputType.TYPE_CLASS_NUMBER);
         setInputTypeFor("hplus_screentime", InputType.TYPE_CLASS_NUMBER);
-        setNumericInputTypeWithRangeFor(DeviceSettingsPreferenceConst.PREF_BATTERY_DISCHARGE_INTERVAL1_WATT, 80, 800, false);
-        setNumericInputTypeWithRangeFor(DeviceSettingsPreferenceConst.PREF_BATTERY_DISCHARGE_INTERVAL2_WATT, 80, 800, false);
-        setNumericInputTypeWithRangeFor(DeviceSettingsPreferenceConst.PREF_BATTERY_DISCHARGE_INTERVAL3_WATT, 80, 800, false);
-        setNumericInputTypeWithRangeFor(DeviceSettingsPreferenceConst.PREF_BATTERY_DISCHARGE_INTERVAL4_WATT, 80, 800, false);
-        setNumericInputTypeWithRangeFor(DeviceSettingsPreferenceConst.PREF_BATTERY_DISCHARGE_INTERVAL5_WATT, 80, 800, false);
+        setInputTypeFor(PREF_CALENDAR_SYNC_EVENTS_AMOUNT, InputType.TYPE_CLASS_NUMBER);
+        setInputTypeFor(PREF_CALENDAR_MAX_TITLE_LENGTH, InputType.TYPE_CLASS_NUMBER);
+        setInputTypeFor(PREF_CALENDAR_MAX_DESC_LENGTH, InputType.TYPE_CLASS_NUMBER);
+
+        setNumericInputTypeWithRangeFor(PREF_BATTERY_DISCHARGE_INTERVAL1_WATT, 80, 800, false);
+        setNumericInputTypeWithRangeFor(PREF_BATTERY_DISCHARGE_INTERVAL2_WATT, 80, 800, false);
+        setNumericInputTypeWithRangeFor(PREF_BATTERY_DISCHARGE_INTERVAL3_WATT, 80, 800, false);
+        setNumericInputTypeWithRangeFor(PREF_BATTERY_DISCHARGE_INTERVAL4_WATT, 80, 800, false);
+        setNumericInputTypeWithRangeFor(PREF_BATTERY_DISCHARGE_INTERVAL5_WATT, 80, 800, false);
+        setNumericInputTypeWithRangeFor(PREF_OUTPUT_POWER_GRID, 0, 2400, false);
         setNumericInputTypeWithRangeFor(PREF_BATTERY_MINIMUM_CHARGE, 0, 100, false);
+        setNumericInputTypeWithRangeFor(PREF_BATTERY_MAXIMUM_CHARGE, 0, 100, false);
+        setNumericInputTypeWithRangeFor(PREF_SOLAR_PANEL1_PEAK_W, 0, 1000, false);
+        setNumericInputTypeWithRangeFor(PREF_SOLAR_PANEL2_PEAK_W, 0, 1000, false);
+        setNumericInputTypeWithRangeFor(PREF_SOLAR_PANEL3_PEAK_W, 0, 1000, false);
+        setNumericInputTypeWithRangeFor(PREF_SOLAR_PANEL4_PEAK_W, 0, 1000, false);
 
         new PasswordCapabilityImpl().registerPreferences(getContext(), coordinator.getPasswordCapability(), this);
         new HeartRateCapability().registerPreferences(getContext(), coordinator.getHeartRateMeasurementIntervals(), this);
 
         Set<String> deviceActionsFellSleepSelection = prefs.getStringSet(PREF_DEVICE_ACTION_FELL_SLEEP_SELECTIONS, Collections.emptySet());
         final Preference deviceActionsFellSleep = findPreference(PREF_DEVICE_ACTION_FELL_SLEEP_SELECTIONS);
-        final Preference deviceActionsFellSleepBroadcast = findPreference(PREF_DEVICE_ACTION_FELL_SLEEP_BROADCAST);
+        final Preference deviceActionsFellSleepBroadcastAction = findPreference(PREF_DEVICE_ACTION_FELL_SLEEP_BROADCAST_ACTION);
+        final Preference deviceActionsFellSleepBroadcastPackage = findPreference(PREF_DEVICE_ACTION_FELL_SLEEP_BROADCAST_PACKAGE);
         boolean deviceActionsFellSleepSelectionBroadcast = deviceActionsFellSleepSelection.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
         if (deviceActionsFellSleep != null) {
-            deviceActionsFellSleep.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
-                @Override
-                public boolean onPreferenceChange(Preference preference, Object newVal) {
-                    final Set<String> newValSet = (Set<String>) newVal;
-                    final boolean broadcast = newValSet.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
-                    Objects.requireNonNull(deviceActionsFellSleepBroadcast).setEnabled(broadcast);
-                    return true;
-                }
+            deviceActionsFellSleep.setOnPreferenceChangeListener((preference, newVal) -> {
+                final Set<String> newValSet = (Set<String>) newVal;
+                final boolean broadcast = newValSet.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
+                Objects.requireNonNull(deviceActionsFellSleepBroadcastAction).setEnabled(broadcast);
+                Objects.requireNonNull(deviceActionsFellSleepBroadcastPackage).setEnabled(broadcast);
+                return true;
             });
         }
-        if (deviceActionsFellSleepBroadcast != null) {
-            deviceActionsFellSleepBroadcast.setEnabled(deviceActionsFellSleepSelectionBroadcast);
+        if (deviceActionsFellSleepBroadcastAction != null) {
+            deviceActionsFellSleepBroadcastAction.setEnabled(deviceActionsFellSleepSelectionBroadcast);
+        }
+        if (deviceActionsFellSleepBroadcastPackage != null) {
+            deviceActionsFellSleepBroadcastPackage.setEnabled(deviceActionsFellSleepSelectionBroadcast);
         }
 
         Set<String> deviceActionsWokeUpSelection = prefs.getStringSet(PREF_DEVICE_ACTION_WOKE_UP_SELECTIONS, Collections.emptySet());
         final Preference deviceActionsWokeUp = findPreference(PREF_DEVICE_ACTION_WOKE_UP_SELECTIONS);
-        final Preference deviceActionsWokeUpBroadcast = findPreference(PREF_DEVICE_ACTION_WOKE_UP_BROADCAST);
+        final Preference deviceActionsWokeUpBroadcastAction = findPreference(PREF_DEVICE_ACTION_WOKE_UP_BROADCAST_ACTION);
+        final Preference deviceActionsWokeUpBroadcastPackage = findPreference(PREF_DEVICE_ACTION_WOKE_UP_BROADCAST_PACKAGE);
         boolean deviceActionsWokeUpSelectionBroadcast = deviceActionsWokeUpSelection.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
         if (deviceActionsWokeUp != null) {
-            deviceActionsWokeUp.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
-                @Override
-                public boolean onPreferenceChange(Preference preference, Object newVal) {
-                    final Set<String> newValSet = (Set<String>) newVal;
-                    final boolean broadcast = newValSet.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
-                    Objects.requireNonNull(deviceActionsWokeUpBroadcast).setEnabled(broadcast);
-                    return true;
-                }
+            deviceActionsWokeUp.setOnPreferenceChangeListener((preference, newVal) -> {
+                final Set<String> newValSet = (Set<String>) newVal;
+                final boolean broadcast = newValSet.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
+                Objects.requireNonNull(deviceActionsWokeUpBroadcastAction).setEnabled(broadcast);
+                Objects.requireNonNull(deviceActionsWokeUpBroadcastPackage).setEnabled(broadcast);
+                return true;
             });
         }
-        if (deviceActionsWokeUpBroadcast != null) {
-            deviceActionsWokeUpBroadcast.setEnabled(deviceActionsWokeUpSelectionBroadcast);
+        if (deviceActionsWokeUpBroadcastAction != null) {
+            deviceActionsWokeUpBroadcastAction.setEnabled(deviceActionsWokeUpSelectionBroadcast);
+        }
+        if (deviceActionsWokeUpBroadcastPackage != null) {
+            deviceActionsWokeUpBroadcastPackage.setEnabled(deviceActionsWokeUpSelectionBroadcast);
         }
 
         Set<String> deviceActionsStartNonWearSelection = prefs.getStringSet(PREF_DEVICE_ACTION_START_NON_WEAR_SELECTIONS, Collections.emptySet());
         final Preference deviceActionsStartNonWear = findPreference(PREF_DEVICE_ACTION_START_NON_WEAR_SELECTIONS);
-        final Preference deviceActionsStartNonWearBroadcast = findPreference(PREF_DEVICE_ACTION_START_NON_WEAR_BROADCAST);
+        final Preference deviceActionsStartNonWearBroadcastAction = findPreference(PREF_DEVICE_ACTION_START_NON_WEAR_BROADCAST_ACTION);
+        final Preference deviceActionsStartNonWearBroadcastPackage = findPreference(PREF_DEVICE_ACTION_START_NON_WEAR_BROADCAST_PACKAGE);
         boolean deviceActionsStartNonWearSelectionBroadcast = deviceActionsStartNonWearSelection.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
         if (deviceActionsStartNonWear != null) {
-            deviceActionsStartNonWear.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
-                @Override
-                public boolean onPreferenceChange(Preference preference, Object newVal) {
-                    final Set<String> newValSet = (Set<String>) newVal;
-                    final boolean broadcast = newValSet.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
-                    Objects.requireNonNull(deviceActionsStartNonWearBroadcast).setEnabled(broadcast);
-                    return true;
-                }
+            deviceActionsStartNonWear.setOnPreferenceChangeListener((preference, newVal) -> {
+                final Set<String> newValSet = (Set<String>) newVal;
+                final boolean broadcast = newValSet.contains(PREF_DEVICE_ACTION_SELECTION_BROADCAST);
+                Objects.requireNonNull(deviceActionsStartNonWearBroadcastAction).setEnabled(broadcast);
+                Objects.requireNonNull(deviceActionsStartNonWearBroadcastPackage).setEnabled(broadcast);
+                return true;
             });
         }
-        if (deviceActionsStartNonWearBroadcast != null) {
-            deviceActionsStartNonWearBroadcast.setEnabled(deviceActionsStartNonWearSelectionBroadcast);
+        if (deviceActionsStartNonWearBroadcastAction != null) {
+            deviceActionsStartNonWearBroadcastAction.setEnabled(deviceActionsStartNonWearSelectionBroadcast);
+        }
+        if (deviceActionsStartNonWearBroadcastPackage != null) {
+            deviceActionsStartNonWearBroadcastPackage.setEnabled(deviceActionsStartNonWearSelectionBroadcast);
         }
 
         // this is to ensure that Control Center device cards are refreshed on preference changes
@@ -1336,6 +1657,36 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
             });
         }
 
+        final Preference firewallPref = findPreference("pref_key_internet_firewall");
+        if (firewallPref != null) {
+            firewallPref.setOnPreferenceClickListener(preference -> {
+                final Intent intent = new Intent(getContext(), InternetFirewallActivity.class);
+                intent.putExtra(GBDevice.EXTRA_DEVICE, getDevice());
+                startActivity(intent);
+                return true;
+            });
+        }
+
+        final Preference multipointPref = findPreference(PREF_MULTIPOINT);
+        if (multipointPref != null) {
+            multipointPref.setOnPreferenceClickListener(preference -> {
+                final Intent intent = new Intent(getContext(), MultipointPairingActivity.class);
+                intent.putExtra(GBDevice.EXTRA_DEVICE, getDevice());
+                startActivity(intent);
+                return true;
+            });
+        }
+
+        final Preference audioRecordings = findPreference("pref_key_audio_recordings");
+        if (audioRecordings != null) {
+            audioRecordings.setOnPreferenceClickListener(preference -> {
+                final Intent intent = new Intent(getContext(), AudioRecordingsActivity.class);
+                intent.putExtra(GBDevice.EXTRA_DEVICE, getDevice());
+                startActivity(intent);
+                return true;
+            });
+        }
+
         final Preference notificationSettings = findPreference(PREFS_PER_APP_NOTIFICATION_SETTINGS);
         if (notificationSettings != null) {
             notificationSettings.setOnPreferenceClickListener(preference -> {
@@ -1357,17 +1708,29 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
         final DeviceSpecificSettings deviceSpecificSettings = new DeviceSpecificSettings();
 
         if (applicationSpecificSettings.equals(DeviceSettingsActivity.MENU_ENTRY_POINTS.AUTH_SETTINGS)) { //auth settings screen
-            deviceSpecificSettings.addRootScreen(R.xml.devicesettings_pairingkey_explanation);
             for (final int s : coordinator.getSupportedDeviceSpecificAuthenticationSettings()) {
                 deviceSpecificSettings.addRootScreen(s);
             }
         } else { //device/application settings
-            if (coordinator.getSupportedLanguageSettings(device) != null) {
-                deviceSpecificSettings.addRootScreen(R.xml.devicesettings_language_generic);
-            }
-            DeviceSpecificSettings coordinatorDeviceSettings = coordinator.getDeviceSpecificSettings(device);
-            if (coordinatorDeviceSettings != null) {
-                deviceSpecificSettings.mergeFrom(coordinatorDeviceSettings);
+            final DeviceSettingsSpec modelSpec = coordinator.getDeviceSettings(device);
+            if (modelSpec != null) {
+                for (final DeviceSetting item : modelSpec.getItems()) {
+                    if (item instanceof XmlScreenSetting xmlScreen) {
+                        deviceSpecificSettings.addRootScreen(
+                                xmlScreen.getScreen(),
+                                xmlScreen.getSubScreens().stream().mapToInt(Integer::intValue).toArray()
+                        );
+                    }
+                }
+                deviceSpecificSettings.addConnectedPreferences(modelSpec.collectConnectedKeys());
+            } else {
+                if (coordinator.getSupportedLanguageSettings(device) != null) {
+                    deviceSpecificSettings.addRootScreen(R.xml.devicesettings_language_generic);
+                }
+                final DeviceSpecificSettings coordinatorDeviceSettings = coordinator.getDeviceSpecificSettings(device);
+                if (coordinatorDeviceSettings != null) {
+                    deviceSpecificSettings.mergeFrom(coordinatorDeviceSettings);
+                }
             }
             final int[] supportedAuthSettings = coordinator.getSupportedDeviceSpecificAuthenticationSettings();
             if (supportedAuthSettings != null && supportedAuthSettings.length > 0) {
@@ -1382,29 +1745,83 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
                     coordinator.getSupportedDeviceSpecificConnectionSettings()
             );
 
-            if (coordinator.getBatteryCount() > 0) {
+            if (coordinator.getBatteryCount(device) > 0) {
                 deviceSpecificSettings.addRootScreen(
                         DeviceSpecificSettingsScreen.BATTERY
                 );
             }
 
-            if (coordinator.supportsActivityTracking()) {
+            if (coordinator.supportsCharts(device)) {
                 deviceSpecificSettings.addRootScreen(
                         DeviceSpecificSettingsScreen.ACTIVITY_INFO,
-                        R.xml.devicesettings_chartstabs,
+                        R.xml.devicesettings_chartstabs
+                );
+            }
+            if (coordinator.supportsActivityTracking(device)) {
+                deviceSpecificSettings.addRootScreen(
+                        DeviceSpecificSettingsScreen.ACTIVITY_INFO,
                         R.xml.devicesettings_device_card_activity_card_preferences
                 );
             }
 
             deviceSpecificSettings.addRootScreen(
                     DeviceSpecificSettingsScreen.DEVELOPER,
+                    R.xml.devicesettings_device_support_can_reconnect
+            );
+
+            final List<Integer> intentApiSubScreens = new ArrayList<>();
+            Collections.addAll(
+                    intentApiSubScreens,
+                    R.xml.devicesettings_header_intent_api,
                     R.xml.devicesettings_settings_third_party_apps
             );
+            if (coordinator.getAlarmSlotCount(device) > 0) {
+                intentApiSubScreens.add(R.xml.devicesettings_alarms_third_party_apps);
+            }
+            deviceSpecificSettings.addRootScreen(
+                    DeviceSpecificSettingsScreen.DEVELOPER,
+                    intentApiSubScreens
+            );
+
             if (coordinator.getConnectionType().usesBluetoothLE()) {
                 deviceSpecificSettings.addRootScreen(
                         DeviceSpecificSettingsScreen.DEVELOPER,
                         R.xml.devicesettings_ble_api
                 );
+                deviceSpecificSettings.addRootScreen(
+                        DeviceSpecificSettingsScreen.DEVELOPER,
+                        R.xml.devicesettings_gatt_synchronous_writes
+                );
+                if (GBApplication.isRunningOreoOrLater()) {
+                    deviceSpecificSettings.addRootScreen(
+                            DeviceSpecificSettingsScreen.DEVELOPER,
+                            R.xml.devicesettings_connection_force_legacy_gatt
+                    );
+                }
+            }
+            if (BuildConfig.DEBUG) {
+                final int[] debugSettings = coordinator.getSupportedDebugSettings(device);
+                deviceSpecificSettings.addRootScreen(
+                        DeviceSpecificSettingsScreen.DEVELOPER,
+                        R.xml.devicesettings_header_debug
+                );
+                deviceSpecificSettings.addRootScreen(
+                        DeviceSpecificSettingsScreen.DEVELOPER,
+                        debugSettings
+                );
+            }
+            if (GBApplication.getPrefs().experimentalSettings()) {
+                final int[] experimentalSettings = coordinator.getSupportedDeviceSpecificExperimentalSettings(device);
+                if (experimentalSettings != null && experimentalSettings.length > 0) {
+                    deviceSpecificSettings.addRootScreen(
+                            DeviceSpecificSettingsScreen.EXPERIMENTAL,
+                            R.xml.devicesettings_experimental_warning
+                    );
+                    deviceSpecificSettings.addRootScreen(
+                            DeviceSpecificSettingsScreen.EXPERIMENTAL,
+                            experimentalSettings
+                    );
+                }
             }
         }
 
@@ -1426,9 +1843,14 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
 
     @Override
     public void addPreferenceHandlerFor(final String preferenceKey, final Preference.OnPreferenceChangeListener extraListener) {
+        if (modelManagedKeys != null && modelManagedKeys.contains(preferenceKey)) {
+            LOG.trace("Ignoring addPreferenceHandlerFor {} - already declared in model", preferenceKey);
+            return;
+        }
         Preference pref = findPreference(preferenceKey);
         if (pref != null) {
             pref.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+                @Override
                 public boolean onPreferenceChange(Preference preference, Object newVal) {
                     notifyPreferenceChanged(preferenceKey);
 
@@ -1445,6 +1867,16 @@ public class DeviceSpecificSettingsFragment extends AbstractPreferenceFragment i
     @Override
     public GBDevice getDevice() {
         return device;
+    }
+
+    @Override
+    public void navigateToScreen(@NonNull final PreferenceScreen screen) {
+        onNavigateToScreen(screen);
+    }
+
+    @Override
+    public void addXmlPreferences(final int resId) {
+        addPreferencesFromResource(resId);
     }
 
     @Override

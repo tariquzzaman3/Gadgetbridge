@@ -16,6 +16,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.huami.operations.fetch;
 
+import androidx.annotation.StringRes;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +26,7 @@ import java.nio.ByteOrder;
 import java.util.GregorianCalendar;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiFetcher;
 
 /**
  * An operation that fetches SPO2 data for sleep measurements (this requires sleep breathing quality enabled).
@@ -32,13 +34,14 @@ import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiSupport;
 public class FetchSpo2SleepOperation extends AbstractRepeatingFetchOperation {
     private static final Logger LOG = LoggerFactory.getLogger(FetchSpo2SleepOperation.class);
 
-    public FetchSpo2SleepOperation(final HuamiSupport support) {
-        super(support, HuamiFetchDataType.SPO2_SLEEP);
+    public FetchSpo2SleepOperation(final HuamiFetcher fetcher) {
+        super(fetcher, HuamiFetchDataType.SPO2_SLEEP);
     }
 
+    @StringRes
     @Override
-    protected String taskDescription() {
-        return getContext().getString(R.string.busy_task_fetch_spo2_data);
+    public int taskDescription() {
+        return R.string.busy_task_fetch_spo2_data;
     }
 
     @Override

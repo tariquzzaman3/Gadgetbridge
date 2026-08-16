@@ -37,9 +37,9 @@ public class Watchface {
     }
 
     public static class InstalledWatchfaceInfo {
-        public String fileName = "";
-        public String version = "";
-        public byte type = 0;
+        public String fileName;
+        public String version;
+        public byte type;
         // bit 0 - is current
         // bit 1 - is factory preset
         // bit 2 - ???
@@ -47,42 +47,43 @@ public class Watchface {
         // bit 4 - video
         // bit 5 - photo
         // bit 6 - tryout (trial version)
-        // bit 7 - kaleidoskop
-        public byte expandedtype = 0;
+        // bit 7 - kaleidoscope
+        public byte expandedType = 0;
 
         public InstalledWatchfaceInfo(HuaweiTLV tlv) throws HuaweiPacket.MissingTagException {
             this.fileName = tlv.getString(0x03);
             this.version = tlv.getString(0x04);
             this.type = tlv.getByte(0x05);
             if (tlv.contains(0x07)) // optional
-                this.expandedtype = tlv.getByte(0x07);
+                this.expandedType = tlv.getByte(0x07);
         }
 
         public boolean isCurrent() {
             return (this.type & 1) == 1;
         }
         public boolean isFactory() {
-            return ((this.type  >> 1 )& 1) == 1;
+            return ((this.type >> 1) & 1) == 1;
         }
         public boolean isEditable() {
-            return ((this.type  >> 3 )& 1) == 1;
+            return ((this.type >> 3) & 1) == 1;
         }
         public boolean isVideo() {
-            return ((this.type  >> 4 )& 1) == 1;
+            return ((this.type >> 4) & 1) == 1;
         }
         public boolean isPhoto() {
-            return ((this.type  >> 5 )& 1) == 1;
+            return ((this.type >> 5) & 1) == 1;
         }
         public boolean isTryout() {
-            return ((this.type  >> 6 )& 1) == 1;
+            return ((this.type >> 6) & 1) == 1;
         }
-        public boolean isKaleidoskop() {
-            return ((this.type  >> 7 )& 1) == 1;
+        public boolean isKaleidoscope() {
+            return ((this.type >> 7) & 1) == 1;
         }
     }
 
     public static class WatchfaceParams {
         public static final byte id = 0x01;
+
         public static class Request extends HuaweiPacket {
 
             public Request(ParamsProvider paramsProvider) {
@@ -105,21 +106,16 @@ public class Watchface {
 
         public static class Response extends HuaweiPacket {
             public WatchfaceDeviceParams params = new WatchfaceDeviceParams();
-            public Response (ParamsProvider paramsProvider) {
+
+            public Response(ParamsProvider paramsProvider) {
                 super(paramsProvider);
             }
 
             @Override
             public void parseTlv() throws ParseException {
                 this.params.maxVersion = this.tlv.getString(0x01);
-                if (this.tlv.getBytes(0x02).length == 4)
-                    this.params.width = this.tlv.getInteger(0x02);
-                else
-                    this.params.width = this.tlv.getShort(0x02);
-                if (this.tlv.getBytes(0x03).length == 4)
-                    this.params.height = this.tlv.getInteger(0x03);
-                else
-                    this.params.height = this.tlv.getShort(0x03);
+                this.params.width = this.tlv.getAsInteger(0x02);
+                this.params.height = this.tlv.getAsInteger(0x03);
                 this.params.supportFileType = this.tlv.getByte(0x04);
                 this.params.sort = this.tlv.getByte(0x05);
                 if (this.tlv.contains(0x06))
@@ -138,21 +134,22 @@ public class Watchface {
                 this.commandId = id;
                 this.tlv = new HuaweiTLV()
                         .put(0x01)
-                        .put(0x06, (byte) 0x03); //3 -overseas non-test, 2 - test, 1 -null?
+                        .put(0x06, (byte) 0x03); //3 - overseas non-test, 2 - test, 1 -null?
             }
         }
 
         public static class Response extends HuaweiPacket {
 
             public List<InstalledWatchfaceInfo> watchfaceInfoList;
-            public Response (ParamsProvider paramsProvider) {
+
+            public Response(ParamsProvider paramsProvider) {
                 super(paramsProvider);
             }
 
             @Override
             public void parseTlv() throws HuaweiPacket.ParseException {
                 watchfaceInfoList = new ArrayList<>();
-                if(this.tlv.contains(0x81)) {
+                if (this.tlv.contains(0x81)) {
                     for (HuaweiTLV subTlv : this.tlv.getObject(0x81).getObjects(0x82)) {
                         watchfaceInfoList.add(new Watchface.InstalledWatchfaceInfo(subTlv));
                     }
@@ -164,7 +161,7 @@ public class Watchface {
     public static class WatchfaceOperation {
         public static final byte id = 0x03;
 
-        public static final byte  operationActive = 1;
+        public static final byte operationActive = 1;
         public static final byte operationDelete = 2;
 
         public static class Request extends HuaweiPacket {
@@ -182,7 +179,7 @@ public class Watchface {
         }
 
         public static class Response extends HuaweiPacket {
-            public Response (ParamsProvider paramsProvider) {
+            public Response(ParamsProvider paramsProvider) {
                 super(paramsProvider);
             }
         }
@@ -197,13 +194,10 @@ public class Watchface {
                 super(paramsProvider);
                 this.serviceId = Watchface.id;
                 this.commandId = id;
-                String file = fileName.split("_")[0];
-                String version = "";
-                try {
-                    version = fileName.split("_")[1];
-                } catch (ArrayIndexOutOfBoundsException e) {
 
-                }
+                final String[] splitData = fileName.split("_");
+                final String file = splitData[0];
+                final String version = (splitData.length > 1) ? splitData[1] : "";
                 this.tlv = new HuaweiTLV()
                         .put(0x01, file)
                         .put(0x02, version)
@@ -212,9 +206,10 @@ public class Watchface {
         }
 
         public static class Response extends HuaweiPacket {
-            public static byte reportType = 0;
-            public static String fileName;
-            public Response (ParamsProvider paramsProvider) {
+            public int reportType = 0;
+            public String fileName;
+
+            public Response(ParamsProvider paramsProvider) {
                 super(paramsProvider);
             }
 
@@ -222,12 +217,11 @@ public class Watchface {
             public void parseTlv() throws HuaweiPacket.ParseException {
                 String name = this.tlv.getString(0x01);
                 String version = this.tlv.getString(0x02);
-                if(this.tlv.contains(0x03)) {
-                    this.reportType = this.tlv.getByte(0x03);
+                if (this.tlv.contains(0x03)) {
+                    this.reportType = this.tlv.getAsInteger(0x03);
                 }
                 this.fileName = name + "_" + version;
             }
-
         }
     }
 
@@ -256,14 +250,15 @@ public class Watchface {
         }
 
         public static class Response extends HuaweiPacket {
-            public HashMap<String, String> watchFaceNames = new HashMap<String, String>();
-            public Response (ParamsProvider paramsProvider) {
+            public HashMap<String, String> watchFaceNames = new HashMap<>();
+
+            public Response(ParamsProvider paramsProvider) {
                 super(paramsProvider);
             }
 
             @Override
             public void parseTlv() throws HuaweiPacket.ParseException {
-                if(this.tlv.contains(0x82)) {
+                if (this.tlv.contains(0x82)) {
                     for (HuaweiTLV subTlv : this.tlv.getObject(0x82).getObjects(0x83)) {
                         watchFaceNames.put(subTlv.getString(0x04), subTlv.getString(0x05));
                     }

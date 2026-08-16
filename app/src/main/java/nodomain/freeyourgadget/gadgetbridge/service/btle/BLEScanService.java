@@ -39,9 +39,12 @@ import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Parcel;
 
+import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
@@ -66,6 +69,7 @@ public class BLEScanService extends Service {
     public static final String EXTRA_DEVICE = "EXTRA_DEVICE";
     public static final String EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS";
     public static final String EXTRA_RSSI = "EXTRA_RSSI";
+    public static final String EXTRA_MANUFACTURER_SPECIFIC_DATA = "EXTRA_MANUFACTURER_SPECIFIC_DATA";
 
     // 5 minutes scan restart interval
     private final int DELAY_SCAN_RESTART = 5 * 60 * 1000;
@@ -105,7 +109,17 @@ public class BLEScanService extends Service {
             Intent intent = new Intent(EVENT_DEVICE_FOUND);
             intent.putExtra(EXTRA_DEVICE_ADDRESS, device.getAddress());
             intent.putExtra(EXTRA_RSSI, result.getRssi());
-            localBroadcastManager.sendBroadcast(intent);
+
+            Parcel parcel = Parcel.obtain();
+            try {
+                if (result.getScanRecord() != null) {
+                    parcel.writeSparseArray(result.getScanRecord().getManufacturerSpecificData());
+                    intent.putExtra(EXTRA_MANUFACTURER_SPECIFIC_DATA, parcel.readBundle(getClass().getClassLoader()));
+                }
+                localBroadcastManager.sendBroadcast(intent);
+            } finally {
+                parcel.recycle();
+            }
 
             // device found, attempt connection
             // stop scanning for device for now
@@ -180,7 +194,7 @@ public class BLEScanService extends Service {
         );
     }
 
-    private void updateNotification(String content) {
+    private void updateNotification(CharSequence content) {
         notificationManager.notify(
                 GB.NOTIFICATION_ID_SCAN,
                 createNotification(content, R.drawable.ic_bluetooth)
@@ -204,7 +218,7 @@ public class BLEScanService extends Service {
         return createNotification(content, icon);
     }
 
-    private Notification createNotification(String content, int icon) {
+    private Notification createNotification(CharSequence content, int icon) {
 
         return new NotificationCompat
                 .Builder(this, GB.NOTIFICATION_CHANNEL_ID_SCAN_SERVICE)
@@ -217,10 +231,17 @@ public class BLEScanService extends Service {
     private void startForeground() {
         Notification serviceNotification = createNotification(false, 0);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            super.startForeground(GB.NOTIFICATION_ID_SCAN, serviceNotification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
-        } else {
-            super.startForeground(GB.NOTIFICATION_ID_SCAN, serviceNotification);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(this, GB.NOTIFICATION_ID_SCAN, serviceNotification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+            } else {
+                ServiceCompat.startForeground(this, GB.NOTIFICATION_ID_SCAN, serviceNotification, 0);
+            }
+        } catch (final SecurityException e) {
+            // FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE will fail if the user has not granted the necessary permissions
+            // this can cause a crash on startup when restoring a zip with BLE scan service enabled
+            LOG.error("Failed to start foreground service", e);
+            updateNotification(e.getMessage());
         }
     }
 
@@ -397,13 +418,9 @@ public class BLEScanService extends Service {
         }
 
         final ScanSettings.Builder scanSettingsBuilder = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER); // enforced anyway in background
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            scanSettingsBuilder
-                    .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
-                    .setMatchMode(ScanSettings.MATCH_MODE_STICKY);
-        }
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER) // enforced anyway in background
+                .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+                .setMatchMode(ScanSettings.MATCH_MODE_STICKY);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             scanSettingsBuilder.setLegacy(false);
@@ -411,7 +428,7 @@ public class BLEScanService extends Service {
 
         scanner.startScan(scanFilters, scanSettingsBuilder.build(), scanCallback);
         if (applyFilters) {
-            LOG.debug("restartScan: started scan for " + scanFilters.size() + " devices");
+            LOG.debug("restartScan: started scan for {} devices", scanFilters.size());
             updateNotification(true, scanFilters.size());
             currentState = ScanningState.SCANNING_WITH_FILTERS;
         } else {
@@ -426,5 +443,19 @@ public class BLEScanService extends Service {
     public IBinder onBind(Intent intent) {
         // TODO: Return the communication channel to the service.
         throw new UnsupportedOperationException("Not yet implemented");
+    }
+
+    @Override
+    @RequiresApi(api = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    public void onTimeout(int startId) {
+        LOG.info("onTimeout startId={}", startId);
+        super.onTimeout(startId);
+    }
+
+    @Override
+    @RequiresApi(api = Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    public void onTimeout(int startId, int fgsType) {
+        LOG.info("onTimeout startId={} fgsType={}", startId, fgsType);
+        super.onTimeout(startId, fgsType);
     }
 }

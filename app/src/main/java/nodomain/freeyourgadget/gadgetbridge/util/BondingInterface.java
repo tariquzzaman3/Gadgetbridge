@@ -1,4 +1,4 @@
-/*  Copyright (C) 2020-2024 Andreas Böhler, Taavi Eomäe
+/*  Copyright (C) 2020-2025 Andreas Böhler, Taavi Eomäe, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -17,7 +17,10 @@
 package nodomain.freeyourgadget.gadgetbridge.util;
 
 
+import android.bluetooth.BluetoothDevice;
 import android.content.Context;
+
+import androidx.annotation.Nullable;
 
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
 
@@ -38,9 +41,28 @@ public interface BondingInterface {
      **/
     void unregisterBroadcastReceivers();
 
-    String getMacAddress();
+    @Nullable
+    default String getMacAddress() {
+        GBDeviceCandidate candidate = getCurrentTarget();
+        if (candidate != null) {
+            BluetoothDevice device = candidate.getDevice();
+            if (device != null) {
+                return device.getAddress();
+            }
+        }
+        return null;
+    }
 
     boolean getAttemptToConnect();
+
+    /**
+     * Whether the connection should be restarted after bonding completes.
+     * Return false for connect-first pairing flows where bonding occurs within an existing
+     * GATT connection — the connection should not be interrupted.
+     */
+    default boolean shouldReconnectAfterBond() {
+        return true;
+    }
     /**
      * This forces bonding activities to handle the addition
      * of all broadcast receivers in the same place

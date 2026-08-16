@@ -16,27 +16,19 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.huawei.huaweiwatchfit3;
 
+import androidx.annotation.NonNull;
+
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiBRCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiConstants;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class HuaweiWatchFit3Coordinator extends HuaweiBRCoordinator {
-    public HuaweiWatchFit3Coordinator() {
-        super();
-        getHuaweiCoordinator().setTransactionCrypted(true);
-    }
-
     @Override
     public boolean isExperimental() {
         return true;
-    }
-
-    @Override
-    public DeviceType getDeviceType() {
-        return DeviceType.HUAWEIWATCHFIT3;
     }
 
     @Override
@@ -50,8 +42,13 @@ public class HuaweiWatchFit3Coordinator extends HuaweiBRCoordinator {
     }
 
     @Override
-    public boolean supportsUnicodeEmojis() {
+    public boolean supportsUnicodeEmojis(@NonNull GBDevice device) {
         // HarmonyOS watch
         return true;
+    }
+
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.WATCH;
     }
 }

@@ -1,3 +1,19 @@
+/*  Copyright (C) 2024 Me7c7
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.database.schema;
 
 import android.database.sqlite.SQLiteDatabase;
@@ -24,7 +40,7 @@ public class GadgetbridgeUpdate_83 implements DBUpdateScript {
                     "PRIMARY KEY (\""+HuaweiWorkoutPaceSampleDao.Properties.WorkoutId.columnName+"\" ,\""+ HuaweiWorkoutPaceSampleDao.Properties.PaceIndex.columnName +"\" ,\""+ HuaweiWorkoutPaceSampleDao.Properties.Distance.columnName +"\", \""+ HuaweiWorkoutPaceSampleDao.Properties.Type.columnName +"\") ON CONFLICT REPLACE) WITHOUT ROWID;";
             db.execSQL(CREATE_TABLE);
 
-            String MIGATE_DATA = "INSERT INTO " + HuaweiWorkoutPaceSampleDao.TABLENAME
+            String MIGRATE_DATA = "INSERT INTO " + HuaweiWorkoutPaceSampleDao.TABLENAME
                     + " (" +HuaweiWorkoutPaceSampleDao.Properties.WorkoutId.columnName+ ","
                     + HuaweiWorkoutPaceSampleDao.Properties.PaceIndex.columnName + ","
                     + HuaweiWorkoutPaceSampleDao.Properties.Distance.columnName+ ","
@@ -34,7 +50,7 @@ public class GadgetbridgeUpdate_83 implements DBUpdateScript {
                     + HuaweiWorkoutPaceSampleDao.Properties.Correction.columnName + ") "
                     + " SELECT WORKOUT_ID, -1, DISTANCE, TYPE, PACE, 0, CORRECTION  FROM " +HuaweiWorkoutPaceSampleDao.TABLENAME + "_temp;";
 
-            db.execSQL(MIGATE_DATA);
+            db.execSQL(MIGRATE_DATA);
 
             String DROP_TEMP_TABLE = "drop table if exists " +HuaweiWorkoutPaceSampleDao.TABLENAME + "_temp;";
             db.execSQL(DROP_TEMP_TABLE);

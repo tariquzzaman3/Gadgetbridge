@@ -19,16 +19,16 @@ package nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.coordinator
 import androidx.annotation.NonNull;
 
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCapabilities;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryConfig;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
 
 public class SonyWF1000XM3Coordinator extends SonyHeadphonesCoordinator {
     @Override
@@ -45,9 +45,10 @@ public class SonyWF1000XM3Coordinator extends SonyHeadphonesCoordinator {
         return new BatteryConfig[]{battery1, battery2, battery3};
     }
 
+    @NonNull
     @Override
-    public List<SonyHeadphonesCapabilities> getCapabilities() {
-        return Arrays.asList(
+    public Set<SonyHeadphonesCapabilities> getDefaultCapabilities() {
+        return new HashSet<>(Arrays.asList(
                 SonyHeadphonesCapabilities.BatteryDual,
                 SonyHeadphonesCapabilities.BatteryCase,
                 SonyHeadphonesCapabilities.PowerOffFromPhone,
@@ -59,7 +60,7 @@ public class SonyWF1000XM3Coordinator extends SonyHeadphonesCoordinator {
                 SonyHeadphonesCapabilities.PauseWhenTakenOff,
                 SonyHeadphonesCapabilities.AutomaticPowerOffWhenTakenOff,
                 SonyHeadphonesCapabilities.VoiceNotifications
-        );
+        ));
     }
 
 
@@ -75,7 +76,7 @@ public class SonyWF1000XM3Coordinator extends SonyHeadphonesCoordinator {
     }
 
     @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_galaxy_buds_disabled;
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.EARBUDS;
     }
 }

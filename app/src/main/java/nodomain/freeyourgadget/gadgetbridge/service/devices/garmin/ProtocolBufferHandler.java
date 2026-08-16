@@ -1,5 +1,9 @@
 package nodomain.freeyourgadget.gadgetbridge.service.devices.garmin;
 
+import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_SYNC_CALENDAR;
+
+import android.bluetooth.BluetoothAdapter;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.location.Location;
@@ -9,17 +13,21 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
+import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInfo;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventUpdatePreferences;
@@ -27,23 +35,29 @@ import nodomain.freeyourgadget.gadgetbridge.devices.garmin.GarminPreferences;
 import nodomain.freeyourgadget.gadgetbridge.devices.garmin.GarminRealtimeSettingsFragment;
 import nodomain.freeyourgadget.gadgetbridge.externalevents.gps.GBLocationProviderType;
 import nodomain.freeyourgadget.gadgetbridge.externalevents.gps.GBLocationService;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.CannedMessagesSpec;
+import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiAuthenticationService;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiCalendarService;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiCore;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiDataTransferService;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiDeviceStatus;
+import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiFileSyncService;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiFindMyWatch;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiHttpService;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiNotificationsService;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiSettingsService;
+import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiInstalledAppsService;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiSmartProto;
 import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiSmsNotification;
+import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiEcgService;
+import nodomain.freeyourgadget.gadgetbridge.proto.garmin.GdiExploreSyncService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.http.DataTransferHandler;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.http.HttpHandler;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.messages.GFDIMessage;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.messages.ProtobufMessage;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.messages.status.ProtobufStatusMessage;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.pebble.webview.CurrentPosition;
+import nodomain.freeyourgadget.gadgetbridge.webview.CurrentPosition;
 import nodomain.freeyourgadget.gadgetbridge.util.DateTimeUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.calendar.CalendarEvent;
@@ -56,16 +70,28 @@ public class ProtocolBufferHandler implements MessageHandler {
     private final Map<Integer, ProtobufFragment> chunkedFragmentsMap;
     private final int maxChunkSize = 375; //tested on Vívomove Style
     private int lastProtobufRequestId;
-    private final HttpHandler httpHandler;
+    private final AppConfigHandler appConfigHandler;
+    private HttpHandler httpHandler;
     private final DataTransferHandler dataTransferHandler;
+    private final FileSyncServiceHandler fileSyncServiceHandler;
+    private final EcgServiceHandler ecgServiceHandler;
+    private final ExploreSyncHandler exploreSyncHandler;
 
     private final Map<GdiSmsNotification.SmsNotificationService.CannedListType, String[]> cannedListTypeMap = new HashMap<>();
 
     public ProtocolBufferHandler(GarminSupport deviceSupport) {
         this.deviceSupport = deviceSupport;
         chunkedFragmentsMap = new HashMap<>();
-        httpHandler = new HttpHandler(deviceSupport);
+        appConfigHandler = new AppConfigHandler(deviceSupport);
         dataTransferHandler = new DataTransferHandler();
+        fileSyncServiceHandler = new FileSyncServiceHandler(deviceSupport);
+        ecgServiceHandler = new EcgServiceHandler(deviceSupport);
+        exploreSyncHandler = new ExploreSyncHandler(deviceSupport);
+    }
+
+    public void setContext(final GBDevice gbDevice, final BluetoothAdapter btAdapter, final Context context) {
+        // http handler needs the device
+        httpHandler = new HttpHandler(deviceSupport);
     }
 
     private int getNextProtobufRequestId() {
@@ -73,6 +99,7 @@ public class ProtocolBufferHandler implements MessageHandler {
         return lastProtobufRequestId;
     }
 
+    @Override
     public ProtobufMessage handle(GFDIMessage protobufMessage) {
         if (protobufMessage instanceof ProtobufMessage) {
             return processIncoming((ProtobufMessage) protobufMessage);
@@ -107,11 +134,12 @@ public class ProtocolBufferHandler implements MessageHandler {
                 return prepareProtobufResponse(processProtobufSmsNotificationMessage(smart.getSmsNotificationService()), message.getRequestId());
             }
             if (smart.hasHttpService()) {
-                final GdiHttpService.HttpService response = httpHandler.handle(smart.getHttpService());
-                if (response == null) {
-                    return null;
+                final GdiHttpService.HttpService response = httpHandler.handle(smart.getHttpService(), message.getRequestId());
+                if (response != null) {
+                    return prepareProtobufResponse(GdiSmartProto.Smart.newBuilder().setHttpService(response).build(), message.getRequestId());
                 }
-                return prepareProtobufResponse(GdiSmartProto.Smart.newBuilder().setHttpService(response).build(), message.getRequestId());
+                processed = true;
+                // Response will be async
             }
             if (smart.hasDataTransferService()) {
                 final GdiDataTransferService.DataTransferService response = dataTransferHandler.handle(smart.getDataTransferService(), message.getRequestId());
@@ -132,8 +160,91 @@ public class ProtocolBufferHandler implements MessageHandler {
                 processed = true;
                 processProtobufSettingsService(smart.getSettingsService());
             }
+            if (smart.hasAuthenticationService() && smart.getAuthenticationService().hasOauthRequest()) {
+                LOG.debug("Got OAuth request");
+                final GarminPrefs devicePrefs = deviceSupport.getDevicePrefs();
+                if (!devicePrefs.fakeOauthEnabled()) {
+                    LOG.warn("Got OAuth request, but fake OAuth is disabled");
+                } else {
+                    final GdiAuthenticationService.OAuthResponse oauthResponse = GdiAuthenticationService.OAuthResponse.newBuilder()
+                            .setKeys(GdiAuthenticationService.OAuthKeys.newBuilder()
+                                    .setConsumerKey(UUID.randomUUID().toString())
+                                    .setConsumerSecret(RandomStringUtils.insecure().next(35, true, true))
+                                    .setOauthToken(UUID.randomUUID().toString())
+                                    .setOauthSecret(RandomStringUtils.insecure().next(35, true, true))
+                                    .build()
+                            ).setUnk2(0).build();
+
+                    return prepareProtobufResponse(GdiSmartProto.Smart.newBuilder().setAuthenticationService(
+                            GdiAuthenticationService.AuthenticationService.newBuilder()
+                                    .setOauthResponse(oauthResponse)
+                    ).build(), message.getRequestId());
+                }
+            }
             if (smart.hasNotificationsService()) {
                 return prepareProtobufResponse(processProtobufNotificationsServiceMessage(smart.getNotificationsService()), message.getRequestId());
+            }
+            if (smart.hasInstalledAppsService()) {
+                final GdiInstalledAppsService.InstalledAppsService installedAppsService = smart.getInstalledAppsService();
+
+                if (installedAppsService.hasGetInstalledAppsResponse()) {
+                    processed = true;
+
+                    final List<GdiInstalledAppsService.InstalledAppsService.InstalledApp> installedAppsList = installedAppsService
+                            .getGetInstalledAppsResponse()
+                            .getInstalledAppsList();
+
+                    LOG.info("Got app list with {} apps", installedAppsList.size());
+
+                    deviceSupport.onAppListReceived(installedAppsList);
+                } else if (installedAppsService.hasDeleteAppResponse()) {
+                    processed = true;
+
+                    final GdiInstalledAppsService.InstalledAppsService.DeleteAppResponse.Status status = installedAppsService.getDeleteAppResponse().getStatus();
+
+                    LOG.info("Got app delete response, status = {}", status);
+
+                    // Refresh app list
+                    if (status == GdiInstalledAppsService.InstalledAppsService.DeleteAppResponse.Status.OK) {
+                        deviceSupport.onAppInfoReq();
+                    }
+                }
+            }
+            if (smart.hasFileSyncService()) {
+                if (deviceSupport.getDevicePrefs().getBoolean("new_sync_protocol", false)) {
+                    processed = true;
+                    final GdiFileSyncService.FileSyncService response = fileSyncServiceHandler.handle(smart.getFileSyncService());
+                    if (response != null) {
+                        return prepareProtobufResponse(GdiSmartProto.Smart.newBuilder().setFileSyncService(response).build(), message.getRequestId());
+                    }
+                } else {
+                    LOG.warn("Ignoring file sync service - new sync protocol is disabled");
+                }
+            }
+            if (smart.hasEcgService()) {
+                if (deviceSupport.getDevicePrefs().getBoolean("new_sync_protocol", false)) {
+                    processed = true;
+                    final GdiEcgService.EcgService response = ecgServiceHandler.handle(smart.getEcgService());
+                    if (response != null) {
+                        return prepareProtobufResponse(GdiSmartProto.Smart.newBuilder().setEcgService(response).build(), message.getRequestId());
+                    }
+                } else {
+                    LOG.warn("Ignoring zip transfer service - new sync protocol is disabled");
+                }
+            }
+            if (smart.hasAppConfigService()) {
+                processed = appConfigHandler.process(smart.getAppConfigService());
+            }
+            if (smart.hasExploreSyncService()) {
+                if (deviceSupport.getDevicePrefs().getBoolean("garmin_exploresync", false)) {
+                    processed = true;
+                    final GdiExploreSyncService.ExploreSyncService response = exploreSyncHandler.handle(smart.getExploreSyncService());
+                    if (response != null) {
+                        return prepareProtobufResponse(GdiSmartProto.Smart.newBuilder().setExploreSyncService(response).build(), message.getRequestId());
+                    }
+                } else {
+                    LOG.warn("Ignoring explore sync service - explore sync is disabled");
+                }
             }
             if (processed) {
                 message.setStatusMessage(new ProtobufStatusMessage(
@@ -198,6 +309,20 @@ public class ProtocolBufferHandler implements MessageHandler {
     private GdiSmartProto.Smart processProtobufCalendarRequest(GdiCalendarService.CalendarService calendarService) {
         if (calendarService.hasCalendarRequest()) {
             GdiCalendarService.CalendarService.CalendarServiceRequest calendarServiceRequest = calendarService.getCalendarRequest();
+
+            final boolean syncEnabled = GBApplication.getDeviceSpecificSharedPrefs(deviceSupport.getDevice().getAddress())
+                    .getBoolean(PREF_SYNC_CALENDAR, false);
+
+            if (!syncEnabled) {
+                LOG.warn("Got calendar request, but calendar sync is disabled");
+                return GdiSmartProto.Smart.newBuilder().setCalendarService(
+                        GdiCalendarService.CalendarService.newBuilder().setCalendarResponse(
+                                GdiCalendarService.CalendarService.CalendarServiceResponse.newBuilder()
+                                        .addAllCalendarEvent(Collections.emptyList())
+                                        .setStatus(GdiCalendarService.CalendarService.CalendarServiceResponse.ResponseStatus.OK)
+                        )
+                ).build();
+            }
 
             CalendarManager upcomingEvents = new CalendarManager(deviceSupport.getContext(), deviceSupport.getDevice().getAddress());
             List<CalendarEvent> mEvents = upcomingEvents.getCalendarEventList();
@@ -507,7 +632,7 @@ public class ProtocolBufferHandler implements MessageHandler {
         return prepareProtobufMessage(protobufPayload.toByteArray(), GFDIMessage.GarminMessage.PROTOBUF_REQUEST, requestId);
     }
 
-    private ProtobufMessage prepareProtobufResponse(GdiSmartProto.Smart protobufPayload, int requestId) {
+    public ProtobufMessage prepareProtobufResponse(GdiSmartProto.Smart protobufPayload, int requestId) {
         if (null == protobufPayload)
             return null;
         return prepareProtobufMessage(protobufPayload.toByteArray(), GFDIMessage.GarminMessage.PROTOBUF_RESPONSE, requestId);
@@ -555,6 +680,18 @@ public class ProtocolBufferHandler implements MessageHandler {
                 ).build();
 
         return prepareProtobufRequest(smart);
+    }
+
+    public FileSyncServiceHandler getFileSyncServiceHandler() {
+        return fileSyncServiceHandler;
+    }
+
+    public AppConfigHandler getAppConfigHandler() {
+        return appConfigHandler;
+    }
+
+    ExploreSyncHandler getExploreSyncHandler() {
+        return exploreSyncHandler;
     }
 
     private class ProtobufFragment {

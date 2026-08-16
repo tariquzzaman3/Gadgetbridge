@@ -19,15 +19,18 @@ package nodomain.freeyourgadget.gadgetbridge.activities;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import android.text.method.LinkMovementMethod;
 import android.view.View;
+import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.activities.licenses.LicensesActivity;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 public class AboutActivity extends AbstractGBActivity {
@@ -39,7 +42,7 @@ public class AboutActivity extends AbstractGBActivity {
         TextView about_version = findViewById(R.id.about_version);
         TextView about_hash = findViewById(R.id.about_hash);
         String versionName = BuildConfig.VERSION_NAME;
-        String versionHASH = BuildConfig.GIT_HASH_SHORT;
+        String versionHASH = BuildConfig.GIT_HASH_SHORT + BuildConfig.GIT_DIRTY_STATUS;
         about_version.setText(String.format(getString(R.string.about_version), versionName));
         about_version.setOnClickListener(this::copyVersionToClipboard);
         about_hash.setText(String.format(getString(R.string.about_hash), versionHASH));
@@ -51,11 +54,14 @@ public class AboutActivity extends AbstractGBActivity {
         link2.setMovementMethod(LinkMovementMethod.getInstance());
         TextView link3 = findViewById(R.id.links3);
         link3.setMovementMethod(LinkMovementMethod.getInstance());
+
+        Button licensesButton = findViewById(R.id.showLicenses);
+        licensesButton.setOnClickListener(v -> startActivity(new Intent(AboutActivity.this, LicensesActivity.class)));
     }
 
     private void copyVersionToClipboard(View view) {
         String versions = "Version: " + BuildConfig.VERSION_NAME +
-                "\nCommit: " + BuildConfig.GIT_HASH_SHORT +
+                "\nCommit: " + BuildConfig.GIT_HASH_SHORT + BuildConfig.GIT_DIRTY_STATUS +
                 "\nFlavor: " + BuildConfig.FLAVOR;
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         ClipData clip = ClipData.newPlainText("Build data", versions);

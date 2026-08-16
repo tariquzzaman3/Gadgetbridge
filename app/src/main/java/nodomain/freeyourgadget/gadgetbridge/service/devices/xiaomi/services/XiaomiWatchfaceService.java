@@ -20,6 +20,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -31,10 +33,7 @@ import nodomain.freeyourgadget.gadgetbridge.devices.xiaomi.XiaomiFWHelper;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceApp;
 import nodomain.freeyourgadget.gadgetbridge.proto.xiaomi.XiaomiProto;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetProgressAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.XiaomiSupport;
-import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 public class XiaomiWatchfaceService extends AbstractXiaomiService implements XiaomiDataUploadService.Callback {
     private static final Logger LOG = LoggerFactory.getLogger(XiaomiWatchfaceService.class);
@@ -48,6 +47,7 @@ public class XiaomiWatchfaceService extends AbstractXiaomiService implements Xia
 
     private final Set<UUID> allWatchfaces = new HashSet<>();
     private final Set<UUID> userWatchfaces = new HashSet<>();
+    private final List<GBDeviceApp> facesCache = new ArrayList<>();
     private UUID activeWatchface = null;
 
     // Not null if we're installing a firmware
@@ -55,6 +55,14 @@ public class XiaomiWatchfaceService extends AbstractXiaomiService implements Xia
 
     public XiaomiWatchfaceService(final XiaomiSupport support) {
         super(support);
+    }
+
+    @Override
+    public void initialize() {
+        allWatchfaces.clear();
+        userWatchfaces.clear();
+        activeWatchface = null;
+        fwHelper = null;
     }
 
     @Override
@@ -97,9 +105,8 @@ public class XiaomiWatchfaceService extends AbstractXiaomiService implements Xia
 
         allWatchfaces.clear();
         userWatchfaces.clear();
+        facesCache.clear();
         activeWatchface = null;
-
-        final List<GBDeviceApp> gbDeviceApps = new ArrayList<>();
 
         for (final XiaomiProto.WatchfaceInfo watchface : watchfaceList.getWatchfaceList()) {
             final UUID uuid = toWatchfaceUUID(watchface.getId());
@@ -118,11 +125,13 @@ public class XiaomiWatchfaceService extends AbstractXiaomiService implements Xia
                     "",
                     GBDeviceApp.Type.WATCHFACE
             );
-            gbDeviceApps.add(gbDeviceApp);
+            facesCache.add(gbDeviceApp);
         }
 
+        final List<GBDeviceApp> appsAndFaces = new ArrayList<>(facesCache);
+        appsAndFaces.addAll(getSupport().getRpkService().getInstalledAppsCache());
         final GBDeviceEventAppInfo appInfoCmd = new GBDeviceEventAppInfo();
-        appInfoCmd.apps = gbDeviceApps.toArray(new GBDeviceApp[0]);
+        appInfoCmd.apps = appsAndFaces.toArray(new GBDeviceApp[0]);
         getSupport().evaluateGBDeviceEvent(appInfoCmd);
     }
 
@@ -262,7 +271,7 @@ public class XiaomiWatchfaceService extends AbstractXiaomiService implements Xia
 
     private void setDeviceBusy() {
         final GBDevice device = getSupport().getDevice();
-        device.setBusyTask(getSupport().getContext().getString(R.string.uploading_watchface));
+        device.setBusyTask(R.string.uploading_watchface, getSupport().getContext());
         device.sendDeviceUpdateIntent(getSupport().getContext());
     }
 
@@ -275,5 +284,9 @@ public class XiaomiWatchfaceService extends AbstractXiaomiService implements Xia
             }
             device.sendDeviceUpdateIntent(getSupport().getContext());
         }
+    }
+
+    public Collection<? extends GBDeviceApp> getInstalledFacesCache() {
+        return Collections.unmodifiableList(facesCache);
     }
 }

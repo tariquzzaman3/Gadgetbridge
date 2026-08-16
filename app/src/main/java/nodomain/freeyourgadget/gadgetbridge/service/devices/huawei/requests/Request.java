@@ -16,7 +16,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests;
 
-import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
@@ -32,7 +31,11 @@ import java.util.List;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiConstants;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiCrypto;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiPacket;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.DataSync;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.P2P;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.service.btbr.AbstractBTBRDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiDualChannelHelper;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiSupportProvider;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.miband.operations.OperationStatus;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
@@ -96,6 +99,7 @@ public class Request {
     protected OperationStatus operationStatus = OperationStatus.INITIAL;
     protected byte serviceId;
     protected byte commandId;
+    protected HuaweiPacket sendingPacket = null;
     protected HuaweiPacket receivedPacket = null;
     protected HuaweiSupportProvider supportProvider;
     protected HuaweiPacket.ParamsProvider paramsProvider;
@@ -121,12 +125,17 @@ public class Request {
         public RequestCallback(HuaweiSupportProvider supportProvider) {
             support = supportProvider;
         }
+        @Deprecated
         public void call() {}
         public void call(Request request) {
             call(); // To keep everything working as it was as well
         }
+        @Deprecated
         public void handleException(ResponseParseException e) {
             LOG.error("Callback request exception", e);
+        }
+        public void handleException(Request request, ResponseParseException e) {
+            handleException(e); // To keep everything working as it was as well
         }
         public void timeout(Request request) {
             request.handleNext();
@@ -222,6 +231,13 @@ public class Request {
     }
 
     protected List<byte[]> createRequest() throws RequestCreationException {
+        if (sendingPacket != null) {
+            try {
+                return sendingPacket.serialize();
+            } catch (HuaweiPacket.CryptoException e) {
+                throw new RequestCreationException(e);
+            }
+        }
         return null;
     }
 
@@ -236,14 +252,14 @@ public class Request {
         } catch (HuaweiPacket.ParseException e) {
             LOG.error("Parse TLV exception", e);
             if (finalizeReq != null)
-                finalizeReq.handleException(new ResponseParseException("Parse TLV exception", e));
+                finalizeReq.handleException(this, new ResponseParseException("Parse TLV exception", e));
             return;
         }
         try {
             processResponse();
         } catch (ResponseParseException e) {
             if (finalizeReq != null)
-                finalizeReq.handleException(e);
+                finalizeReq.handleException(this, e);
             return;
         }
         handleNext();
@@ -257,7 +273,7 @@ public class Request {
                 GB.toast(supportProvider.getContext(), "nextRequest failed", Toast.LENGTH_SHORT, GB.ERROR, e);
                 LOG.error("Next request failed", e);
                 if (finalizeReq != null)
-                    finalizeReq.handleException(new ResponseParseException("Next request failed", e));
+                    finalizeReq.handleException(this, new ResponseParseException("Next request failed", e));
                 return;
             }
         }
@@ -330,20 +346,22 @@ public class Request {
         if (!this.supportProvider.isBLE()) {
             this.builderBr.write(data);
         } else {
-            BluetoothGattCharacteristic characteristic = supportProvider
-                    .getLeCharacteristic(HuaweiConstants.UUID_CHARACTERISTIC_HUAWEI_WRITE);
-            this.builderLe.write(characteristic, data);
+            if (supportProvider.getCoordinator().isNewHonorProtocol()) {
+                this.builderLe.write(HuaweiConstants.UUID_CHARACTERISTIC_HONOR_WRITE, data);
+            } else {
+                this.builderLe.write(HuaweiConstants.UUID_CHARACTERISTIC_HUAWEI_WRITE, data);
+            }
         }
     }
 
     private void builderWait(int millis) {
         if (!this.supportProvider.isBLE())
-            this.builderBr.wait(millis);
+            this.builderBr.sleep(millis);
         else
-            this.builderLe.wait(millis);
+            this.builderLe.sleep(millis);
     }
 
-    private void performConnected() throws IOException {
+    private void performConnected() {
         LOG.debug("Perform connected");
 
         // Start the timeout timer
@@ -351,12 +369,52 @@ public class Request {
             handler.postDelayed(this.timeoutRunner, this.timeout);
 
         if (!this.supportProvider.isBLE()) {
-            nodomain.freeyourgadget.gadgetbridge.service.btbr.Transaction transaction = this.builderBr.getTransaction();
-            this.supportProvider.performConnected(transaction);
+            // Route to the negotiated dual channel when this packet is flagged for it; otherwise
+            // (and until the aux socket is up) it goes on the primary socket.
+            int channel = AbstractBTBRDeviceSupport.RFCOMM_CHANNEL_UNSPECIFIED;
+            boolean aux = routeToExtraChannel();
+            if (aux)
+                channel = supportProvider.getDualChannelHelper().getChannel();
+            // Diagnostic: log the routing decision for every packet (main and aux), including the
+            // P2P destination package, so mis-routed packets (e.g. an aux-listed package sent on
+            // main) are visible in the capture.
+            LOG.debug("Dual channel: service 0x{} cmd 0x{}{} -> {} (channel {})",
+                    Integer.toHexString(this.serviceId & 0xFF), Integer.toHexString(this.commandId & 0xFF),
+                    getDualChannelDestPackage() != null ? " pkg=" + getDualChannelDestPackage() : "",
+                    aux ? "AUX" : "MAIN", channel);
+            builderBr.setChannel(channel);
+            builderBr.queue();
         } else {
-            nodomain.freeyourgadget.gadgetbridge.service.btle.Transaction transaction = this.builderLe.getTransaction();
-            this.supportProvider.performConnected(transaction);
+            builderLe.queue();
         }
+    }
+
+    /**
+     * Decides whether this outgoing packet goes on the aux (dual channel) socket. Most services are
+     * routed by their (service, command) pair; the P2P services 0x34/0x37 are instead routed by the
+     * destination package name (vendor {@code getSocketChannelForDestPackageName}), which the P2P
+     * sender requests supply via {@link #getDualChannelDestPackage()}.
+     */
+    private boolean routeToExtraChannel() {
+        HuaweiDualChannelHelper helper = supportProvider.getDualChannelHelper();
+        if (!helper.isActive())
+            return false;
+        int svc = this.serviceId & 0xFF;
+        if (svc == (P2P.id & 0xFF) || svc == (DataSync.id & 0xFF)) {
+            String dstPackage = getDualChannelDestPackage();
+            return helper.useExtraChannelForPackage(svc, dstPackage);
+        }
+        return helper.useExtraChannel(svc, this.commandId & 0xFF);
+    }
+
+    /**
+     * The destination package name for dual channel routing of the P2P services 0x34/0x37. The P2P
+     * sender requests build their packet in {@link #createRequest()} without populating the base
+     * {@code sendingPacket}, so they expose the package here instead. Returns null for all other
+     * requests (they route by service/command, not by package).
+     */
+    protected String getDualChannelDestPackage() {
+        return null;
     }
 
     public boolean autoRemoveFromResponseHandler() {

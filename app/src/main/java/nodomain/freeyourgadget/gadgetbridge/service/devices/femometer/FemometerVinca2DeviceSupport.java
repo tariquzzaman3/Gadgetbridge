@@ -29,6 +29,7 @@ import java.util.GregorianCalendar;
 import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.activities.SettingsActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
@@ -39,12 +40,13 @@ import nodomain.freeyourgadget.gadgetbridge.entities.FemometerVinca2TemperatureS
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryState;
+import nodomain.freeyourgadget.gadgetbridge.model.TemperatureUnit;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCharacteristic;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.IntentListener;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfo;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfoProfile;
@@ -53,7 +55,7 @@ import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.Dev
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.healthThermometer.HealthThermometerProfile;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.healthThermometer.TemperatureInfo;
 
-public class FemometerVinca2DeviceSupport extends AbstractBTLEDeviceSupport {
+public class FemometerVinca2DeviceSupport extends AbstractBTLESingleDeviceSupport {
 
     private final DeviceInfoProfile<FemometerVinca2DeviceSupport> deviceInfoProfile;
     private final BatteryInfoProfile<FemometerVinca2DeviceSupport> batteryInfoProfile;
@@ -142,7 +144,7 @@ public class FemometerVinca2DeviceSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         // Init Battery
         batteryInfoProfile.requestBatteryInfo(builder);
@@ -164,27 +166,27 @@ public class FemometerVinca2DeviceSupport extends AbstractBTLEDeviceSupport {
         setCurrentTime(builder);
 
         // Init Thermometer
-        builder.notify(getCharacteristic(CONFIGURATION_SERVICE_INDICATION_CHARACTERISTIC), true);
+        builder.notify(CONFIGURATION_SERVICE_INDICATION_CHARACTERISTIC, true);
         healthThermometerProfile.enableNotify(builder, true);
         healthThermometerProfile.setMeasurementInterval(builder, new byte[]{(byte) 0x01, (byte) 0x00});
 
         // mark the device as initialized
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
         return builder;
     }
 
     @Override
     public void onSetTime() {
-        TransactionBuilder builder = new TransactionBuilder("set time");
+        TransactionBuilder builder = createTransactionBuilder("set time");
         setCurrentTime(builder);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     private void setCurrentTime(TransactionBuilder builder) {
         // Same Code as in PineTime (without the local time)
         GregorianCalendar now = BLETypeConversions.createCalendar();
         byte[] bytesCurrentTime = BLETypeConversions.calendarToCurrentTime(now, 0);
-        builder.write(getCharacteristic(GattCharacteristic.UUID_CHARACTERISTIC_CURRENT_TIME), bytesCurrentTime);
+        builder.write(GattCharacteristic.UUID_CHARACTERISTIC_CURRENT_TIME, bytesCurrentTime);
     }
 
     @Override
@@ -199,10 +201,10 @@ public class FemometerVinca2DeviceSupport extends AbstractBTLEDeviceSupport {
                     (byte) alarm.getMinute()                   // third byte: minute
             };
 
-            builder.write(getCharacteristic(CONFIGURATION_SERVICE_ALARM_CHARACTERISTIC), alarm_bytes);
-            builder.write(getCharacteristic(CONFIGURATION_SERVICE_SETTING_CHARACTERISTIC), byteArray(0x01));
+            builder.write(CONFIGURATION_SERVICE_ALARM_CHARACTERISTIC, alarm_bytes);
+            builder.write(CONFIGURATION_SERVICE_SETTING_CHARACTERISTIC, byteArray(0x01));
             // read-request on char1 results in given alarm
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             LOG.warn(" Unable to apply setting ", e);
         }
@@ -222,14 +224,14 @@ public class FemometerVinca2DeviceSupport extends AbstractBTLEDeviceSupport {
                 case DeviceSettingsPreferenceConst.PREF_VOLUME:
                     setVolume(sharedPreferences);
                     break;
-                case DeviceSettingsPreferenceConst.PREF_TEMPERATURE_SCALE_CF:
-                    String scale = sharedPreferences.getString(DeviceSettingsPreferenceConst.PREF_TEMPERATURE_SCALE_CF,  "c");
-                    int value = "c".equals(scale) ? 0x0a : 0x0b;
+                case SettingsActivity.PREF_UNIT_TEMPERATURE:
+                    final TemperatureUnit temperatureUnit = GBApplication.getPrefs().getTemperatureUnit();
+                    int value = temperatureUnit == TemperatureUnit.CELSIUS ? 0x0a : 0x0b;
                     applySetting(byteArray(value), null);
             }
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
-            e.printStackTrace();
+            LOG.warn("exception in onSendConfiguration", e);
         }
     }
 
@@ -270,11 +272,11 @@ public class FemometerVinca2DeviceSupport extends AbstractBTLEDeviceSupport {
     private void applySetting(byte[] value, byte[] confirmation) {
         try {
             TransactionBuilder builder = performInitialized("applyThermometerSetting");
-            builder.write(getCharacteristic(CONFIGURATION_SERVICE_SETTING_CHARACTERISTIC), value);
+            builder.write(CONFIGURATION_SERVICE_SETTING_CHARACTERISTIC, value);
             if (confirmation != null) {
-                builder.write(getCharacteristic(CONFIGURATION_SERVICE_SETTING_CHARACTERISTIC), confirmation);
+                builder.write(CONFIGURATION_SERVICE_SETTING_CHARACTERISTIC, confirmation);
             }
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             LOG.warn(" Unable to apply setting ", e);
         }
@@ -283,14 +285,17 @@ public class FemometerVinca2DeviceSupport extends AbstractBTLEDeviceSupport {
     private void handleMeasurement(TemperatureInfo info) {
         Date timestamp = info.getTimestamp();
         float temperature = info.getTemperature();
-        int temperatureType = info.getTemperatureType();
         try (DBHandler db = GBApplication.acquireDB()) {
             Long userId = DBHelper.getUser(db.getDaoSession()).getId();
             Long deviceId = DBHelper.getDevice(getDevice(), db.getDaoSession()).getId();
             long time = timestamp.getTime();
 
             FemometerVinca2SampleProvider sampleProvider = new FemometerVinca2SampleProvider(getDevice(), db.getDaoSession());
-            FemometerVinca2TemperatureSample temperatureSample = new FemometerVinca2TemperatureSample(time, deviceId, userId, temperature, temperatureType);
+            FemometerVinca2TemperatureSample temperatureSample = sampleProvider.createSample();
+            temperatureSample.setTimestamp(time);
+            temperatureSample.setDeviceId(deviceId);
+            temperatureSample.setUserId(userId);
+            temperatureSample.setTemperature(temperature);
             sampleProvider.addSample(temperatureSample);
         } catch (Exception e) {
             LOG.error("Error acquiring database", e);

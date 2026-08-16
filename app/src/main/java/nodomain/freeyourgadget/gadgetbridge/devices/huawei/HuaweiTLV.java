@@ -20,6 +20,8 @@ package nodomain.freeyourgadget.gadgetbridge.devices.huawei;
 
 import static nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiConstants.CryptoTags;
 
+import androidx.annotation.NonNull;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -73,6 +75,7 @@ public class HuaweiTLV {
                     .array();
         }
 
+        @NonNull
         public String toString() {
             return "{tag: " + Integer.toHexString(tag & 0xFF) + " - Value: " + StringUtils.bytesToHex(value) + "} - ";
         }
@@ -129,12 +132,17 @@ public class HuaweiTLV {
             VarInt varInt = new VarInt(buffer, offset + parsed);
             int size = varInt.dValue;
             parsed += varInt.size;
+            if (size < 0 || size > length - parsed) {
+                throw new ArrayIndexOutOfBoundsException(
+                        "TLV element size " + size + " exceeds remaining buffer length " + (length - parsed)) {
+                };
+            }
             byte[] value = new byte[size];
             System.arraycopy(buffer, offset + parsed, value, 0, size);
             put(tag, value);
             parsed += size;
         }
-        LOG.debug("Parsed TLV: " + this);
+        LOG.debug("Parsed TLV: {}", this);
         return this;
     }
 
@@ -152,7 +160,7 @@ public class HuaweiTLV {
         ByteBuffer buffer = ByteBuffer.allocate(length);
         for (TLV entry : valueMap)
             buffer.put(entry.serialize());
-        LOG.debug("Serialized TLV: " + this);
+        LOG.debug("Serialized TLV: {}", this);
         return buffer.array();
     }
 
@@ -289,6 +297,30 @@ public class HuaweiTLV {
         return ByteBuffer.wrap(getBytes(tag)).getInt();
     }
 
+    public Integer getAsInteger(int tag, int def) {
+        byte[] bytes = getBytes(tag, null);
+        if (bytes == null || bytes.length == 0 || bytes.length > 4) {
+            return def;
+        }
+        int res = 0;
+        for (int i = 0; i < bytes.length; i++) {
+            res |= (bytes[i] & 255) << (((bytes.length - i) - 1) * 8);
+        }
+        return res;
+    }
+
+    public Long getAsLong(int tag) throws HuaweiPacket.MissingTagException {
+        byte[] bytes = getBytes(tag);
+        if(bytes.length == 1) {
+            return (long) (bytes[0] & 0xFF);
+        } else if(bytes.length == 2) {
+            return (long) (ByteBuffer.wrap(getBytes(tag)).getShort() & 0xFFFF);
+        } else if(bytes.length == 4) {
+            return (long) (ByteBuffer.wrap(getBytes(tag)).getInt());
+        }
+        return ByteBuffer.wrap(getBytes(tag)).getLong();
+    }
+
     public String getString(int tag) throws HuaweiPacket.MissingTagException {
         return new String(getBytes(tag), StandardCharsets.UTF_8);
     }
@@ -302,6 +334,15 @@ public class HuaweiTLV {
         List<HuaweiTLV> returnValue = new ArrayList<>();
         for (TLV tlv : valueMap) {
             if (tlv.getTag() == (byte) tag)
+                returnValue.add(new HuaweiTLV().parse(tlv.getValue()));
+        }
+        return returnValue;
+    }
+
+    public List<HuaweiTLV> getAllContainerObjects() {
+        List<HuaweiTLV> returnValue = new ArrayList<>();
+        for (TLV tlv : valueMap) {
+            if (((tlv.getTag() & 0xFF) >>> 7) == 1)
                 returnValue.add(new HuaweiTLV().parse(tlv.getValue()));
         }
         return returnValue;
@@ -336,6 +377,7 @@ public class HuaweiTLV {
      * Get string representation of HuaweiTLV, "Empty" when no elements are present
      * @return String
      */
+    @NonNull
     public String toString() {
         if (valueMap.isEmpty())
             return "Empty";
@@ -392,6 +434,7 @@ final class VarInt {
         this.size = this.eValue.length;
     }
 
+    @NonNull
     public String toString() {
         return "VarInt(dValue: " + this.dValue + ", size: " + this.size + ", eValue: " + StringUtils.bytesToHex(this.eValue) + ")";
     }

@@ -35,7 +35,6 @@ import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.binary_sensor.protocol.constants.MessageId;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.binary_sensor.protocol.constants.ParameterId;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.binary_sensor.protocol.constants.ReportState;
@@ -73,10 +72,12 @@ public class BinarySensorSupport extends BinarySensorBaseSupport {
 
     @Override
     public void dispose() {
-        super.dispose();
+        synchronized (ConnectionMonitor) {
+            super.dispose();
 
-        LocalBroadcastManager.getInstance(getContext())
-                .unregisterReceiver(stateRequestReceiver);
+            LocalBroadcastManager.getInstance(getContext())
+                    .unregisterReceiver(stateRequestReceiver);
+        }
     }
 
     BroadcastReceiver stateRequestReceiver = new BroadcastReceiver() {
@@ -87,9 +88,9 @@ public class BinarySensorSupport extends BinarySensorBaseSupport {
     };
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
         if (characteristic.getUuid().toString().equals(BINARY_SENSOR_RESPONSE_CHARACTERISTIC_UUID)) {
-            handleResponseValue(characteristic.getValue());
+            handleResponseValue(value);
             return true;
         }
 
@@ -145,9 +146,9 @@ public class BinarySensorSupport extends BinarySensorBaseSupport {
         for (Parameter parameter : response.getParameters()) {
             if (parameter instanceof SensorState) {
                 if(getDevice().getState() != GBDevice.State.INITIALIZED){
-                    new TransactionBuilder("set device state")
-                            .add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()))
-                            .queue(getQueue());
+                    createTransactionBuilder("set device state")
+                            .setDeviceState(GBDevice.State.INITIALIZED)
+                            .queue();
                 }
 
                 SensorState stateParameter = (SensorState) parameter;
@@ -166,13 +167,13 @@ public class BinarySensorSupport extends BinarySensorBaseSupport {
         fullData[0] = 0x00;
         System.arraycopy(data, 0, fullData, 1, data.length);
 
-        builder.write(getCharacteristic(UUID.fromString(BINARY_SENSOR_CONTROL_CHARACTERISTIC_UUID)), fullData);
+        builder.write(UUID.fromString(BINARY_SENSOR_CONTROL_CHARACTERISTIC_UUID), fullData);
     }
 
     private void sendPacketToDevice(byte[] data) {
-        TransactionBuilder builder = new TransactionBuilder("BSS control");
+        TransactionBuilder builder = createTransactionBuilder("BSS control");
         sendPacketToDevice(data, builder);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
@@ -188,8 +189,8 @@ public class BinarySensorSupport extends BinarySensorBaseSupport {
         logger.debug("initializing device");
 
         builder
-                .add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()))
-                .notify(getCharacteristic(UUID.fromString(BINARY_SENSOR_RESPONSE_CHARACTERISTIC_UUID)), true)
+                .setDeviceState(GBDevice.State.INITIALIZING)
+                .notify(UUID.fromString(BINARY_SENSOR_RESPONSE_CHARACTERISTIC_UUID), true)
         ;
 
         SetSensorRequest setSensorRequest = new SetSensorRequest(SensorType.SENSOR_TYPE_OPENING_CLOSING, ReportState.REPORT_STATUS_ENABLED);

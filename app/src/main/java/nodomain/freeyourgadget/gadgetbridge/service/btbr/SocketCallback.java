@@ -26,9 +26,23 @@ public interface SocketCallback {
 
     /**
      * Read data from InputStream of BluetoothSocket
-     *
-     * @param data
      */
     void onSocketRead(byte[] data);
+
+    /**
+     * Read data from the InputStream of a BluetoothSocket, tagged with the RFCOMM channel it
+     * arrived on. Devices that use more than one socket (e.g. the Huawei dual channel) need the
+     * channel to keep per-stream reassembly state separate. Single-socket devices can ignore it;
+     * the default keeps their existing behaviour.
+     *
+     * @param data    the received bytes
+     * @param channel the RFCOMM channel the socket was opened on — the primary socket reports its
+     *                own {@link AbstractBTBRDeviceSupport#getRfcommChannel()}, which is
+     *                {@link AbstractBTBRDeviceSupport#RFCOMM_CHANNEL_UNSPECIFIED} when it was
+     *                resolved through SDP
+     */
+    default void onSocketRead(byte[] data, int channel) {
+        onSocketRead(data);
+    }
 
 }

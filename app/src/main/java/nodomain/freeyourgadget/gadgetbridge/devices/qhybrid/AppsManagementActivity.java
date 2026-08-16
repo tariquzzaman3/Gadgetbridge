@@ -34,24 +34,21 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.core.widget.PopupMenuCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 
-import java.util.ArrayList;
-import java.util.List;
-
-import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.AbstractGBActivity;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
+import nodomain.freeyourgadget.gadgetbridge.model.ItemWithDetails;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 public class AppsManagementActivity extends AbstractGBActivity {
+    private GBDevice device;
     ListView appsListView;
     String[] appNames;
 
@@ -59,6 +56,13 @@ public class AppsManagementActivity extends AbstractGBActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_qhybrid_apps_management);
+
+        device = getIntent().getParcelableExtra(GBDevice.EXTRA_DEVICE);
+        if (device == null || !device.isInitialized()) {
+            GB.toast(this, getString(R.string.watch_not_connected), Toast.LENGTH_LONG, GB.ERROR);
+            finish();
+            return;
+        }
 
         initViews();
         refreshInstalledApps();
@@ -70,17 +74,15 @@ public class AppsManagementActivity extends AbstractGBActivity {
 
     private void refreshInstalledApps() {
         try {
-            List<GBDevice> devices = GBApplication.app().getDeviceManager().getSelectedDevices();
-            boolean deviceFound = false;
-            for(GBDevice device : devices){
                 if (
                         device.getType() == DeviceType.FOSSILQHYBRID &&
                                 device.isConnected() &&
+                                device.getModel() != null &&
                                 (device.getModel().startsWith("DN") || device.getModel().startsWith("IV")) &&
                                 device.getState() == GBDevice.State.INITIALIZED
                 ) {
-                    String installedAppsJson = device.getDeviceInfo("INSTALLED_APPS").getDetails();
-                    if (installedAppsJson == null || installedAppsJson.isEmpty()) {
+                    ItemWithDetails installedAppsJson = device.getDeviceInfo("INSTALLED_APPS");
+                    if (installedAppsJson == null || installedAppsJson.getDetails().isEmpty()) {
                         throw new RuntimeException("can't get installed apps");
                     }
                     JSONArray apps = new JSONArray(installedAppsJson);
@@ -89,18 +91,16 @@ public class AppsManagementActivity extends AbstractGBActivity {
                         appNames[i] = apps.getString(i);
                     }
                     appsListView.setAdapter(new AppsListAdapter(this, appNames));
+                } else {
+                    throw new RuntimeException("Device not connected");
                 }
-                return;
-            }
         } catch (JSONException e) {
-            toast(e.getMessage());
+            toast(e.getLocalizedMessage());
             finish();
-            return;
         }
-        throw new RuntimeException("Device not connected");
     }
 
-    class AppsListAdapter extends ArrayAdapter<String> {
+    static class AppsListAdapter extends ArrayAdapter<String> {
         public AppsListAdapter(@NonNull Context context, @NonNull String[] objects) {
             super(context, 0, objects);
         }
@@ -150,6 +150,7 @@ public class AppsManagementActivity extends AbstractGBActivity {
                             @Override
                             public boolean onMenuItemClick(MenuItem item) {
                                 Intent intent = new Intent(QHybridSupport.QHYBRID_COMMAND_UNINSTALL_APP);
+                                intent.putExtra(GBDevice.EXTRA_DEVICE, device);
                                 intent.putExtra("EXTRA_APP_NAME", appNames[position]);
                                 LocalBroadcastManager.getInstance(AppsManagementActivity.this).sendBroadcast(intent);
                                 return true;

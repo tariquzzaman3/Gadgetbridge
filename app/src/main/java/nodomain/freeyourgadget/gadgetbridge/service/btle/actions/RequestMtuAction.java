@@ -1,4 +1,4 @@
-/*  Copyright (C) 2019-2024 Andreas Shimokawa, Daniel Dakhno
+/*  Copyright (C) 2019-2026 Andreas Shimokawa, Daniel Dakhno
 
     This file is part of Gadgetbridge.
 
@@ -16,18 +16,21 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.btle.actions;
 
+import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCharacteristic;
-import android.os.Build;
 
-import androidx.annotation.RequiresApi;
+import androidx.annotation.IntRange;
+import androidx.annotation.NonNull;
 
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BtLEAction;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCallback;
 
+/// Calls {@link BluetoothGatt#requestMtu(int)}. Results are returned to
+/// {@link GattCallback#onMtuChanged(BluetoothGatt, int, int)}
 public class RequestMtuAction extends BtLEAction {
-    private int mtu;
+    private final int mtu;
 
-    public RequestMtuAction(int mtu) {
+    public RequestMtuAction(@IntRange(from = 23L, to = 517L) final int mtu) {
         super(null);
         this.mtu = mtu;
     }
@@ -38,8 +41,15 @@ public class RequestMtuAction extends BtLEAction {
         return true;
     }
 
+    @SuppressLint("MissingPermission")
     @Override
-    public boolean run(BluetoothGatt gatt) {
-        return gatt.requestMtu(this.mtu);
+    public boolean run(@NonNull final BluetoothGatt gatt) {
+        return gatt.requestMtu(mtu);
+    }
+
+    @NonNull
+    @Override
+    public String toString() {
+        return getCreationTime() + " " + getClass().getSimpleName() + " mtu=" + mtu;
     }
 }

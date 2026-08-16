@@ -52,29 +52,29 @@ public class GetFileDownloadInitRequest extends Request {
     }
 
     private FileDownloadService2C.FileType convertFileTypeTo2C(HuaweiFileDownloadManager.FileType type) {
-        switch (type) {
-            case SLEEP_STATE:
-                return FileDownloadService2C.FileType.SLEEP_STATE;
-            case SLEEP_DATA:
-                return FileDownloadService2C.FileType.SLEEP_DATA;
-            case GPS:
-                return FileDownloadService2C.FileType.GPS;
-            default:
-                return FileDownloadService2C.FileType.UNKNOWN;
-        }
+        return switch (type) {
+            case SLEEP_STATE -> FileDownloadService2C.FileType.SLEEP_STATE;
+            case SLEEP_DATA -> FileDownloadService2C.FileType.SLEEP_DATA;
+            case RRI -> FileDownloadService2C.FileType.RRI;
+            case GPS -> FileDownloadService2C.FileType.GPS;
+            case PDR -> FileDownloadService2C.FileType.PDR;
+            case SEQUENCE_DATA -> FileDownloadService2C.FileType.SEQUENCE_DATA;
+            case ECG_ANALYSIS_DATA -> FileDownloadService2C.FileType.ECG_ANALYSIS_DATA;
+            default -> FileDownloadService2C.FileType.UNKNOWN;
+        };
     }
 
     private HuaweiFileDownloadManager.FileType convertFileTypeFrom2C(FileDownloadService2C.FileType type) {
-        switch (type) {
-            case SLEEP_STATE:
-                return HuaweiFileDownloadManager.FileType.SLEEP_STATE;
-            case SLEEP_DATA:
-                return HuaweiFileDownloadManager.FileType.SLEEP_DATA;
-            case GPS:
-                return HuaweiFileDownloadManager.FileType.GPS;
-            default:
-                return HuaweiFileDownloadManager.FileType.UNKNOWN;
-        }
+        return switch (type) {
+            case SLEEP_STATE -> HuaweiFileDownloadManager.FileType.SLEEP_STATE;
+            case SLEEP_DATA -> HuaweiFileDownloadManager.FileType.SLEEP_DATA;
+            case RRI -> HuaweiFileDownloadManager.FileType.RRI;
+            case GPS -> HuaweiFileDownloadManager.FileType.GPS;
+            case PDR -> HuaweiFileDownloadManager.FileType.PDR;
+            case SEQUENCE_DATA -> HuaweiFileDownloadManager.FileType.SEQUENCE_DATA;
+            case ECG_ANALYSIS_DATA -> HuaweiFileDownloadManager.FileType.ECG_ANALYSIS_DATA;
+            default -> HuaweiFileDownloadManager.FileType.UNKNOWN;
+        };
     }
 
     @Override
@@ -84,7 +84,7 @@ public class GetFileDownloadInitRequest extends Request {
                 FileDownloadService2C.FileType type = convertFileTypeTo2C(request.getFileType());
                 if (type == FileDownloadService2C.FileType.UNKNOWN)
                     throw new RequestCreationException("Cannot convert type " + request.getFileType());
-                return new FileDownloadService2C.FileDownloadInit.Request(paramsProvider, request.getFilename(), type, request.getStartTime(), request.getEndTime()).serialize();
+                return new FileDownloadService2C.FileDownloadInit.Request(paramsProvider, request.getFilename(), type, request.getStartTime(), request.getEndTime(), request.getDictId()).serialize();
             } else {
                 if (this.request.getFileType() == HuaweiFileDownloadManager.FileType.DEBUG)
                     return new FileDownloadService0A.FileDownloadInit.DebugFilesRequest(paramsProvider).serialize();
@@ -92,6 +92,8 @@ public class GetFileDownloadInitRequest extends Request {
                     return new FileDownloadService0A.FileDownloadInit.SleepFilesRequest(paramsProvider, request.getStartTime(), request.getEndTime()).serialize();
                 else if (this.request.getFileType() == HuaweiFileDownloadManager.FileType.GPS)
                     return new FileDownloadService0A.FileDownloadInit.GpsFileRequest(paramsProvider, request.getWorkoutId()).serialize();
+                else if(this.request.getFileType() == HuaweiFileDownloadManager.FileType.RRI)
+                    return new FileDownloadService0A.FileDownloadInit.RriFileRequest(paramsProvider, request.getStartTime(), request.getEndTime()).serialize();
                 else
                     throw new RequestCreationException("Unknown file type");
             }

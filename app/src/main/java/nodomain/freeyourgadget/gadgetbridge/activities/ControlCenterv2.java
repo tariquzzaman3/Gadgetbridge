@@ -28,7 +28,7 @@ import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Bundle;
-import android.telephony.PhoneStateListener;
+import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.MenuItem;
 import android.view.MotionEvent;
@@ -40,9 +40,11 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.ActionBarDrawerToggle;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.app.AppCompatDelegate;
+import androidx.core.graphics.Insets;
 import androidx.core.view.GravityCompat;
 import androidx.core.view.MenuProvider;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
@@ -67,6 +69,7 @@ import java.util.Objects;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.activities.debug.DebugActivityV2;
 import nodomain.freeyourgadget.gadgetbridge.activities.discovery.DiscoveryActivityV2;
 import nodomain.freeyourgadget.gadgetbridge.activities.welcome.WelcomeActivity;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
@@ -77,13 +80,14 @@ import nodomain.freeyourgadget.gadgetbridge.util.AndroidUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.DeviceHelper;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.GBChangeLog;
+import nodomain.freeyourgadget.gadgetbridge.util.GBPrefs;
 import nodomain.freeyourgadget.gadgetbridge.util.PermissionsUtils;
-import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
 //TODO: extend AbstractGBActivity, but it requires actionbar that is not available
 public class ControlCenterv2 extends AppCompatActivity
         implements NavigationView.OnNavigationItemSelectedListener, GBActivity {
     private static final Logger LOG = LoggerFactory.getLogger(ControlCenterv2.class);
+    public static final long REALTIME_HR_SAMPLE_TTL_MS = 5_000L;
     public static final int MENU_REFRESH_CODE = 1;
     private boolean isLanguageInvalid = false;
     private boolean isThemeInvalid = false;
@@ -91,11 +95,6 @@ public class ControlCenterv2 extends AppCompatActivity
     private FragmentStateAdapter pagerAdapter;
     private SwipeRefreshLayout swipeLayout;
     private AlertDialog clDialog;
-
-    //needed for KK compatibility
-    static {
-        AppCompatDelegate.setCompatVectorFromResourcesEnabled(true);
-    }
 
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
@@ -126,14 +125,34 @@ public class ControlCenterv2 extends AppCompatActivity
     };
     private boolean pesterWithPermissions = true;
     private final Map<GBDevice, ActivitySample> currentHRSample = new HashMap<>();
+    private final Map<GBDevice, Long> currentHRSampleReceivedAt = new HashMap<>();
 
     public ActivitySample getCurrentHRSample(final GBDevice device) {
-        return currentHRSample.get(device);
+        final ActivitySample sample = currentHRSample.get(device);
+
+        if (!device.getDeviceCoordinator().supportsLiveOnlyHeartRateDisplay(device)) {
+            return sample;
+        }
+
+        final Long receivedAt = currentHRSampleReceivedAt.get(device);
+
+        if (sample == null || receivedAt == null) {
+            return null;
+        }
+
+        if (SystemClock.elapsedRealtime() - receivedAt > REALTIME_HR_SAMPLE_TTL_MS) {
+            currentHRSample.remove(device);
+            currentHRSampleReceivedAt.remove(device);
+            return null;
+        }
+
+        return sample;
     }
 
     private void setCurrentHRSample(final GBDevice device, ActivitySample sample) {
         if (HeartRateUtils.getInstance().isValidHeartRateValue(sample.getHeartRate())) {
             currentHRSample.put(device, sample);
+            currentHRSampleReceivedAt.put(device, SystemClock.elapsedRealtime());
         }
     }
 
@@ -150,13 +169,13 @@ public class ControlCenterv2 extends AppCompatActivity
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        Prefs prefs = GBApplication.getPrefs();
+        GBPrefs prefs = GBApplication.getPrefs();
 
         // Determine availability of device with activity tracking functionality
         boolean activityTrackerAvailable = false;
         List<GBDevice> devices = GBApplication.app().getDeviceManager().getDevices();
         for (GBDevice dev : devices) {
-            if (dev.getDeviceCoordinator().supportsActivityTracking()) {
+            if (dev.getDeviceCoordinator().supportsActivityTracking(dev)) {
                 activityTrackerAvailable = true;
                 break;
             }
@@ -171,16 +190,22 @@ public class ControlCenterv2 extends AppCompatActivity
                         clDialog = cl.getMaterialFullLogDialog();
                     }
                     clDialog.show();
-                } catch (Exception ignored) {
-                    GB.toast(getBaseContext(), getString(R.string.error_showing_changelog), Toast.LENGTH_LONG, GB.ERROR);
+                } catch (Exception ex) {
+                    GB.toast(getBaseContext(), getString(R.string.error_showing_changelog), Toast.LENGTH_LONG, GB.ERROR, ex);
                 }
             }
         }
 
-
         // Initialize drawer
         NavigationView drawerNavigationView = findViewById(R.id.nav_view);
         drawerNavigationView.setNavigationItemSelectedListener(this);
+
+        View navigationHeaderView = drawerNavigationView.getHeaderView(0);
+        ViewCompat.setOnApplyWindowInsetsListener(navigationHeaderView, (view, windowInsets) -> {
+            Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(view.getPaddingLeft(), insets.top, view.getPaddingRight(), view.getPaddingBottom());
+            return windowInsets;
+        });
 
         // Initialize bottom navigation
         BottomNavigationView navigationView = findViewById(R.id.bottom_nav_bar);
@@ -249,28 +274,42 @@ public class ControlCenterv2 extends AppCompatActivity
 
         // Make sure the SwipeRefreshLayout doesn't interfere with the ViewPager2
         viewPager.getChildAt(0).setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_MOVE) {
-                swipeLayout.setEnabled(false);
-            } else {
-                swipeLayout.setEnabled(true);
+            if (prefs.refreshOnSwipe()) {
+                if (event.getAction() == MotionEvent.ACTION_MOVE) {
+                    swipeLayout.setEnabled(false);
+                } else {
+                    swipeLayout.setEnabled(true);
+                }
             }
             return false;
         });
 
         // Set pull-down-to-refresh action
         swipeLayout = findViewById(R.id.dashboard_swipe_layout);
+        swipeLayout.setEnabled(prefs.refreshOnSwipe());
         swipeLayout.setOnRefreshListener(() -> {
-            // Fetch activity for all connected devices
-            GBApplication.deviceService().onFetchRecordedData(RecordedDataTypes.TYPE_SYNC);
-            // Hide 'refreshing' animation immediately if no health devices are connected
-            List<GBDevice> devices1 = GBApplication.app().getDeviceManager().getDevices();
-            for (GBDevice dev : devices1) {
-                if (dev.getDeviceCoordinator().supportsActivityTracking() && dev.isInitialized()) {
+            if (prefs.refreshOnSwipe()) {
+                List<GBDevice> devices1 = GBApplication.app().getDeviceManager().getDevices();
+                final boolean anyConnected = devices1.stream().anyMatch(GBDevice::isInitialized);
+                if (!anyConnected) {
+                    // No devices are connected at all
+                    GB.toast(getString(R.string.info_no_devices_connected), Toast.LENGTH_LONG, GB.WARN);
+                    swipeLayout.setRefreshing(false);
                     return;
                 }
+                // Fetch activity for all connected devices
+                GBApplication.deviceService().onFetchRecordedData(RecordedDataTypes.TYPE_SYNC);
+
+                // Hide 'refreshing' animation immediately if no devices are connected that support sync
+                final boolean anySupported = devices1.stream().filter(GBDevice::isInitialized)
+                        .anyMatch(dev -> dev.getDeviceCoordinator().supportsDataFetching(dev));
+                if (!anySupported) {
+                    swipeLayout.setRefreshing(false);
+                    GB.toast(getString(R.string.info_no_devices_to_sync), Toast.LENGTH_LONG, GB.WARN);
+                }
+            } else {
+                swipeLayout.setRefreshing(false);
             }
-            swipeLayout.setRefreshing(false);
-            GB.toast(getString(R.string.info_no_devices_connected), Toast.LENGTH_LONG, GB.WARN);
         });
 
         // Set up local intent listener
@@ -290,6 +329,7 @@ public class ControlCenterv2 extends AppCompatActivity
             pesterWithPermissions = prefs.getBoolean("permission_pestering", true);
             if (pesterWithPermissions && !PermissionsUtils.checkAllPermissions(this)) {
                 Intent permissionsIntent = new Intent(this, PermissionsActivity.class);
+                permissionsIntent.putExtra(PermissionsActivity.ARG_SHOW_DO_NOT_ASK_BUTTON, true);
                 startActivity(permissionsIntent);
             }
         }
@@ -299,8 +339,8 @@ public class ControlCenterv2 extends AppCompatActivity
         if (showChangelog && cl.isFirstRun() && cl.hasChanges(cl.isFirstRunEver())) {
             try {
                 cl.getMaterialLogDialog().show();
-            } catch (Exception ignored) {
-                GB.toast(this, getString(R.string.error_showing_changelog), Toast.LENGTH_LONG, GB.ERROR);
+            } catch (Exception ex) {
+                GB.toast(this, getString(R.string.error_showing_changelog), Toast.LENGTH_LONG, GB.ERROR, ex);
             }
         }
 
@@ -309,10 +349,10 @@ public class ControlCenterv2 extends AppCompatActivity
 
     @Override
     public void onSaveInstanceState(@NonNull Bundle outState) {
-       if (clDialog != null){
-           outState.putBoolean("cl", clDialog.isShowing());
-       }
-       super.onSaveInstanceState(outState);
+        if (clDialog != null) {
+            outState.putBoolean("cl", clDialog.isShowing());
+        }
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -343,7 +383,7 @@ public class ControlCenterv2 extends AppCompatActivity
             startActivityForResult(settingsIntent, MENU_REFRESH_CODE);
             return false;
         } else if (itemId == R.id.action_debug) {
-            final Intent debugIntent = new Intent(this, DebugActivity.class);
+            final Intent debugIntent = new Intent(this, DebugActivityV2.class);
             startActivity(debugIntent);
             return false;
         } else if (itemId == R.id.action_data_management) {
@@ -370,8 +410,8 @@ public class ControlCenterv2 extends AppCompatActivity
                     clDialog = cl.getMaterialFullLogDialog();
                 }
                 clDialog.show();
-            } catch (Exception ignored) {
-                GB.toast(getBaseContext(), getString(R.string.error_showing_changelog), Toast.LENGTH_LONG, GB.ERROR);
+            } catch (Exception ex) {
+                GB.toast(getBaseContext(), getString(R.string.error_showing_changelog), Toast.LENGTH_LONG, GB.ERROR, ex);
             }
             return false;
         } else if (itemId == R.id.about) {
@@ -393,10 +433,10 @@ public class ControlCenterv2 extends AppCompatActivity
     }
 
     private void handleShortcut(Intent intent) {
-        if(ACTION_CONNECT.equals(intent.getAction())) {
+        if (ACTION_CONNECT.equals(intent.getAction())) {
             String btDeviceAddress = intent.getStringExtra("device");
-            if(btDeviceAddress!=null){
-                GBDevice candidate = DeviceHelper.getInstance().findAvailableDevice(btDeviceAddress, this);
+            if (btDeviceAddress != null) {
+                GBDevice candidate = DeviceHelper.getInstance().findAvailableDevice(btDeviceAddress);
                 if (candidate != null && !candidate.isConnected()) {
                     GBApplication.deviceService(candidate).connect();
                 }
@@ -404,6 +444,7 @@ public class ControlCenterv2 extends AppCompatActivity
         }
     }
 
+    @Override
     public void setLanguage(Locale language, boolean invalidateLanguage) {
         if (invalidateLanguage) {
             isLanguageInvalid = true;

@@ -8,7 +8,9 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
 
-public class XiaomiActivityParserTest {
+import nodomain.freeyourgadget.gadgetbridge.test.TestBase;
+
+public class XiaomiActivityParserTest extends TestBase {
     @Test
     @Ignore("helper test for development, remove this while debugging")
     public void localTest() throws IOException {
@@ -17,6 +19,6 @@ public class XiaomiActivityParserTest {
         final XiaomiActivityFileId fileId = XiaomiActivityFileId.from(fileIdBytes);
         final XiaomiActivityParser parser = XiaomiActivityParser.create(fileId);
 
-        parser.parse(null, fileId, data);
+        parser.parse(null, null, fileId, data);
     }
 }

@@ -1,4 +1,4 @@
-/*  Copyright (C) 2024 Damien Gaignon, Martin.JM
+/*  Copyright (C) 2024-2026 Damien Gaignon, Martin.JM
 
     This file is part of Gadgetbridge.
 
@@ -20,24 +20,27 @@ import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 import android.location.Location;
 import android.net.Uri;
+import android.os.Bundle;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventCameraRemote;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiConstants;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceMusic;
 import nodomain.freeyourgadget.gadgetbridge.model.CalendarEventSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.CannedMessagesSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.Contact;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.NavigationInfoSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
 import nodomain.freeyourgadget.gadgetbridge.service.btbr.AbstractBTBRDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btbr.TransactionBuilder;
 
@@ -47,9 +50,8 @@ public class HuaweiBRSupport extends AbstractBTBRDeviceSupport {
     private final HuaweiSupportProvider supportProvider;
 
     public HuaweiBRSupport() {
-        super(LOG);
+        super(LOG, 1032);
         addSupportedService(HuaweiConstants.UUID_SERVICE_HUAWEI_SDP);
-        setBufferSize(1032);
         supportProvider = new HuaweiSupportProvider(this);
     }
 
@@ -60,7 +62,7 @@ public class HuaweiBRSupport extends AbstractBTBRDeviceSupport {
     @Override
     public void setContext(GBDevice gbDevice, BluetoothAdapter btAdapter, Context context) {
         super.setContext(gbDevice, btAdapter, context);
-        supportProvider.setContext(context);
+        supportProvider.setContext(gbDevice, context);
     }
 
     @Override
@@ -77,6 +79,11 @@ public class HuaweiBRSupport extends AbstractBTBRDeviceSupport {
     @Override
     public void onSocketRead(byte[] data) {
         supportProvider.onSocketRead(data);
+    }
+
+    @Override
+    public void onSocketRead(byte[] data, int channel) {
+        supportProvider.onSocketRead(data, channel);
     }
 
     @Override
@@ -102,6 +109,11 @@ public class HuaweiBRSupport extends AbstractBTBRDeviceSupport {
     @Override
     public void onNotification(NotificationSpec notificationSpec) {
         supportProvider.onNotification(notificationSpec);
+    }
+
+    @Override
+    public void onDeleteNotification(int id) {
+        supportProvider.onDeleteNotification(id);
     }
 
     @Override
@@ -141,8 +153,8 @@ public class HuaweiBRSupport extends AbstractBTBRDeviceSupport {
     }
 
     @Override
-    public void onSendWeather(ArrayList<WeatherSpec> weatherSpecs) {
-        supportProvider.onSendWeather(weatherSpecs);
+    public void onSendWeather() {
+        supportProvider.onSendWeather();
     }
 
     @Override
@@ -151,8 +163,8 @@ public class HuaweiBRSupport extends AbstractBTBRDeviceSupport {
     }
 
     @Override
-    public void onInstallApp(Uri uri) {
-        supportProvider.onInstallApp(uri);
+    public void onInstallApp(Uri uri, @NonNull final Bundle options) {
+        supportProvider.onInstallApp(uri, options);
     }
 
     @Override
@@ -195,11 +207,14 @@ public class HuaweiBRSupport extends AbstractBTBRDeviceSupport {
 
     @Override
     public void dispose() {
-        supportProvider.dispose();
-        super.dispose();
+        synchronized (ConnectionMonitor) {
+            supportProvider.dispose();
+            super.dispose();
+        }
     }
 
-    public void onTestNewFunction() {
+    @Override
+    public void onTestNewFunction(@Nullable Bundle options) {
         supportProvider.onTestNewFunction();
     }
 
@@ -211,5 +226,20 @@ public class HuaweiBRSupport extends AbstractBTBRDeviceSupport {
     @Override
     public void onMusicOperation(int operation, int playlistIndex, String playlistName, ArrayList<Integer> musicIds) {
         supportProvider.onMusicOperation(operation, playlistIndex, playlistName, musicIds);
+    }
+
+    @Override
+    public void onSetCannedMessages(final CannedMessagesSpec cannedMessagesSpec) {
+        supportProvider.onSetCannedMessages(cannedMessagesSpec);
+    }
+
+    @Override
+    public void onFindDevice(boolean start) {
+        supportProvider.onFindDevice(start);
+    }
+
+    @Override
+    public void onSetNavigationInfo(NavigationInfoSpec navigationInfoSpec) {
+        supportProvider.onSetNavigationInfo(navigationInfoSpec);
     }
 }

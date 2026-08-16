@@ -1,6 +1,6 @@
-/*  Copyright (C) 2016-2024 Andreas Shimokawa, Anemograph, Carsten Pfeiffer,
+/*  Copyright (C) 2016-2025 Andreas Shimokawa, Anemograph, Carsten Pfeiffer,
     Daniel Dakhno, Daniele Gobbetti, Davis Mosenkovs, Dikay900, Felix Konstantin
-    Maurer, José Rebelo, Petr Vaněk, Johannes Krude
+    Maurer, José Rebelo, Petr Vaněk, Johannes Krude, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -23,16 +23,21 @@ import java.util.Locale;
 import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.*;
 
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.text.format.DateFormat;
 
+import androidx.annotation.NonNull;
+
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.dsl.Language;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryConfig;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 
 public class DevicePrefs extends Prefs {
-    private GBDevice gbDevice;
+    private final GBDevice gbDevice;
 
     public DevicePrefs(final SharedPreferences preferences, GBDevice gbDevice) {
         super(preferences);
@@ -71,6 +76,7 @@ public class DevicePrefs extends Prefs {
         return getBoolean("fetch_unknown_files", false);
     }
 
+    @NonNull
     public String getTimeFormat() {
         String timeFormat = getString(DeviceSettingsPreferenceConst.PREF_TIMEFORMAT, DeviceSettingsPreferenceConst.PREF_TIMEFORMAT_AUTO);
         if (DeviceSettingsPreferenceConst.PREF_TIMEFORMAT_AUTO.equals(timeFormat)) {
@@ -115,4 +121,64 @@ public class DevicePrefs extends Prefs {
         return getInt(DeviceSettingsPreferenceConst.PREF_RESERVE_REMINDERS_CALENDAR, 9);
     }
 
+    public boolean allowHighMtu() {
+        return getBoolean(PREF_ALLOW_HIGH_MTU, true);
+    }
+
+    public boolean installUnsupportedFiles() {
+        return getBoolean("install_unsupported_files", false);
+    }
+
+    public boolean getConnectionPriorityLowPower() {
+        return getBoolean(PREF_CONNECTION_PRIORITY_LOW_POWER, false);
+    }
+
+    public boolean getConnectionForceLegacyGatt() {
+        return getBoolean(PREF_CONNECTION_FORCE_LEGACY_GATT, Build.VERSION.SDK_INT < Build.VERSION_CODES.Q);
+    }
+
+    public DeviceCoordinator.ConnectionType getForcedConnectionTypeFromPrefs() {
+        final String connTypePref = getString(DeviceSettingsPreferenceConst.PREF_FORCE_CONNECTION_TYPE, "BOTH");
+
+        if ("BLE".equals(connTypePref))
+            return DeviceCoordinator.ConnectionType.BLE;
+
+        if ("BT_CLASSIC".equals(connTypePref))
+            return DeviceCoordinator.ConnectionType.BT_CLASSIC;
+
+        // either set to default, unknown option selected, or has not been set
+        return DeviceCoordinator.ConnectionType.BOTH;
+    }
+
+    public int getHeartRateHighThreshold() {
+        return getInt(DeviceSettingsPreferenceConst.PREF_HEARTRATE_ALERT_HIGH_THRESHOLD, 0);
+    }
+
+    public int getHeartRateLowThreshold() {
+        return getInt(DeviceSettingsPreferenceConst.PREF_HEARTRATE_ALERT_LOW_THRESHOLD, 0);
+    }
+
+    public int getScreenTimeout() {
+        return getInt(PREF_SCREEN_TIMEOUT, 5);
+    }
+
+    public Language getLanguage(final Language defaultLanguage) {
+        String localeString = getString(PREF_LANGUAGE, defaultLanguage.name().toLowerCase(Locale.ROOT));
+        if (localeString == null || localeString.equals(Language.AUTO.name().toLowerCase(Locale.ROOT))) {
+            String language = Locale.getDefault().getLanguage();
+            String country = Locale.getDefault().getCountry();
+
+            //noinspection ConstantValue
+            if (country == null) {
+                // sometimes country is null, no idea why, guess it.
+                country = language;
+            }
+            localeString = language + "_" + country.toUpperCase();
+        }
+        try {
+            return Language.valueOf(localeString);
+        } catch (final Exception e) {
+            return defaultLanguage;
+        }
+    }
 }

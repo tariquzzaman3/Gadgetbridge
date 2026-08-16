@@ -24,6 +24,7 @@ import static nodomain.freeyourgadget.gadgetbridge.service.devices.sony.headphon
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.sony.headphones.protocol.impl.SonyTestUtils.assertRequests;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.sony.headphones.protocol.impl.SonyTestUtils.handleMessage;
 
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -35,8 +36,8 @@ import java.util.Map;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEvent;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventUpdatePreferences;
+import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCapabilities;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.coordinators.SonyWF1000XM4Coordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.prefs.AmbientSoundControlButtonMode;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.prefs.AudioUpsampling;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.prefs.AutomaticPowerOff;
@@ -48,15 +49,34 @@ import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.prefs.SpeakT
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.prefs.SpeakToChatEnabled;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.prefs.VoiceNotifications;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.sony.headphones.protocol.Request;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.sony.headphones.protocol.impl.MockSonyCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.sony.headphones.protocol.impl.v1.params.BatteryType;
 
 public class SonyProtocolImplV2Test {
+    private final MockSonyCoordinator coordinator = new MockSonyCoordinator();
     private final SonyProtocolImplV2 protocol = new SonyProtocolImplV2(null) {
         @Override
         protected SonyHeadphonesCoordinator getCoordinator() {
-            return new SonyWF1000XM4Coordinator();
+            return coordinator;
         }
     };
+
+    @Before
+    public void before() {
+        coordinator.getDefaultCapabilities().clear();
+        // Same as the WF-1000XM4
+        coordinator.getDefaultCapabilities().addAll(Arrays.asList(
+                SonyHeadphonesCapabilities.BatteryDual,
+                SonyHeadphonesCapabilities.BatteryCase,
+                SonyHeadphonesCapabilities.AmbientSoundControl,
+                SonyHeadphonesCapabilities.WindNoiseReduction,
+                SonyHeadphonesCapabilities.EqualizerSimple,
+                SonyHeadphonesCapabilities.AudioUpsampling,
+                SonyHeadphonesCapabilities.ButtonModesLeftRight,
+                SonyHeadphonesCapabilities.PauseWhenTakenOff,
+                SonyHeadphonesCapabilities.AutomaticPowerOffWhenTakenOff
+        ));
+    }
 
     @Test
     public void getAmbientSoundControl() {
@@ -151,6 +171,22 @@ public class SonyProtocolImplV2Test {
 
         final Request requestDisabled = protocol.setAudioUpsampling(new AudioUpsampling(false));
         assertRequest(requestDisabled, "3e:0c:01:00:00:00:03:e8:01:00:f9:3c");
+    }
+
+    @Test
+    public void setAudioLDAC() {
+        // TODO
+    }
+
+    @Test
+    public void setButtonFunctionNcAmbient() {
+        // TODO
+    }
+
+    @Test
+    public void reboot() {
+        final Request request = protocol.reboot();
+        assertRequest(request, 0x0c, "98:00:16:01");
     }
 
     @Test

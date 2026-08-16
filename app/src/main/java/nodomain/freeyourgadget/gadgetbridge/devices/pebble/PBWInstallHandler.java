@@ -17,8 +17,11 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.pebble;
 
+import android.app.Activity;
 import android.content.Context;
 import android.net.Uri;
+
+import androidx.annotation.NonNull;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -34,7 +37,8 @@ import java.io.InputStream;
 import java.io.Writer;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.InstallActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.FwAppInstallerActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.InstallActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.appmanager.AppManagerActivity;
 import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
@@ -43,6 +47,7 @@ import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
 import nodomain.freeyourgadget.gadgetbridge.model.GenericItem;
 import nodomain.freeyourgadget.gadgetbridge.util.FileUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.PebbleUtils;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInfo;
 
 public class PBWInstallHandler implements InstallHandler {
     private static final Logger LOG = LoggerFactory.getLogger(PBWInstallHandler.class);
@@ -57,7 +62,7 @@ public class PBWInstallHandler implements InstallHandler {
     }
 
     @Override
-    public void validateInstallation(InstallActivity installActivity, GBDevice device) {
+    public void validateInstallation(@NonNull InstallActivity installActivity, @NonNull GBDevice device) {
         if (device.isBusy()) {
             installActivity.setInfoText(device.getBusyTask());
             installActivity.setInstallEnabled(false);
@@ -69,10 +74,11 @@ public class PBWInstallHandler implements InstallHandler {
             return;
         }
 
-        String platformName = PebbleUtils.getPlatformName(device.getModel());
+        String platformName = PebbleHardware.getPlatformName(device.getModel());
+        Integer targetSlot = (Integer) device.getExtraInfo(GBDeviceEventVersionInfo.EXTRA_FW_UPDATE_TARGET_SLOT);
 
         try {
-            mPBWReader = new PBWReader(mUri, mContext, platformName);
+            mPBWReader = new PBWReader(mUri, mContext, platformName, targetSlot);
         } catch (FileNotFoundException e) {
             installActivity.setInfoText("file not found");
             installActivity.setInstallEnabled(false);
@@ -84,7 +90,12 @@ public class PBWInstallHandler implements InstallHandler {
         }
 
         if (!mPBWReader.isValid()) {
-            installActivity.setInfoText("pbw/pbz is broken or incompatible with your Hardware or Firmware.");
+            String reason = mPBWReader.getInvalidReason();
+            if (reason != null) {
+                installActivity.setInfoText("Invalid: " + reason);
+            } else {
+                installActivity.setInfoText("pbw/pbz is broken or incompatible with your Hardware or Firmware.");
+            }
             installActivity.setInstallEnabled(false);
             return;
         }
@@ -96,7 +107,10 @@ public class PBWInstallHandler implements InstallHandler {
             installItem.setIcon(R.drawable.ic_firmware);
 
             String hwRevision = mPBWReader.getHWRevision();
-            if (hwRevision != null && hwRevision.equals(device.getModel())) {
+            String deviceModel = device.getModel();
+
+            // Use platform-aware compatibility check instead of exact string match
+            if (PebbleHardware.isFirmwareCompatible(hwRevision, deviceModel)) {
                 installItem.setName(mContext.getString(R.string.pbw_installhandler_pebble_firmware, ""));
                 installItem.setDetails(mContext.getString(R.string.pbwinstallhandler_correct_hw_revision));
 
@@ -107,7 +121,13 @@ public class PBWInstallHandler implements InstallHandler {
                     installItem.setName(mContext.getString(R.string.pbw_installhandler_pebble_firmware, hwRevision));
                     installItem.setDetails(mContext.getString(R.string.pbwinstallhandler_incorrect_hw_revision));
                 }
-                installActivity.setInfoText(mContext.getString(R.string.pbw_install_handler_hw_revision_mismatch));
+                // Show detailed incompatibility reason
+                String reason = PebbleHardware.getFirmwareIncompatibilityReason(hwRevision, deviceModel);
+                if (reason != null) {
+                    installActivity.setInfoText(reason);
+                } else {
+                    installActivity.setInfoText(mContext.getString(R.string.pbw_install_handler_hw_revision_mismatch));
+                }
                 installActivity.setInstallEnabled(false);
             }
         } else {
@@ -119,16 +139,11 @@ public class PBWInstallHandler implements InstallHandler {
                 if (mPBWReader.isLanguage()) {
                     drawable = R.drawable.ic_languagepack;
                 } else {
-                    switch (app.getType()) {
-                        case WATCHFACE:
-                            drawable = R.drawable.ic_watchface;
-                            break;
-                        case APP_ACTIVITYTRACKER:
-                            drawable = R.drawable.ic_activitytracker;
-                            break;
-                        default:
-                            drawable = R.drawable.ic_watchapp;
-                    }
+                    drawable = switch (app.getType()) {
+                        case WATCHFACE -> R.drawable.ic_watchface;
+                        case APP_ACTIVITYTRACKER -> R.drawable.ic_activitytracker;
+                        default -> R.drawable.ic_watchapp;
+                    };
                 }
                 installItem.setIcon(drawable);
 
@@ -146,7 +161,7 @@ public class PBWInstallHandler implements InstallHandler {
     }
 
     @Override
-    public void onStartInstall(GBDevice device) {
+    public void onStartInstall(@NonNull GBDevice device) {
         if (mPBWReader.isFirmware() || mPBWReader.isLanguage()) {
             return;
         }
@@ -155,12 +170,13 @@ public class PBWInstallHandler implements InstallHandler {
         GBDeviceApp app = mPBWReader.getGBDeviceApp();
         try {
             destDir = PebbleUtils.getPbwCacheDir();
+            //noinspection ResultOfMethodCallIgnored
             destDir.mkdirs();
             FileUtils.copyURItoFile(mContext, mUri, new File(destDir, app.getUUID().toString() + ".pbw"));
 
             AppManagerActivity.addToAppOrderFile("pbwcacheorder.txt", app.getUUID());
         } catch (IOException e) {
-            LOG.error("Installation failed: " + e.getMessage(), e);
+            LOG.error("Installation failed: ", e);
             return;
         }
 
@@ -169,7 +185,7 @@ public class PBWInstallHandler implements InstallHandler {
         try {
             writer = new BufferedWriter(new FileWriter(outputFile));
         } catch (IOException e) {
-            LOG.error("Failed to open output file: " + e.getMessage(), e);
+            LOG.error("Failed to open output file: ", e);
             return;
         }
         try {
@@ -183,25 +199,25 @@ public class PBWInstallHandler implements InstallHandler {
 
             writer.close();
         } catch (IOException e) {
-            LOG.error("Failed to write to output file: " + e.getMessage(), e);
+            LOG.error("Failed to write to output file: ", e);
         } catch (JSONException e) {
             LOG.error(e.getMessage(), e);
         }
 
         InputStream jsConfigFile = mPBWReader.getInputStreamFile("pebble-js-app.js");
         if (jsConfigFile != null) {
-            try {
+            try (jsConfigFile) {
                 outputFile = new File(destDir, app.getUUID().toString() + "_config.js");
                 FileUtils.copyStreamToFile(jsConfigFile, outputFile);
             } catch (IOException e) {
-                LOG.error("Failed to open output file: " + e.getMessage(), e);
-            } finally {
-                try {
-                    jsConfigFile.close();
-                } catch (IOException e) {
-                }
+                LOG.error("Failed to open output file: ", e);
             }
         }
+    }
+    @NonNull
+    @Override
+    public Class<? extends Activity> getInstallActivity() {
+        return FwAppInstallerActivity.class;
     }
 
     @Override

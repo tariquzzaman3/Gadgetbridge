@@ -1,3 +1,19 @@
+/*  Copyright (C) 2024 Me7c7
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.activities.musicmanager;
 
 import android.app.Activity;
@@ -46,7 +62,7 @@ import java.util.stream.Collectors;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.AbstractGBActivity;
-import nodomain.freeyourgadget.gadgetbridge.activities.FwAppInstallerActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.FwAppInstallerActivity;
 import nodomain.freeyourgadget.gadgetbridge.adapter.MusicListAdapter;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceMusic;
@@ -365,6 +381,7 @@ public class MusicManagerActivity extends AbstractGBActivity {
                 public void onActivityResult(ActivityResult result) {
                     if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
                         Intent startIntent = new Intent(MusicManagerActivity.this, FwAppInstallerActivity.class);
+                        startIntent.putExtra(GBDevice.EXTRA_DEVICE, mGBDevice);
                         startIntent.setAction(Intent.ACTION_VIEW);
                         startIntent.setDataAndType(result.getData().getData(), null);
                         startActivity(startIntent);
@@ -390,6 +407,7 @@ public class MusicManagerActivity extends AbstractGBActivity {
         }
 
         popupMenu.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
+                                                 @Override
                                                  public boolean onMenuItemClick(MenuItem item) {
                                                      return onPopupItemSelected(item, music);
                                                  }
@@ -419,7 +437,7 @@ public class MusicManagerActivity extends AbstractGBActivity {
         list.add(music.getId());
 
         new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.Delete)
+                .setTitle(R.string.delete)
                 .setMessage(this.getString(R.string.music_delete_confirm_description, music.getTitle()))
                 .setIcon(R.drawable.ic_warning)
                 .setPositiveButton(android.R.string.yes, (dialog, whichButton) -> {
@@ -431,7 +449,7 @@ public class MusicManagerActivity extends AbstractGBActivity {
 
     private void deleteMusicMultipleConfirm(final ArrayList<Integer> list) {
         new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.Delete)
+                .setTitle(R.string.delete)
                 .setMessage(this.getString(R.string.music_delete_multiple_confirm_description, list.size()))
                 .setIcon(R.drawable.ic_warning)
                 .setPositiveButton(android.R.string.yes, (dialog, whichButton) -> {
@@ -521,7 +539,7 @@ public class MusicManagerActivity extends AbstractGBActivity {
         if(playlist.getId() == 0)
             return;
         new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.Delete)
+                .setTitle(R.string.delete)
                 .setMessage(this.getString(R.string.music_delete_confirm_description, playlist.getName()))
                 .setIcon(R.drawable.ic_warning)
                 .setPositiveButton(android.R.string.yes, (dialog, whichButton) -> {

@@ -32,13 +32,14 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.model.NavigationInfoSpec;
+import nodomain.freeyourgadget.gadgetbridge.util.NavigationUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
 public class GoogleMapsNotificationHandler {
-
     private static final Logger LOG = LoggerFactory.getLogger(GoogleMapsNotificationHandler.class);
 
     private boolean shouldSendNavigation = false;
@@ -52,7 +53,8 @@ public class GoogleMapsNotificationHandler {
             this.iconType = iconType;
         }
     }
-    List<IconType> knownImages;
+
+    private final List<IconType> knownImages;
 
     public GoogleMapsNotificationHandler() {
         knownImages = new ArrayList<>();
@@ -1188,74 +1190,75 @@ public class GoogleMapsNotificationHandler {
             Notification notification = sbn.getNotification();
             if (!NotificationCompat.getLocalOnly(notification))
                 return false; // ignore non-local notifications
-            
-            String distance = (notification.extras.get("android.title")==null) ? "" :
-                    notification.extras.get("android.title").toString(); // eg 100 yd
-            String instruction = (notification.extras.get("android.text")==null) ? "" :
-                    notification.extras.get("android.text").toString(); // eg: High St towards Blah
-            String navLine = (notification.extras.get("android.subText")==null) ? "" :
-                    notification.extras.get("android.subText").toString().replaceAll("\u00A0", " ");  // eg: 13 min · 4.6 mi · 11:55 ETA
-            String[] navLines = navLine.split("·");
+
+            final String distance = Optional.ofNullable(notification.extras.get("android.title")).orElse("").toString(); // eg 100 yd
+            final String instruction = Optional.ofNullable(notification.extras.get("android.text")).orElse("").toString();  // eg: High St towards Blah
+            final String navLine = Optional.ofNullable(notification.extras.get("android.subText")).orElse("").toString()
+                    .replaceAll("\u00A0", " "); // eg: 13 min · 4.6 mi · 11:55 ETA
+
+            final String[] navLines = navLine.split("·");
             for (int i = 0; i < navLines.length; i++) navLines[i] = navLines[i].trim();
-            if (navLines.length < 3) return false; // not in the format we expected - might be 'Shared with you' notification
+            if (navLines.length < 3)
+                return false; // not in the format we expected - might be 'Shared with you' notification
             // navLines now has at least 3 elements
-            LOG.info("Navigation: " + instruction + "," + distance + "," + navLines[0] + "," + navLines[1] + "," + navLines[2]);
+            LOG.info("Google Maps notification: {},{},{},{},{}", instruction, distance, navLines[0], navLines[1], navLines[2]);
             int matchedIcon = -1;
             // getLargeIcon only works in API 23+ - don't try and get icons on older devices
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                Icon icon = notification.getLargeIcon();
-                if (icon != null) {
-                    // We convert the icon to a bitmap, then to x 32x32 1bpp which we'll check against known images
-                    Drawable drawable = icon.loadDrawable(context);
-                    Bitmap bitmap = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888); // Single color bitmap will be created of 1x1 pixel
-                    Canvas canvas = new Canvas(bitmap);
-                    drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
-                    drawable.draw(canvas);
-                    int[] pixelsRGBA = new int[32 * 32];
-                    bitmap.getPixels(pixelsRGBA, 0, 32, 0, 0, 32, 32);
-                    int[] pixelPack = new int[32]; // pixels packed down 1bpp
-                    char[] pixelStringChars = new char[33 * 32];
+            Icon icon = notification.getLargeIcon();
+            if (icon != null) {
+                // We convert the icon to a bitmap, then to x 32x32 1bpp which we'll check against known images
+                Drawable drawable = icon.loadDrawable(context);
+                Bitmap bitmap = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888); // Single color bitmap will be created of 1x1 pixel
+                Canvas canvas = new Canvas(bitmap);
+                drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+                drawable.draw(canvas);
+                int[] pixelsRGBA = new int[32 * 32];
+                bitmap.getPixels(pixelsRGBA, 0, 32, 0, 0, 32, 32);
+                int[] pixelPack = new int[32]; // pixels packed down 1bpp
+                char[] pixelStringChars = new char[33 * 32];
 
-                    for (int y = 0; y < 32; y++) {
-                        int pack = 0;
-                        for (int x = 0; x < 32; x++) {
-                            int pixel = ((pixelsRGBA[(y * 32) + x] & 0x80000000) != 0) ? 1 : 0;
-                            pack = (pack << 1) | pixel; // check top bit (=alpha)
-                            pixelStringChars[x + y * 33] = (pixel != 0) ? '1' : '0';
-                        }
-                        pixelStringChars[32 + y * 33] = '\n';
-                        pixelPack[y] = pack;
+                for (int y = 0; y < 32; y++) {
+                    int pack = 0;
+                    for (int x = 0; x < 32; x++) {
+                        int pixel = ((pixelsRGBA[(y * 32) + x] & 0x80000000) != 0) ? 1 : 0;
+                        pack = (pack << 1) | pixel; // check top bit (=alpha)
+                        pixelStringChars[x + y * 33] = (pixel != 0) ? '1' : '0';
                     }
-                    // This is now a printable string showing the image, which we can log if we don't recognise it
-                    String pixelString = new String(pixelStringChars);
+                    pixelStringChars[32 + y * 33] = '\n';
+                    pixelPack[y] = pack;
+                }
+                // This is now a printable string showing the image, which we can log if we don't recognise it
+                String pixelString = new String(pixelStringChars);
 
-                    int bestDiff = 100;
-                    for (int i = 0; i < knownImages.size(); i++) {
-                        IconType knownImage = knownImages.get(i);
-                        int diff = 0;
-                        // Work out how many bits differ over the whole image
-                        for (int j = 0; j < 32; j++)
-                            diff += Integer.bitCount(knownImage.icon[j] ^ pixelPack[j]);
-                        // if it's close enough, match
-                        if (diff < 32 && diff < bestDiff) {
-                            matchedIcon = knownImage.iconType;
-                            bestDiff = diff;
-                        }
-                    }
-                    if (matchedIcon < 0) {
-                        LOG.info("Icon NEW:\n" + pixelString);
-                        knownImages.add(new IconType(255, pixelPack));
+                int bestDiff = 100;
+                for (int i = 0; i < knownImages.size(); i++) {
+                    IconType knownImage = knownImages.get(i);
+                    int diff = 0;
+                    // Work out how many bits differ over the whole image
+                    for (int j = 0; j < 32; j++)
+                        diff += Integer.bitCount(knownImage.icon[j] ^ pixelPack[j]);
+                    // if it's close enough, match
+                    if (diff < 32 && diff < bestDiff) {
+                        matchedIcon = knownImage.iconType;
+                        bestDiff = diff;
                     }
                 }
+                if (matchedIcon < 0) {
+                    LOG.warn("New Google Maps icon:\n{}", pixelString);
+                    knownImages.add(new IconType(255, pixelPack));
+                }
             }
-            NavigationInfoSpec navInfo = new NavigationInfoSpec();
-            if (matchedIcon>=0)
-                navInfo.nextAction = matchedIcon;
-            navInfo.instruction = instruction;
-            if (distance != null)
-                navInfo.distanceToTurn = distance;
+            final NavigationInfoSpec navInfo = new NavigationInfoSpec();
+            if (matchedIcon >= 0)
+                navInfo.setNextAction(matchedIcon);
+            navInfo.setInstruction(instruction);
+            if (!distance.isBlank())
+                navInfo.setDistanceToTurn(distance);
             if (navLines[2].contains("ETA"))
-              navInfo.ETA = navLines[2].replace("ETA","").trim();
+                navInfo.setETA(navLines[2].replace("ETA", "").trim());
+
+            LOG.info("Parsed navigation: {}", navInfo);
+
             GBApplication.deviceService().onSetNavigationInfo(navInfo);
 
             return true;
@@ -1263,7 +1266,7 @@ public class GoogleMapsNotificationHandler {
         return false;
     }
 
-    public boolean handleRemove(StatusBarNotification sbn) {
+    public boolean handleRemove(final StatusBarNotification sbn) {
         if (sbn.getPackageName().equals("com.google.android.apps.maps")) {
             if (!shouldSendNavigation) return false;
             Notification notification = sbn.getNotification();
@@ -1276,26 +1279,7 @@ public class GoogleMapsNotificationHandler {
         return false;
     }
 
-    private void checkShouldSendNavigation(Context context) {
-        Prefs prefs = GBApplication.getPrefs();
-
-        boolean navigationForward = prefs.getBoolean("navigation_forward", true);
-        boolean navigationGMaps = prefs.getBoolean("navigation_app_gmaps", true);
-        if (!navigationForward || !navigationGMaps) {
-            shouldSendNavigation = false;
-            return;
-        }
-
-        boolean navigationScreenOn = prefs.getBoolean("nagivation_screen_on", true);
-        if (!navigationScreenOn) {
-            PowerManager powermanager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (powermanager != null && powermanager.isScreenOn()) {
-                LOG.info("Not forwarding navigation instructions, screen seems to be on and settings do not allow this");
-                shouldSendNavigation = false;
-                return;
-            }
-        }
-
-        shouldSendNavigation = true;
+    private void checkShouldSendNavigation(final Context context) {
+        shouldSendNavigation = NavigationUtils.shouldSendNavigation(context, "gmaps");
     }
 }

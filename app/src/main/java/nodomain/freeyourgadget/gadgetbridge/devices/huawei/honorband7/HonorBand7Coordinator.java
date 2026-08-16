@@ -16,22 +16,26 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.huawei.honorband7;
 
+import androidx.annotation.NonNull;
+
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiConstants;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiLECoordinator;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class HonorBand7Coordinator extends HuaweiLECoordinator {
     @Override
-    public String getManufacturer() {
-        return "Honor";
+    public boolean isExperimental() {
+        // #6027
+        return true;
     }
 
     @Override
-    public DeviceType getDeviceType() {
-        return DeviceType.HUAWEIBAND7;
+    public String getManufacturer() {
+        return "Honor";
     }
 
     @Override
@@ -42,5 +46,20 @@ public class HonorBand7Coordinator extends HuaweiLECoordinator {
     @Override
     public int getDeviceNameResource() {
         return R.string.devicetype_honor_band7;
+    }
+
+    @Override
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceCoordinator.DeviceKind.FITNESS_BAND;
+    }
+
+    @Override
+    public boolean isNewHonorProtocol() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsVO2Max(@NonNull final GBDevice device) {
+        return false;
     }
 }

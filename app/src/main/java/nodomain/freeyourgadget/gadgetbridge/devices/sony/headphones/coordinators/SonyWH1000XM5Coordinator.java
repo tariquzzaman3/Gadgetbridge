@@ -16,13 +16,18 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.coordinators;
 
+import androidx.annotation.NonNull;
+
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCapabilities;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class SonyWH1000XM5Coordinator extends SonyHeadphonesCoordinator {
     @Override
@@ -35,9 +40,10 @@ public class SonyWH1000XM5Coordinator extends SonyHeadphonesCoordinator {
         return R.string.devicetype_sony_wh_1000xm5;
     }
 
+    @NonNull
     @Override
-    public List<SonyHeadphonesCapabilities> getCapabilities() {
-        return Arrays.asList(
+    public Set<SonyHeadphonesCapabilities> getDefaultCapabilities() {
+        return new HashSet<>(Arrays.asList(
                 // TODO R.xml.devicesettings_connect_two_devices,
                 // TODO automatic ANC depending on state (might need phone?)
                 SonyHeadphonesCapabilities.BatterySingle,
@@ -54,6 +60,11 @@ public class SonyWH1000XM5Coordinator extends SonyHeadphonesCoordinator {
                 SonyHeadphonesCapabilities.EqualizerWithCustomBands,
                 SonyHeadphonesCapabilities.QuickAccess,
                 SonyHeadphonesCapabilities.PauseWhenTakenOff
-        );
+        ));
+    }
+
+    @Override
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.HEADPHONES;
     }
 }

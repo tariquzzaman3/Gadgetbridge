@@ -16,11 +16,15 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.cmfwatchpro;
 
+import android.app.Activity;
 import android.content.Context;
 import android.net.Uri;
 
+import androidx.annotation.NonNull;
+
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.InstallActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.FwAppInstallerActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.InstallActivity;
 import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.GenericItem;
@@ -36,13 +40,19 @@ public class CmfInstallHandler implements InstallHandler {
         this.helper = new CmfFwHelper(uri, context);
     }
 
+    @NonNull
+    @Override
+    public Class<? extends Activity> getInstallActivity() {
+        return FwAppInstallerActivity.class;
+    }
+
     @Override
     public boolean isValid() {
         return helper.isValid();
     }
 
     @Override
-    public void validateInstallation(final InstallActivity installActivity, final GBDevice device) {
+    public void validateInstallation(@NonNull final InstallActivity installActivity, @NonNull final GBDevice device) {
         if (device.isBusy()) {
             installActivity.setInfoText(device.getBusyTask());
             installActivity.setInstallEnabled(false);
@@ -84,7 +94,7 @@ public class CmfInstallHandler implements InstallHandler {
     }
 
     @Override
-    public void onStartInstall(final GBDevice device) {
+    public void onStartInstall(@NonNull final GBDevice device) {
         helper.unsetFwBytes(); // free up memory
     }
 }

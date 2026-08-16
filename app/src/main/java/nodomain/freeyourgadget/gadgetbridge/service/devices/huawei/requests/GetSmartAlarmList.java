@@ -34,8 +34,8 @@ public class GetSmartAlarmList extends Request {
 
     @Override
     protected boolean requestSupported() {
-        return supportProvider.getHuaweiCoordinator().supportsChangingAlarm() &&
-                supportProvider.getHuaweiCoordinator().supportsSmartAlarm(supportProvider.getDevice());
+        return supportProvider.getDeviceState().supportsChangingAlarm() &&
+                supportProvider.getDeviceState().supportsSmartAlarm(supportProvider.getDevice());
     }
 
     @Override
@@ -69,7 +69,9 @@ public class GetSmartAlarmList extends Request {
                             smartAlarm.startMinute,
                             false,
                             "Smart alarm",
-                            ""
+                            "",
+                            0,
+                            true
                     )
             });
         } else {
@@ -88,7 +90,9 @@ public class GetSmartAlarmList extends Request {
                             0,
                             true,
                             "Smart alarm",
-                            ""
+                            "",
+                            0,
+                            true
                     )
             });
         }

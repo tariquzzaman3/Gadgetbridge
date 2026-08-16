@@ -20,6 +20,7 @@ import androidx.annotation.Nullable;
 
 import com.google.protobuf.ByteString;
 
+import org.apache.commons.lang3.ArrayUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,7 +30,7 @@ import java.util.Objects;
 
 import nodomain.freeyourgadget.gadgetbridge.proto.xiaomi.XiaomiProto;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.XiaomiCharacteristic;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.XiaomiSendCallback;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.XiaomiSupport;
 import nodomain.freeyourgadget.gadgetbridge.util.CheckSums;
 
@@ -42,6 +43,7 @@ public class XiaomiDataUploadService extends AbstractXiaomiService {
 
     public static final byte TYPE_WATCHFACE = 16;
     public static final byte TYPE_FIRMWARE = 32;
+    public static final byte TYPE_RPK = 64;
     public static final byte TYPE_NOTIFICATION_ICON = 50;
 
     private Callback callback;
@@ -56,13 +58,20 @@ public class XiaomiDataUploadService extends AbstractXiaomiService {
     }
 
     @Override
+    public void initialize() {
+        callback = null;
+        currentType = 0;
+        currentBytes = null;
+    }
+
+    @Override
     public void handleCommand(final XiaomiProto.Command cmd) {
         switch (cmd.getSubtype()) {
             case CMD_UPLOAD_START:
                 final XiaomiProto.DataUploadAck dataUploadAck = cmd.getDataUpload().getDataUploadAck();
                 LOG.debug("Got upload start, unknown2={}, resumePosition={}", dataUploadAck.getUnknown2(), dataUploadAck.getResumePosition());
 
-                if (dataUploadAck.getUnknown2() != 0 || dataUploadAck.getResumePosition() != 0) {
+                if (dataUploadAck.getUnknown2() != 0) {
                     LOG.warn("Unexpected response");
                     onUploadFinish(false);
                     return;
@@ -75,7 +84,7 @@ public class XiaomiDataUploadService extends AbstractXiaomiService {
                 }
 
                 LOG.debug("Using chunk size of {} bytes", chunkSize);
-                doUpload(currentType, currentBytes);
+                doUpload(currentType, currentBytes,dataUploadAck.getResumePosition());
                 return;
         }
 
@@ -117,11 +126,11 @@ public class XiaomiDataUploadService extends AbstractXiaomiService {
         );
     }
 
-    private void doUpload(final short type, final byte[] bytes) {
+    private void doUpload(final short type, final byte[] bytes,int resumePosition) {
         LOG.debug("Doing upload for {} bytes of type {}", bytes.length, type);
 
         // type + md5 + size + bytes + crc32
-        final ByteBuffer buf1 = ByteBuffer.allocate(2 + 16 + 4 + bytes.length).order(ByteOrder.LITTLE_ENDIAN);
+        final ByteBuffer buf1 = ByteBuffer.allocate(2 + 16 + 4 + bytes.length - resumePosition).order(ByteOrder.LITTLE_ENDIAN);
         final byte[] md5 = CheckSums.md5(bytes);
         if (md5 == null) {
             onUploadFinish(false);
@@ -132,7 +141,7 @@ public class XiaomiDataUploadService extends AbstractXiaomiService {
         buf1.put((byte) type);
         buf1.put(md5);
         buf1.putInt(bytes.length);
-        buf1.put(bytes);
+        buf1.put(ArrayUtils.subarray(bytes,resumePosition,bytes.length));
 
         final ByteBuffer buf2 = ByteBuffer.allocate(buf1.capacity() + 4).order(ByteOrder.LITTLE_ENDIAN);
         buf2.put(buf1.array());
@@ -152,7 +161,7 @@ public class XiaomiDataUploadService extends AbstractXiaomiService {
             BLETypeConversions.writeUint16(chunkToSend, 2, currentPart);
             System.arraycopy(payload, startIndex, chunkToSend, 4, endIndex - startIndex);
 
-            getSupport().getConnectionSpecificSupport().sendDataChunk("upload part " + currentPart + " of " + totalParts, chunkToSend, new XiaomiCharacteristic.SendCallback() {
+            getSupport().getConnectionSpecificSupport().sendDataChunk("upload part " + currentPart + " of " + totalParts, chunkToSend, new XiaomiSendCallback() {
                 @Override
                 public void onSend() {
                     final int progressPercent = Math.round((100.0f * currentPart) / totalParts);

@@ -1,6 +1,6 @@
-/*  Copyright (C) 2015-2024 Andreas Shimokawa, Carsten Pfeiffer, Damien
+/*  Copyright (C) 2015-2026 Andreas Shimokawa, Carsten Pfeiffer, Damien
     Gaignon, Daniel Dakhno, Daniele Gobbetti, Felix Konstantin Maurer, JohnnySun,
-    José Rebelo, Petr Vaněk
+    José Rebelo, Petr Vaněk, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -21,7 +21,6 @@ package nodomain.freeyourgadget.gadgetbridge.database;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -30,16 +29,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 
 import de.greenrobot.dao.Property;
@@ -60,6 +53,8 @@ import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.DeviceAttributes;
 import nodomain.freeyourgadget.gadgetbridge.entities.DeviceAttributesDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.DeviceDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.PebbleAppstoreIdEntry;
+import nodomain.freeyourgadget.gadgetbridge.entities.PebbleAppstoreIdEntryDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.Reminder;
 import nodomain.freeyourgadget.gadgetbridge.entities.ReminderDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.Tag;
@@ -71,11 +66,10 @@ import nodomain.freeyourgadget.gadgetbridge.entities.WorldClock;
 import nodomain.freeyourgadget.gadgetbridge.entities.WorldClockDao;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
+import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
 import nodomain.freeyourgadget.gadgetbridge.model.ValidByDate;
+import nodomain.freeyourgadget.gadgetbridge.util.AlarmUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.DateTimeUtils;
-import nodomain.freeyourgadget.gadgetbridge.util.DeviceHelper;
-import nodomain.freeyourgadget.gadgetbridge.util.FileUtils;
-import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 import nodomain.freeyourgadget.gadgetbridge.util.GBPrefs;
 
 
@@ -85,6 +79,7 @@ import nodomain.freeyourgadget.gadgetbridge.util.GBPrefs;
  * <p/>
  * Maybe this code should actually be in the DAO classes themselves, but then
  * these should be under revision control instead of 100% generated at build time.
+ * @noinspection RedundantIfStatement
  */
 public class DBHelper {
     private static final Logger LOG = LoggerFactory.getLogger(DBHelper.class);
@@ -93,82 +88,6 @@ public class DBHelper {
 
     public DBHelper(Context context) {
         this.context = context;
-    }
-
-    /**
-     * Closes the database and returns its name.
-     * Important: after calling this, you have to DBHandler#openDb() it again
-     * to get it back to work.
-     *
-     * @param dbHandler
-     * @return
-     * @throws IllegalStateException
-     */
-    private String getClosedDBPath(DBHandler dbHandler) throws IllegalStateException {
-        SQLiteDatabase db = dbHandler.getDatabase();
-        String path = db.getPath();
-        dbHandler.closeDb();
-        if (db.isOpen()) { // reference counted, so may still be open
-            throw new IllegalStateException("Database must be closed");
-        }
-        return path;
-    }
-
-    public File exportDB(DBHandler dbHandler, File toDir) throws IllegalStateException, IOException {
-        String dbPath = getClosedDBPath(dbHandler);
-        try {
-            File sourceFile = new File(dbPath);
-            File destFile = new File(toDir, sourceFile.getName());
-            if (destFile.exists()) {
-                File backup = new File(toDir, destFile.getName() + "_" + getDate());
-                destFile.renameTo(backup);
-            } else if (!toDir.exists()) {
-                if (!toDir.mkdirs()) {
-                    throw new IOException("Unable to create directory: " + toDir.getAbsolutePath());
-                }
-            }
-
-            FileUtils.copyFile(sourceFile, destFile);
-            return destFile;
-        } finally {
-            dbHandler.openDb();
-        }
-    }
-
-    public void exportDB(DBHandler dbHandler, OutputStream dest) throws IOException {
-        String dbPath = getClosedDBPath(dbHandler);
-        try {
-            File source = new File(dbPath);
-            FileUtils.copyFileToStream(source, dest);
-        } finally {
-            dbHandler.openDb();
-        }
-    }
-
-    private String getDate() {
-        return new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
-    }
-
-    public void importDB(DBHandler dbHandler, File fromFile) throws IllegalStateException, IOException {
-        importDB(dbHandler, new FileInputStream(fromFile));
-    }
-
-    public void importDB(DBHandler dbHandler, InputStream inputStream) throws IllegalStateException, IOException {
-        String dbPath = getClosedDBPath(dbHandler);
-        try {
-            File toFile = new File(dbPath);
-            FileUtils.copyStreamToFile(inputStream, toFile);
-        } finally {
-            dbHandler.openDb();
-        }
-    }
-
-    public void validateDB(SQLiteOpenHelper dbHandler) throws IOException {
-        try (SQLiteDatabase db = dbHandler.getReadableDatabase()) {
-            if (!db.isDatabaseIntegrityOk()) {
-                throw new IOException("Database integrity is not OK");
-            }
-        }
     }
 
     public static void dropTable(String tableName, SQLiteDatabase db) {
@@ -201,13 +120,12 @@ public class DBHelper {
      * Looks up the user entity in the database. If a user exists already, it will
      * be updated with the current preferences values. If no user exists yet, it will
      * be created in the database.
-     *
+     * <p>
      * Note: so far there is only ever a single user; there is no multi-user support yet
-     * @param session
-     * @return the User entity
+     * @return the {@link User} entity
      */
     @NonNull
-    public static User getUser(DaoSession session) {
+    public static User getUser(@NonNull final DaoSession session) {
         ActivityUser prefsUser = new ActivityUser();
         UserDao userDao = session.getUserDao();
         User user;
@@ -282,7 +200,7 @@ public class DBHelper {
         attributes.setValidFromUTC(now.getTime());
         attributes.setHeightCM(prefsUser.getHeightCm());
         attributes.setWeightKG(prefsUser.getWeightKg());
-        attributes.setSleepGoalHPD(prefsUser.getSleepDurationGoal());
+        attributes.setSleepGoalMPD(prefsUser.getSleepDurationGoal());
         attributes.setStepsGoalSPD(prefsUser.getStepsGoal());
         attributes.setUserId(user.getId());
         session.getUserAttributesDao().insert(attributes);
@@ -316,6 +234,7 @@ public class DBHelper {
     }
 
     // TODO: move this into db queries?
+    /** @noinspection BooleanMethodIsAlwaysInverted*/
     private static boolean isValidNow(ValidByDate element) {
         Calendar cal = DateTimeUtils.getCalendarUTC();
         Date nowUTC = cal.getTime();
@@ -336,19 +255,19 @@ public class DBHelper {
 
     private static boolean isEqual(UserAttributes attr, ActivityUser prefsUser) {
         if (prefsUser.getHeightCm() != attr.getHeightCM()) {
-            LOG.info("user height changed to " + prefsUser.getHeightCm() + " from " + attr.getHeightCM());
+            LOG.debug("user height changed to {} from {}", prefsUser.getHeightCm(), attr.getHeightCM());
             return false;
         }
         if (prefsUser.getWeightKg() != attr.getWeightKG()) {
-            LOG.info("user changed to " + prefsUser.getWeightKg() + " from " + attr.getWeightKG());
+            LOG.debug("user weight changed to {} from {}", prefsUser.getWeightKg(), attr.getWeightKG());
             return false;
         }
-        if (!Integer.valueOf(prefsUser.getSleepDurationGoal()).equals(attr.getSleepGoalHPD())) {
-            LOG.info("user sleep goal changed to " + prefsUser.getSleepDurationGoal() + " from " + attr.getSleepGoalHPD());
+        if (!Integer.valueOf(prefsUser.getSleepDurationGoal()).equals(attr.getSleepGoalMPD())) {
+            LOG.debug("user sleep goal changed to {} from {}", prefsUser.getSleepDurationGoal(), attr.getSleepGoalMPD());
             return false;
         }
         if (!Integer.valueOf(prefsUser.getStepsGoal()).equals(attr.getStepsGoalSPD())) {
-            LOG.info("user steps goal changed to " + prefsUser.getStepsGoal() + " from " + attr.getStepsGoalSPD());
+            LOG.debug("user steps goal changed to {} from {}", prefsUser.getStepsGoal(), attr.getStepsGoalSPD());
             return false;
         }
         return true;
@@ -368,17 +287,16 @@ public class DBHelper {
     }
 
     /**
-     * Finds the corresponding Device entity for the given GBDevice.
-     * @param gbDevice
-     * @param session
-     * @return the corresponding Device entity, or null if none
+     * Finds the corresponding {@link Device} entity for the given {@link GBDevice}.
+     * @return the corresponding {@link Device} entity, or {@code null} if none
+     * @see #getDevice(GBDevice, DaoSession)
      */
     @Nullable
-    public static Device findDevice(GBDevice gbDevice, DaoSession session) {
+    public static Device findDevice(@NonNull final GBDevice gbDevice, @NonNull final DaoSession session) {
         DeviceDao deviceDao = session.getDeviceDao();
         Query<Device> query = deviceDao.queryBuilder().where(DeviceDao.Properties.Identifier.eq(gbDevice.getAddress())).build();
         List<Device> devices = query.list();
-        if (devices.size() > 0) {
+        if (!devices.isEmpty()) {
             return devices.get(0);
         }
         return null;
@@ -389,7 +307,7 @@ public class DBHelper {
         final Query<Device> query = deviceDao.queryBuilder().where(DeviceDao.Properties.Identifier.eq(oldAddress)).build();
         final List<Device> devices = query.list();
         if (devices.isEmpty()) {
-            LOG.warn("Failed to find device with address {}", oldAddress);
+            LOG.warn("Failed to find device with address {} to update mac address", oldAddress);
             return;
         }
 
@@ -398,24 +316,38 @@ public class DBHelper {
         session.getDeviceDao().update(device);
     }
 
+    public static void updateDeviceType(final DaoSession session, final String address, final DeviceType newType) {
+        final DeviceDao deviceDao = session.getDeviceDao();
+        final Query<Device> query = deviceDao.queryBuilder().where(DeviceDao.Properties.Identifier.eq(address)).build();
+        final List<Device> devices = query.list();
+        if (devices.isEmpty()) {
+            LOG.warn("Failed to find device with address {} to update device type", address);
+            return;
+        }
+
+        final Device device = devices.get(0);
+        device.setTypeName(newType.name());
+        session.getDeviceDao().update(device);
+    }
+
     /**
      * Returns all active (that is, not old, archived ones) from the database.
      * (currently the active handling is not available)
-     * @param daoSession
      */
     public static List<Device> getActiveDevices(DaoSession daoSession) {
         return daoSession.getDeviceDao().loadAll();
     }
 
     /**
-     * Looks up in the database the Device entity corresponding to the GBDevice. If a device
+     * Looks up in the database the {@link Device} entity corresponding to the {@link GBDevice}. If a device
      * exists already, it will be updated with the current preferences values. If no device exists
      * yet, it will be created in the database.
      *
-     * @param session
-     * @return the device entity corresponding to the given GBDevice
+     * @return the device entity corresponding to the given {@link GBDevice}
+     * @see #findDevice(GBDevice, DaoSession)
      */
-    public static Device getDevice(GBDevice gbDevice, DaoSession session) {
+    @NonNull
+    public static Device getDevice(@NonNull final GBDevice gbDevice, @NonNull final DaoSession session) {
         Device device = findDevice(gbDevice, session);
         if (device == null) {
             device = createDevice(gbDevice, session);
@@ -487,6 +419,11 @@ public class DBHelper {
     }
 
     private static void ensureDeviceAttributes(Device device, GBDevice gbDevice, DaoSession session) {
+        if (gbDevice.getFirmwareVersion() == null) {
+            LOG.warn("Attempting to update device attributes with null firmware version for {}", gbDevice);
+            return;
+        }
+
         List<DeviceAttributes> deviceAttributes = device.getDeviceAttributesList();
         DeviceAttributes[] previousDeviceAttributes = new DeviceAttributes[1];
         if (hasUpToDateDeviceAttributes(deviceAttributes, gbDevice, previousDeviceAttributes)) {
@@ -534,14 +471,13 @@ public class DBHelper {
     }
 
     @NonNull
-    public static List<ActivityDescription> findActivityDecriptions(@NonNull User user, int tsFrom, int tsTo, @NonNull DaoSession session) {
+    public static List<ActivityDescription> findActivityDescriptions(@NonNull User user, int tsFrom, int tsTo, @NonNull DaoSession session) {
         Property tsFromProperty = ActivityDescriptionDao.Properties.TimestampFrom;
         Property tsToProperty = ActivityDescriptionDao.Properties.TimestampTo;
         Property userIdProperty = ActivityDescriptionDao.Properties.UserId;
         QueryBuilder<ActivityDescription> qb = session.getActivityDescriptionDao().queryBuilder();
         qb.where(userIdProperty.eq(user.getId()), isAtLeastPartiallyInRange(qb, tsFromProperty, tsToProperty, tsFrom, tsTo));
-        List<ActivityDescription> descriptions = qb.build().list();
-        return descriptions;
+        return qb.build().list();
     }
 
     /**
@@ -576,12 +512,13 @@ public class DBHelper {
         QueryBuilder<Tag> qb = tagDao.queryBuilder();
         Query<Tag> query = qb.where(TagDao.Properties.UserId.eq(user.getId()), TagDao.Properties.Name.eq(name)).build();
         List<Tag> tags = query.list();
-        if (tags.size() > 0) {
+        if (!tags.isEmpty()) {
             return tags.get(0);
         }
         return createTag(user, name, null, session);
     }
 
+    @SuppressWarnings("SameParameterValue")
     static Tag createTag(@NonNull User user, @NonNull String name, @Nullable String description, @NonNull DaoSession session) {
         Tag tag = new Tag();
         tag.setUserId(user.getId());
@@ -593,7 +530,7 @@ public class DBHelper {
 
     /**
      * Returns all user-configurable alarms for the given user and device. The list is sorted by
-     * {@link Alarm#position}. Calendar events that may also be modeled as alarms are not stored
+     * {@link Alarm#getPosition()}. Calendar events that may also be modeled as alarms are not stored
      * in the database and hence not returned by this method.
      * @param gbDevice the device for which the alarms shall be loaded
      * @return the list of alarms for the given device
@@ -601,7 +538,7 @@ public class DBHelper {
     @NonNull
     public static List<Alarm> getAlarms(@NonNull GBDevice gbDevice) {
         DeviceCoordinator coordinator = gbDevice.getDeviceCoordinator();
-        GBPrefs prefs = new GBPrefs(new Prefs(GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress())));
+        GBPrefs prefs = new GBPrefs(GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress()));
 
         int reservedSlots = prefs.getInt(DeviceSettingsPreferenceConst.PREF_RESERVER_ALARMS_CALENDAR, 0);
         int alarmSlots = coordinator.getAlarmSlotCount(gbDevice);
@@ -624,6 +561,52 @@ public class DBHelper {
         }
         return Collections.emptyList();
     }
+
+    /**
+     * Returns all user-configurable alarms for the given user and device filled with default alarms
+     * for unoccupied slots. The list is sorted by {@link Alarm#getPosition()}. Calendar events that
+     * may also be modeled as alarms are not stored in the database and hence not returned by this
+     * method.
+     * @param gbDevice the device for which the alarms shall be loaded
+     * @return the list of alarms for the given device
+     */
+    @NonNull
+    public static List<Alarm> getAlarmsWithDefaults(@NonNull GBDevice gbDevice) {
+        List<Alarm> alarms = getAlarms(gbDevice);
+        fillMissingAlarms(gbDevice, alarms);
+        return alarms;
+    }
+
+    /**
+     * Fills default alarms in the alarm list for unoccupied slots of the device.
+     * @param gbDevice the device for which the alarms shall be loaded
+     * @param alarms list of alarms to fill
+     */
+    public static void fillMissingAlarms(@NonNull GBDevice gbDevice, List<Alarm> alarms) {
+        DeviceCoordinator coordinator = gbDevice.getDeviceCoordinator();
+        int supportedNumAlarms = coordinator.getAlarmSlotCount(gbDevice);
+        if (supportedNumAlarms > alarms.size()) {
+            try (DBHandler db = GBApplication.acquireDB()) {
+                DaoSession daoSession = db.getDaoSession();
+                for (int position = 0; position < supportedNumAlarms; position++) {
+                    boolean found = false;
+                    for (Alarm alarm : alarms) {
+                        if (alarm.getPosition() == position) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        LOG.info("adding missing alarm at position {}", position);
+                        alarms.add(position, AlarmUtils.createDefaultAlarm(daoSession, gbDevice, position));
+                    }
+                }
+            } catch (Exception e) {
+                LOG.error("Error accessing database", e);
+            }
+        }
+    }
+
 
     public static void store(Alarm alarm) {
         try (DBHandler db = GBApplication.acquireDB()) {
@@ -712,6 +695,20 @@ public class DBHelper {
         return Collections.emptyList();
     }
 
+    public static PebbleAppstoreIdEntry getPebbleAppstoreIdByUUID(@NonNull String appUUID) {
+        try (DBHandler db = GBApplication.acquireDB()) {
+            final DaoSession daoSession = db.getDaoSession();
+            final PebbleAppstoreIdEntryDao entryDao = daoSession.getPebbleAppstoreIdEntryDao();
+            final QueryBuilder<PebbleAppstoreIdEntry> qb = entryDao.queryBuilder();
+            qb.where(PebbleAppstoreIdEntryDao.Properties.Uuid.eq(appUUID));
+            return qb.build().unique();
+        } catch (final Exception e) {
+            LOG.error("Error reading appstoreId from db", e);
+        }
+
+        return null;
+    }
+
     public static void store(final Reminder reminder) {
         try (DBHandler db = GBApplication.acquireDB()) {
             final DaoSession daoSession = db.getDaoSession();
@@ -734,6 +731,15 @@ public class DBHelper {
         try (DBHandler db = GBApplication.acquireDB()) {
             final DaoSession daoSession = db.getDaoSession();
             daoSession.insertOrReplace(contact);
+        } catch (final Exception e) {
+            LOG.error("Error acquiring database", e);
+        }
+    }
+
+    public static void store(final PebbleAppstoreIdEntry entry) {
+        try (DBHandler db = GBApplication.acquireDB()) {
+            final DaoSession daoSession = db.getDaoSession();
+            daoSession.insertOrReplace(entry);
         } catch (final Exception e) {
             LOG.error("Error acquiring database", e);
         }

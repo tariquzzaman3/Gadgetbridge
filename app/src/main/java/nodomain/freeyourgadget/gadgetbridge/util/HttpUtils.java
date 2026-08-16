@@ -4,7 +4,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URL;
 import java.net.URLDecoder;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -17,8 +16,10 @@ public class HttpUtils {
         // utility class
     }
 
-    public static Map<String, String> urlQueryParameters(final URL url) {
-        final String query = url.getQuery();
+    /**
+     * @noinspection CharsetObjectCanBeUsed not supported by SDK 21
+     **/
+    public static Map<String, String> urlQueryParameters(final String query) {
         if (StringUtils.isBlank(query)) {
             return Collections.emptyMap();
         }

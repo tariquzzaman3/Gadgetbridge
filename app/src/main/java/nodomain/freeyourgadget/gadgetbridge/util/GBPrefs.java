@@ -25,23 +25,27 @@ import android.content.pm.PackageManager;
 import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationManager;
-import android.util.Log;
 
+import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.text.ParseException;
 import java.time.LocalTime;
 import java.util.Date;
+import java.util.Locale;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
-import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.SettingsActivity;
-import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.model.DistanceUnit;
+import nodomain.freeyourgadget.gadgetbridge.model.TemperatureUnit;
+import nodomain.freeyourgadget.gadgetbridge.model.WeightUnit;
 
 public class GBPrefs extends Prefs {
-    // Since this class must not log to slf4j, we use plain android.util.Log
-    private static final String TAG = "GBPrefs";
+    private static final Logger LOG = LoggerFactory.getLogger(GBPrefs.class);
 
     public static final String PACKAGE_BLACKLIST = "package_blacklist";
     public static final String PACKAGE_PEBBLEMSG_BLACKLIST = "package_pebblemsg_blacklist";
@@ -49,15 +53,53 @@ public class GBPrefs extends Prefs {
     public static final String DEVICE_AUTO_RECONNECT = "prefs_key_device_auto_reconnect";
     public static final String DEVICE_CONNECT_BACK = "prefs_key_device_reconnect_on_acl";
     private static final String AUTO_START = "general_autostartonboot";
-    public static final String AUTO_EXPORT_ENABLED = "auto_export_enabled";
-    public static final String AUTO_EXPORT_LOCATION = "auto_export_location";
+    public static final String AUTO_CONNECT_BLUETOOTH = "general_autoconnectonbluetooth";
     public static final String PING_TONE = "ping_tone";
-    public static final String AUTO_EXPORT_INTERVAL = "auto_export_interval";
     private static final boolean AUTO_START_DEFAULT = true;
     public static final String RTL_SUPPORT = "rtl";
     public static final String RTL_CONTEXTUAL_ARABIC = "contextualArabic";
     public static boolean AUTO_RECONNECT_DEFAULT = true;
     public static final String PREF_ALLOW_INTENT_API = "prefs_key_allow_bluetooth_intent_api";
+
+    public static final String PREF_AUTO_FETCH_ENABLED = "auto_fetch_enabled";
+    public static final String PREF_AUTO_FETCH_INTERVAL_LIMIT = "auto_fetch_interval_limit";
+
+    // These should get the prefix appended - see below
+    public static final String AUTO_EXPORT_ENABLED = "auto_export_enabled";
+    public static final String AUTO_EXPORT_LOCATION = "auto_export_location";
+    public static final String AUTO_EXPORT_INTERVAL = "auto_export_interval";
+    public static final String AUTO_EXPORT_LAST_EXECUTION = "auto_export_last_execution";
+    public static final String AUTO_EXPORT_NEXT_EXECUTION = "auto_export_next_execution";
+
+    // DB export has no prefix
+    public static final String AUTO_EXPORT_DB_ENABLED = AUTO_EXPORT_ENABLED;
+    public static final String AUTO_EXPORT_DB_LOCATION = AUTO_EXPORT_LOCATION;
+    public static final String AUTO_EXPORT_DB_INTERVAL = AUTO_EXPORT_INTERVAL;
+    public static final String AUTO_EXPORT_DB_LAST_EXECUTION = AUTO_EXPORT_LAST_EXECUTION;
+    public static final String AUTO_EXPORT_DB_NEXT_EXECUTION = AUTO_EXPORT_NEXT_EXECUTION;
+
+    // Zip export with "zip_" prefix
+    public static final String AUTO_EXPORT_ZIP_ENABLED = "zip_auto_export_enabled";
+    public static final String AUTO_EXPORT_ZIP_LOCATION = "zip_auto_export_location";
+    public static final String AUTO_EXPORT_ZIP_INTERVAL = "zip_auto_export_interval";
+    public static final String AUTO_EXPORT_ZIP_LAST_EXECUTION = "zip_auto_export_last_execution";
+    public static final String AUTO_EXPORT_ZIP_NEXT_EXECUTION = "zip_auto_export_next_execution";
+
+    // GPX export
+    public static final String AUTO_EXPORT_GPX_ENABLED = "gpx_auto_export_enabled";
+    public static final String AUTO_EXPORT_GPX_DIRECTORY = "gpx_auto_export_directory";
+    public static final String AUTO_EXPORT_GPX_ALL_DEVICES = "gpx_auto_export_all_devices";
+    public static final String AUTO_EXPORT_GPX_SELECTED_DEVICES = "gpx_auto_export_selected_devices";
+
+    // FIT export
+    public static final String AUTO_EXPORT_FIT_ENABLED = "fit_auto_export_enabled";
+    public static final String AUTO_EXPORT_FIT_DIRECTORY = "fit_auto_export_directory";
+    public static final String AUTO_EXPORT_FIT_ALL_DEVICES = "fit_auto_export_all_devices";
+    public static final String AUTO_EXPORT_FIT_SELECTED_DEVICES = "fit_auto_export_selected_devices";
+
+    // Intent API
+    public static final String INTENT_API_BROADCAST_EXPORT_DB = "intent_api_broadcast_export";
+    public static final String INTENT_API_BROADCAST_EXPORT_ZIP = "intent_api_broadcast_zip_export";
 
     public static final String RECONNECT_SCAN_KEY = "prefs_general_key_auto_reconnect_scan";
     public static final boolean RECONNECT_SCAN_DEFAULT = false;
@@ -71,6 +113,22 @@ public class GBPrefs extends Prefs {
 
     public static final String LAST_DEVICE_ADDRESSES = "last_device_addresses";
     public static final String RECONNECT_ONLY_TO_CONNECTED = "general_reconnectonlytoconnected";
+    public static final String BLOCK_SCREENSHOTS = "block_screenshots";
+
+    // HealthConnect
+    public static final String HEALTH_CONNECT_ENABLED = "health_connect_enabled";
+    public static final String HEALTH_CONNECT_MANUAL_SETTINGS = "health_connect_manual_settings";
+    public static final String HEALTH_CONNECT_SYNC_STATUS = "health_connect_sync_status";
+    public static final String HEALTH_CONNECT_DISABLE_NOTICE = "health_connect_disable_notice";
+    public static final String HEALTH_CONNECT_SYNC_ON_EVENT = "health_connect_sync_on_event";
+    public static final String HEALTH_CONNECT_DETAILED_WORKOUT_SYNC = "health_connect_detailed_workout_sync";
+    public static final String HEALTH_CONNECT_DEVICE_SELECTION = "health_connect_devices_multiselect";
+    public static final String HEALTH_CONNECT_SETTINGS = "health_connect_settings";
+    public static final String HEALTH_CONNECT_INITIAL_SYNC_START_TS = "health_connect_initial_sync_start_ts";
+    public static final String HEALTH_CONNECT_LAST_GRANTED_PERMISSIONS = "health_connect_last_granted_permissions";
+    public static final String HEALTH_CONNECT_PROMPT_FOR_FULL_DAO_RESET = "health_connect_prompt_for_full_dao_reset";
+
+    public static final String NAVIGATION_APP_COMAPS = "navigation_app_comaps";
 
     @Deprecated
     public GBPrefs(Prefs prefs) {
@@ -98,6 +156,7 @@ public class GBPrefs extends Prefs {
         return getString(USER_NAME, USER_NAME_DEFAULT);
     }
 
+    @Nullable
     public Date getUserBirthday() {
         String date = getString(USER_BIRTHDAY, null);
         if (date == null) {
@@ -106,7 +165,7 @@ public class GBPrefs extends Prefs {
         try {
             return DateTimeUtils.dayFromString(date);
         } catch (ParseException ex) {
-            GB.log("Error parsing date: " + date, GB.ERROR, ex);
+            LOG.error("Error parsing date: {}", date, ex);
             return null;
         }
     }
@@ -118,7 +177,7 @@ public class GBPrefs extends Prefs {
     public float[] getLongLat(Context context) {
         float latitude = getFloat("location_latitude", 0);
         float longitude = getFloat("location_longitude", 0);
-        Log.i(TAG, "got longitude/latitude from preferences: " + latitude + "/" + longitude);
+        LOG.info("got longitude/latitude from preferences: {}/{}", latitude, longitude);
 
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
                 getBoolean("use_updated_location_if_available", false)) {
@@ -130,7 +189,7 @@ public class GBPrefs extends Prefs {
                 if (lastKnownLocation != null) {
                     latitude = (float) lastKnownLocation.getLatitude();
                     longitude = (float) lastKnownLocation.getLongitude();
-                    Log.i(TAG, "got longitude/latitude from last known location: " + latitude + "/" + longitude);
+                    LOG.info("got longitude/latitude from last known location: {}/{}", latitude, longitude);
                 }
             }
         }
@@ -149,7 +208,46 @@ public class GBPrefs extends Prefs {
         return getLocalTime("notification_times_end", "22:00");
     }
 
-    public boolean isMetricUnits() {
-        return getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM, "metric").equals("metric");
+    public TemperatureUnit getTemperatureUnit() {
+        try {
+            return TemperatureUnit.valueOf(getString(SettingsActivity.PREF_UNIT_TEMPERATURE, "celsius").toUpperCase(Locale.ROOT));
+        } catch (final Exception e) {
+            LOG.error("Error reading temperature unit preference", e);
+        }
+        return TemperatureUnit.CELSIUS;
+    }
+
+    public WeightUnit getWeightUnit() {
+        try {
+            return WeightUnit.valueOf(getString(SettingsActivity.PREF_UNIT_WEIGHT, "kilogram").toUpperCase(Locale.ROOT));
+        } catch (final Exception e) {
+            LOG.error("Error reading weight unit preference", e);
+        }
+        return WeightUnit.KILOGRAM;
+    }
+
+    public DistanceUnit getDistanceUnit() {
+        try {
+            return DistanceUnit.valueOf(getString(SettingsActivity.PREF_UNIT_DISTANCE, "metric").toUpperCase(Locale.ROOT));
+        } catch (final Exception e) {
+            LOG.error("Error reading distance unit preference", e);
+        }
+        return DistanceUnit.METRIC;
+    }
+
+    public boolean syncTime() {
+        return getBoolean("datetime_synconconnect", true);
+    }
+
+    public boolean refreshOnSwipe() {
+        return getBoolean("pref_refresh_on_swipe", true);
+    }
+
+    public boolean experimentalSettings() {
+        return getBoolean("experimental_settings", false);
+    }
+
+    public boolean experimentalMetrics() {
+        return getBoolean("experimental_metrics", false);
     }
 }

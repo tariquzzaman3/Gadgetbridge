@@ -1,4 +1,4 @@
-/*  Copyright (C) 2024 José Rebelo
+/*  Copyright (C) 2024-2026 José Rebelo, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -17,7 +17,6 @@
 package nodomain.freeyourgadget.gadgetbridge.model;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -62,34 +61,60 @@ public class ActivitySummaryData {
         this.entries = entries;
     }
 
-    public void add(final String key, final Number value, final String unit) {
-        add(null, key, value, unit, false);
+    /// @return {@code true} if the value was actually added
+    public boolean add(final String key, final Number value, final String unit) {
+        return add(null, key, value, unit, false);
     }
 
-    public void add(final String key, final Number value, final String unit, boolean forceDisplay) {
-        add(null, key, value, unit, forceDisplay);
+    /// @return {@code true} if the value was actually added
+    public boolean add(final String key, final String unit, final Number value, final Number valueFallback) {
+        return add(key, unit, value, valueFallback, false);
     }
 
-    public void add(final String group, final String key, final Number value, final String unit) {
-        add(group, key, value, unit, false);
-    }
-
-    public void add(final String group, final String key, final Number value, final String unit, boolean forceDisplay) {
-        if (value.doubleValue() != 0 || forceDisplay) {
-            entries.put(key, new ActivitySummarySimpleEntry(group, value, unit));
+    /// @return {@code true} if the value was actually added
+    public boolean add(final String key, final String unit, final Number value, final Number valueFallback, boolean force) {
+        if (value != null) {
+            return add(null, key, value, unit, force);
+        } else {
+            return add(null, key, valueFallback, unit, force);
         }
     }
 
-    public void add(final String key, final String value) {
-        add(null, key, value);
+    /// @return {@code true} if the value was actually added
+    public boolean add(final String key, final Number value, final String unit, boolean forceDisplay) {
+        return add(null, key, value, unit, forceDisplay);
     }
 
-    public void add(final String group, final String key, final String value) {
+    /// @return {@code true} if the value was actually added
+    public boolean add(final String group, final String key, final Number value, final String unit) {
+        return add(group, key, value, unit, false);
+    }
+
+    /// @return {@code true} if the value was actually added
+    public boolean add(final String group, final String key, final Number value, final String unit, boolean forceDisplay) {
+        if (value == null || !Double.isFinite(value.doubleValue())) {
+            return false;
+        }
+
+        if (value.doubleValue() != 0 || forceDisplay) {
+            entries.put(key, new ActivitySummarySimpleEntry(group, value, unit));
+            return true;
+        }
+        return false;
+    }
+
+    /// @return {@code true} if the value was actually added
+    public boolean add(final String key, final String value) {
+        return add(null, key, value);
+    }
+
+    public boolean add(final String group, final String key, final String value) {
         if (StringUtils.isBlank(key) || StringUtils.isBlank(value)) {
-            return;
+            return false;
         }
 
         entries.put(key, new ActivitySummarySimpleEntry(group, value, ActivitySummaryEntries.UNIT_STRING));
+        return true;
     }
 
     public void add(final String key, final ActivitySummaryEntry entry) {
@@ -110,10 +135,9 @@ public class ActivitySummaryData {
 
     public Number getNumber(final String key, final Number defaultValue) {
         final ActivitySummaryEntry entry = entries.get(key);
-        if (!(entry instanceof ActivitySummarySimpleEntry)) {
+        if (!(entry instanceof ActivitySummarySimpleEntry simpleEntry)) {
             return defaultValue;
         }
-        final ActivitySummarySimpleEntry simpleEntry = (ActivitySummarySimpleEntry) entry;
         final Object value = simpleEntry.getValue();
         if (!(value instanceof Number)) {
             return defaultValue;
@@ -124,10 +148,9 @@ public class ActivitySummaryData {
 
     public boolean getBoolean(final String key, final boolean defaultValue) {
         final ActivitySummaryEntry entry = entries.get(key);
-        if (!(entry instanceof ActivitySummarySimpleEntry)) {
+        if (!(entry instanceof ActivitySummarySimpleEntry simpleEntry)) {
             return defaultValue;
         }
-        final ActivitySummarySimpleEntry simpleEntry = (ActivitySummarySimpleEntry) entry;
         final Object value = simpleEntry.getValue();
         if (value instanceof Boolean) {
             return (boolean) value;
@@ -140,10 +163,18 @@ public class ActivitySummaryData {
         return Boolean.parseBoolean((String) value);
     }
 
-    @Nullable
+    public boolean hasGps() {
+        return getBoolean(ActivitySummaryEntries.INTERNAL_HAS_GPS, false);
+    }
+
+    public void setHasGps(final boolean gps) {
+        add(ActivitySummaryEntries.INTERNAL_HAS_GPS, String.valueOf(gps));
+    }
+
+    @NonNull
     public static ActivitySummaryData fromJson(final String string) {
         if (StringUtils.isBlank(string)) {
-            return null;
+            return new ActivitySummaryData();
         }
 
         final Type type = new TypeToken<LinkedHashMap<String, ActivitySummaryEntry>>(){}.getType();
@@ -160,5 +191,62 @@ public class ActivitySummaryData {
 
     public String toJson() {
         return GSON.toJson(entries);
+    }
+
+    public void addTotal(final Number value, final ActivityKind.CycleUnit unit) {
+        switch (unit) {
+            case STROKES:
+                add(ActivitySummaryEntries.STROKES, value, ActivitySummaryEntries.UNIT_STROKES);
+                break;
+            case JUMPS:
+                add(ActivitySummaryEntries.JUMPS, value, ActivitySummaryEntries.UNIT_JUMPS);
+                break;
+            case REPS:
+                add(ActivitySummaryEntries.REPETITIONS, value, ActivitySummaryEntries.UNIT_REPS);
+                break;
+            case REVOLUTIONS:
+                add(ActivitySummaryEntries.REVOLUTIONS, value, ActivitySummaryEntries.UNIT_REVS);
+                break;
+            default:
+                add(ActivitySummaryEntries.STEPS, value, ActivitySummaryEntries.UNIT_STEPS);
+        }
+    }
+
+    public void addCadenceAvg(final Number value, final ActivityKind.CycleUnit unit) {
+        switch (unit) {
+            case STROKES:
+                add(ActivitySummaryEntries.STROKE_RATE_AVG, value, ActivitySummaryEntries.UNIT_STROKES_PER_MINUTE);
+                break;
+            case JUMPS:
+                add(ActivitySummaryEntries.JUMP_RATE_AVG, value, ActivitySummaryEntries.UNIT_JUMPS_PER_MINUTE);
+                break;
+            case REPS:
+                add(ActivitySummaryEntries.CADENCE_AVG, value, ActivitySummaryEntries.UNIT_REPS_PER_MINUTE);
+                break;
+            case REVOLUTIONS:
+                add(ActivitySummaryEntries.CADENCE_AVG, value, ActivitySummaryEntries.UNIT_REVS_PER_MINUTE);
+                break;
+            default:
+                add(ActivitySummaryEntries.CADENCE_AVG, value, ActivitySummaryEntries.UNIT_SPM);
+        }
+    }
+
+    public void addCadenceMax(final Number value, final ActivityKind.CycleUnit unit) {
+        switch (unit) {
+            case STROKES:
+                add(ActivitySummaryEntries.STROKE_RATE_MAX, value, ActivitySummaryEntries.UNIT_STROKES_PER_MINUTE);
+                break;
+            case JUMPS:
+                add(ActivitySummaryEntries.JUMP_RATE_MAX, value, ActivitySummaryEntries.UNIT_JUMPS_PER_MINUTE);
+                break;
+            case REPS:
+                add(ActivitySummaryEntries.CADENCE_MAX, value, ActivitySummaryEntries.UNIT_REPS_PER_MINUTE);
+                break;
+            case REVOLUTIONS:
+                add(ActivitySummaryEntries.CADENCE_MAX, value, ActivitySummaryEntries.UNIT_REVS_PER_MINUTE);
+                break;
+            default:
+                add(ActivitySummaryEntries.CADENCE_MAX, value, ActivitySummaryEntries.UNIT_SPM);
+        }
     }
 }

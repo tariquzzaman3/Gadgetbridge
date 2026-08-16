@@ -1,23 +1,16 @@
 package nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.messages;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEvent;
-import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventUpdatePreferences;
-import nodomain.freeyourgadget.gadgetbridge.devices.garmin.GarminPreferences;
-import nodomain.freeyourgadget.gadgetbridge.devices.vivomovehr.GarminCapability;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.deviceevents.CapabilitiesDeviceEvent;
+import nodomain.freeyourgadget.gadgetbridge.devices.garmin.GarminCapability;
 
 
 public class ConfigurationMessage extends GFDIMessage {
-    public final Set<GarminCapability> OUR_CAPABILITIES = GarminCapability.ALL_CAPABILITIES;
     private final byte[] incomingConfigurationPayload;
     private final Set<GarminCapability> capabilities;
-    private final byte[] ourConfigurationPayload = GarminCapability.setToBinary(OUR_CAPABILITIES);
+    private final byte[] ourConfigurationPayload = GarminCapability.setToBinary(GarminCapability.OUR_CAPABILITIES);
 
     public ConfigurationMessage(GarminMessage garminMessage, byte[] configurationPayload) {
         this.garminMessage = garminMessage;
@@ -37,14 +30,7 @@ public class ConfigurationMessage extends GFDIMessage {
 
     @Override
     public List<GBDeviceEvent> getGBDeviceEvent() {
-        final Set<Object> capabilitiesPref = new HashSet<>();
-        for (final GarminCapability capability : capabilities) {
-            capabilitiesPref.add(capability.name());
-        }
-        return Arrays.asList(
-                new CapabilitiesDeviceEvent(capabilities),
-                new GBDeviceEventUpdatePreferences(GarminPreferences.PREF_GARMIN_CAPABILITIES, capabilitiesPref)
-        );
+        return GarminCapability.getGBDeviceEvent(capabilities);
     }
 
     @Override

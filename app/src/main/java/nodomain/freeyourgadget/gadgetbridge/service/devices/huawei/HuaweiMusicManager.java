@@ -1,3 +1,19 @@
+/*  Copyright (C) 2024 Me7c7
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.huawei;
 
 import android.widget.Toast;
@@ -23,96 +39,10 @@ import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetM
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendMusicOperation;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendUploadMusicFileInfoResponse;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
+import nodomain.freeyourgadget.gadgetbridge.util.audio.AudioInfo;
 
 public class HuaweiMusicManager {
     static Logger LOG = LoggerFactory.getLogger(HuaweiMusicManager.class);
-
-    public static class AudioInfo {
-        private final String fileName;
-        private final long fileSize;
-        private final String title;
-        private final String artist;
-        private final String extension;
-
-        private String mimeType;
-
-        private long duration;
-        private int sampleRate;
-        private int bitrate;
-        private byte channels;
-
-        //public byte musicEncode = -1;  // TODO: not sure
-        //public short unknownBitrate = -1;   // TODO: not sure
-
-        public AudioInfo(String fileName, long fileSize, String title, String artist, String extension) {
-            this.fileName = fileName;
-            this.fileSize = fileSize;
-            this.title = title;
-            this.artist = artist;
-            this.extension = extension;
-        }
-
-        public String getFileName() {
-            return fileName;
-        }
-
-        public long getFileSize() { return fileSize;}
-
-        public String getTitle() {
-            return title;
-        }
-
-        public String getArtist() {
-            return artist;
-        }
-
-        public String getExtension() {
-            return extension;
-        }
-
-        public String getMimeType() {
-            return mimeType;
-        }
-
-        public void setMimeType(String mimeType) {
-            this.mimeType = mimeType;
-        }
-
-        public void setCharacteristics(long duration, int sampleRate, int bitrate, byte channels) {
-            this.duration = duration;
-            this.sampleRate = sampleRate;
-            this.bitrate = bitrate;
-            this.channels = channels;
-        }
-
-        public long getDuration() {
-            return duration;
-        }
-
-        public int getSampleRate() {
-            return sampleRate;
-        }
-
-        public int getBitrate() {
-            return bitrate;
-        }
-
-        public byte getChannels() {
-            return channels;
-        }
-
-        @Override
-        public String toString() {
-            final StringBuffer sb = new StringBuffer("AudioInfo{");
-            sb.append("fileName='").append(fileName).append('\'');
-            sb.append("fileSize='").append(fileSize).append('\'');
-            sb.append(", title='").append(title).append('\'');
-            sb.append(", artist='").append(artist).append('\'');
-            sb.append(", mimeType='").append(mimeType).append('\'');
-            sb.append('}');
-            return sb.toString();
-        }
-    }
 
     private final HuaweiSupportProvider support;
 
@@ -167,7 +97,7 @@ public class HuaweiMusicManager {
             return;
         }
         int count = this.frameCount;
-        if (support.getHuaweiCoordinator().supportsMoreMusic()) {
+        if (support.getDeviceState().supportsMoreMusic()) {
             count = Math.min(this.frameCount, 250);
         }
         if (this.currentFrame < count) {
@@ -270,7 +200,7 @@ public class HuaweiMusicManager {
         //TODO: research and use pageStruct. It may/should be used to retrieve music data from devices by pages.
         // without it list can be incomplete, but I can't confirm this.
         LOG.info("FrameCount: {}, pageStruct: {}", frameCount, pageStruct);
-        support.getHuaweiCoordinator().setMusicInfoParams(capabilities);
+        support.getDeviceState().setMusicInfoParams(capabilities);
         if(syncMusicData) {
             this.frameCount = frameCount;
             this.currentFrame = 0;
@@ -280,8 +210,8 @@ public class HuaweiMusicManager {
                 formats = String.join(",", capabilities.supportedFormats);
             }
             int maxPlaylistCount = 0;
-            if(support.getCoordinator().getHuaweiCoordinator().getExtendedMusicInfoParams() != null) {
-                maxPlaylistCount = support.getCoordinator().getHuaweiCoordinator().getExtendedMusicInfoParams().maxPlaylistCount;
+            if(support.getDeviceState().getExtendedMusicInfoParams() != null) {
+                maxPlaylistCount = support.getDeviceState().getExtendedMusicInfoParams().maxPlaylistCount;
             }
             sendMusicSyncStart(support.getContext().getString(R.string.music_huawei_device_info, formats, capabilities.availableSpace), capabilities.maxMusicCount, maxPlaylistCount);
             syncMusicList();
@@ -320,7 +250,7 @@ public class HuaweiMusicManager {
 
     public void onMusicListResponse(int startFrame, int endFrame, List<GBDeviceMusic> list) {
         sendMusicList(list);
-        if (support.getHuaweiCoordinator().supportsMoreMusic() || !(endFrame == this.endFrame || list.size() == 1)) {
+        if (support.getDeviceState().supportsMoreMusic() || !(endFrame == this.endFrame || list.size() == 1)) {
             if (list.size() == 2) {
                 this.endFrame = list.get(1).getId();
             }

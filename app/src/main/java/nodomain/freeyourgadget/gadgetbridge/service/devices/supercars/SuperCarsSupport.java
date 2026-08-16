@@ -34,12 +34,11 @@ import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInf
 import nodomain.freeyourgadget.gadgetbridge.devices.supercars.SuperCarsConstants;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryState;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.util.CryptoUtils;
 
-public class SuperCarsSupport extends AbstractBTLEDeviceSupport {
+public class SuperCarsSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(SuperCarsSupport.class);
     public static final String COMMAND_DRIVE_CONTROL = "nodomain.freeyourgadget.gadgetbridge.supercars.command.DRIVE_CONTROL";
     public static final String EXTRA_DIRECTION = "EXTRA_DIRECTION";
@@ -54,8 +53,8 @@ public class SuperCarsSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
-        builder.notify(getCharacteristic(SuperCarsConstants.CHARACTERISTIC_UUID_FFF4), true); //for battery
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
+        builder.notify(SuperCarsConstants.CHARACTERISTIC_UUID_FFF4, true); //for battery
         builder.setCallback(this);
         LocalBroadcastManager broadcastManager = LocalBroadcastManager.getInstance(getContext());
 
@@ -64,7 +63,7 @@ public class SuperCarsSupport extends AbstractBTLEDeviceSupport {
         broadcastManager.registerReceiver(commandReceiver, filter);
         getDevice().setFirmwareVersion("N/A");
         getDevice().setFirmwareVersion2("N/A");
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
         LOG.debug("Connected to: " + gbDevice.getName());
         return builder;
     }
@@ -85,13 +84,13 @@ public class SuperCarsSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] byte_data) {
+        if (super.onCharacteristicChanged(gatt, characteristic, byte_data)) {
             return true;
         }
 
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] byte_data = characteristic.getValue();
         LOG.debug("got characteristics: " + characteristicUUID);
         /*
         //keep here for now. This requires descriptor reading
@@ -157,10 +156,9 @@ public class SuperCarsSupport extends AbstractBTLEDeviceSupport {
                                 SuperCarsConstants.Direction direction) {
 
         byte[] command = craft_packet(speed, direction, movement, light);
-        TransactionBuilder builder = new TransactionBuilder("send data");
-        BluetoothGattCharacteristic writeCharacteristic = getCharacteristic(SuperCarsConstants.CHARACTERISTIC_UUID_FFF1);
-        builder.write(writeCharacteristic, encryptData(command));
-        builder.queue(getQueue());
+        TransactionBuilder builder = createTransactionBuilder("send data");
+        builder.write(SuperCarsConstants.CHARACTERISTIC_UUID_FFF1, encryptData(command));
+        builder.queue();
     }
 
     private byte[] craft_packet(SuperCarsConstants.Speed speed,
@@ -207,8 +205,10 @@ public class SuperCarsSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public void dispose() {
-        super.dispose();
-        LocalBroadcastManager.getInstance(getContext()).unregisterReceiver(commandReceiver);
+        synchronized (ConnectionMonitor) {
+            super.dispose();
+            LocalBroadcastManager.getInstance(getContext()).unregisterReceiver(commandReceiver);
+        }
     }
 
     @Override

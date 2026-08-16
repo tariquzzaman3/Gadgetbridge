@@ -20,11 +20,12 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.widget.Toast;
 
+import androidx.annotation.StringRes;
+
 import java.io.IOException;
 
 import nodomain.freeyourgadget.gadgetbridge.devices.lefun.LefunConstants;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceBusyAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.lefun.LefunDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.miband.operations.OperationStatus;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
@@ -52,8 +53,8 @@ public abstract class MultiFetchRequest extends Request {
         if (getDevice().isBusy()) {
             throw new IllegalStateException("Device is busy");
         }
-        builder.add(new SetDeviceBusyAction(getDevice(), getOperationName(), getContext()));
-        builder.wait(1000); // Wait a bit (after previous operation), or device sometimes won't respond
+        builder.setBusyTask(getOperationName());
+        builder.sleep(1000); // Wait a bit (after previous operation), or device sometimes won't respond
     }
 
     @Override
@@ -64,7 +65,7 @@ public abstract class MultiFetchRequest extends Request {
             super.operationFinished();
             TransactionBuilder builder = performInitialized("Finishing operation");
             builder.setCallback(null);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to reset callback", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -75,9 +76,8 @@ public abstract class MultiFetchRequest extends Request {
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] data) {
         if (characteristic.getUuid().equals(LefunConstants.UUID_CHARACTERISTIC_LEFUN_NOTIFY)) {
-            byte[] data = characteristic.getValue();
             // Parse response
             if (data.length >= LefunConstants.CMD_HEADER_LENGTH && data[0] == LefunConstants.CMD_RESPONSE_ID) {
                 try {
@@ -94,7 +94,7 @@ public abstract class MultiFetchRequest extends Request {
             return false;
         }
 
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, data);
     }
 
     @Override
@@ -106,5 +106,5 @@ public abstract class MultiFetchRequest extends Request {
      * Gets the display operation name
      * @return the operation name
      */
-    protected abstract String getOperationName();
+    protected abstract @StringRes int getOperationName();
 }

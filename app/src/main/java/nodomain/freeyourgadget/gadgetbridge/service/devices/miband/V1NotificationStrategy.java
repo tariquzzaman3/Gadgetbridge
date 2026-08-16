@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
 
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandService;
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.VibrationProfile;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BtLEAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.common.SimpleNotification;
@@ -34,16 +34,15 @@ public class V1NotificationStrategy implements NotificationStrategy {
     static final byte[] startVibrate = new byte[]{MiBandService.COMMAND_SEND_NOTIFICATION, 1};
     static final byte[] stopVibrate = new byte[]{MiBandService.COMMAND_STOP_MOTOR_VIBRATE};
 
-    private final AbstractBTLEDeviceSupport support;
+    private final AbstractBTLESingleDeviceSupport support;
 
-    public V1NotificationStrategy(AbstractBTLEDeviceSupport support) {
+    public V1NotificationStrategy(AbstractBTLESingleDeviceSupport support) {
         this.support = support;
     }
 
     @Override
     public void sendDefaultNotification(TransactionBuilder builder, SimpleNotification simpleNotification, BtLEAction extraAction) {
-        BluetoothGattCharacteristic characteristic = support.getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT);
-        builder.write(characteristic, getDefaultNotification());
+        builder.write(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT, getDefaultNotification());
         builder.add(extraAction);
     }
 
@@ -88,12 +87,12 @@ public class V1NotificationStrategy implements NotificationStrategy {
                 int on = onOffSequence[j];
                 on = Math.min(500, on); // longer than 500ms is not possible
                 builder.write(controlPoint, startVibrate);
-                builder.wait(on);
+                builder.sleep(on);
                 builder.write(controlPoint, stopVibrate);
 
                 if (++j < onOffSequence.length) {
                     int off = Math.max(onOffSequence[j], 25); // wait at least 25ms
-                    builder.wait(off);
+                    builder.sleep(off);
                 }
 
                 if (extraAction != null) {
@@ -105,8 +104,7 @@ public class V1NotificationStrategy implements NotificationStrategy {
 
     @Override
     public void stopCurrentNotification(TransactionBuilder builder) {
-        BluetoothGattCharacteristic controlPoint = support.getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT);
-        builder.write(controlPoint, stopVibrate);
+        builder.write(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT, stopVibrate);
     }
 
 //    private void sendCustomNotification(int vibrateDuration, int vibrateTimes, int pause, int flashTimes, int flashColour, int originalColour, long flashDuration, TransactionBuilder builder) {
@@ -114,10 +112,10 @@ public class V1NotificationStrategy implements NotificationStrategy {
 //        int vDuration = Math.min(500, vibrateDuration); // longer than 500ms is not possible
 //        for (int i = 0; i < vibrateTimes; i++) {
 //            builder.write(controlPoint, startVibrate);
-//            builder.wait(vDuration);
+//            builder.sleep(vDuration);
 //            builder.write(controlPoint, stopVibrate);
 //            if (pause > 0) {
-//                builder.wait(pause);
+//                builder.sleep(pause);
 //            }
 //        }
 //

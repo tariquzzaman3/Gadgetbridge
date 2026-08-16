@@ -1,96 +1,51 @@
-package nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.messages;
+/*  Copyright (C) 2024-2026 José Rebelo, Thomas Kuehne, Daniele Gobbetti
 
-import androidx.annotation.Nullable;
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
+package nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.messages;
 
 import java.util.Optional;
 
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.GarminTimeUtils;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.RecordData;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.RecordDefinition;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.RecordHeader;
 
-//
-// WARNING: This class was auto-generated, please avoid modifying it directly.
-// See nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.codegen.FitCodeGen
-//
-public class FitMonitoring extends RecordData {
+public class FitMonitoring extends AbstractFitMonitoring {
     public FitMonitoring(final RecordDefinition recordDefinition, final RecordHeader recordHeader) {
         super(recordDefinition, recordHeader);
-
-        final int globalNumber = recordDefinition.getGlobalFITMessage().getNumber();
-        if (globalNumber != 55) {
-            throw new IllegalArgumentException("FitMonitoring expects global messages of " + 55 + ", got " + globalNumber);
-        }
     }
-
-    @Nullable
-    public Long getDistance() {
-        return (Long) getFieldByNumber(2);
-    }
-
-    @Nullable
-    public Long getCycles() {
-        return (Long) getFieldByNumber(3);
-    }
-
-    @Nullable
-    public Long getActiveTime() {
-        return (Long) getFieldByNumber(4);
-    }
-
-    @Nullable
-    public Integer getActivityType() {
-        return (Integer) getFieldByNumber(5);
-    }
-
-    @Nullable
-    public Integer getActiveCalories() {
-        return (Integer) getFieldByNumber(19);
-    }
-
-    @Nullable
-    public Integer getDurationMin() {
-        return (Integer) getFieldByNumber(29);
-    }
-
-    @Nullable
-    public Integer getCurrentActivityTypeIntensity() {
-        return (Integer) getFieldByNumber(24);
-    }
-
-    @Nullable
-    public Integer getTimestamp16() {
-        return (Integer) getFieldByNumber(26);
-    }
-
-    @Nullable
-    public Integer getHeartRate() {
-        return (Integer) getFieldByNumber(27);
-    }
-
-    @Nullable
-    public Integer getModerateActivityMinutes() {
-        return (Integer) getFieldByNumber(33);
-    }
-
-    @Nullable
-    public Integer getVigorousActivityMinutes() {
-        return (Integer) getFieldByNumber(34);
-    }
-
-    @Nullable
-    public Long getTimestamp() {
-        return (Long) getFieldByNumber(253);
-    }
-
-    // manual changes below
 
     public Long computeTimestamp(final Long lastMonitoringTimestamp) {
         final Integer timestamp16 = getTimestamp16();
 
         if (timestamp16 != null && lastMonitoringTimestamp != null) {
             final int referenceGarminTs = GarminTimeUtils.unixTimeToGarminTimestamp(lastMonitoringTimestamp.intValue());
-            return (long) (lastMonitoringTimestamp.intValue() + ((timestamp16 - (referenceGarminTs & 0xffff)) & 0xffff));
+            int timeDiff = (timestamp16 & 0xFFFF) - (referenceGarminTs & 0xFFFF);
+
+            // Handle rollover
+            if (timeDiff < -32768) {
+                timeDiff += 65536;
+            } else if (timeDiff > 32768) {
+                timeDiff -= 65536;
+            }
+
+            return lastMonitoringTimestamp + timeDiff;
+        }
+
+        if (lastMonitoringTimestamp != null) {
+            return lastMonitoringTimestamp;
         }
 
         return getComputedTimestamp();

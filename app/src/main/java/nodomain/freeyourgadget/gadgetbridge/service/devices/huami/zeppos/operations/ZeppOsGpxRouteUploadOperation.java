@@ -22,16 +22,14 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEOperation;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetProgressAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsTransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.ZeppOsFileTransferService;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.miband.operations.OperationStatus;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
+import nodomain.freeyourgadget.gadgetbridge.util.gpx.model.GpxFile;
 
-public class ZeppOsGpxRouteUploadOperation extends AbstractBTLEOperation<ZeppOsSupport>
-        implements ZeppOsFileTransferService.Callback {
+public class ZeppOsGpxRouteUploadOperation extends AbstractZeppOsOperation<ZeppOsSupport>
+        implements ZeppOsFileTransferService.UploadCallback {
     private static final Logger LOG = LoggerFactory.getLogger(ZeppOsGpxRouteUploadOperation.class);
 
     private final ZeppOsGpxRouteFile file;
@@ -40,10 +38,11 @@ public class ZeppOsGpxRouteUploadOperation extends AbstractBTLEOperation<ZeppOsS
     private final ZeppOsFileTransferService fileTransferService;
 
     public ZeppOsGpxRouteUploadOperation(final ZeppOsSupport support,
-                                         final ZeppOsGpxRouteFile file,
+                                         final GpxFile gpxFile,
+                                         final String trackName,
                                          final ZeppOsFileTransferService fileTransferService) {
         super(support);
-        this.file = file;
+        this.file = new ZeppOsGpxRouteFile(gpxFile, trackName);
         this.fileBytes = file.getEncodedBytes();
         this.fileTransferService = fileTransferService;
     }
@@ -57,15 +56,6 @@ public class ZeppOsGpxRouteUploadOperation extends AbstractBTLEOperation<ZeppOsS
                 false,
                 this
         );
-    }
-
-    @Override
-    protected void operationFinished() {
-        operationStatus = OperationStatus.FINISHED;
-        if (getDevice() != null && getDevice().isConnected()) {
-            unsetBusy();
-            getDevice().sendDeviceUpdateIntent(getContext());
-        }
     }
 
     @Override
@@ -89,16 +79,11 @@ public class ZeppOsGpxRouteUploadOperation extends AbstractBTLEOperation<ZeppOsS
         updateProgress(progressPercent);
     }
 
-    @Override
-    public void onFileDownloadFinish(final String url, final String filename, final byte[] data) {
-        LOG.warn("Received unexpected file: url={} filename={} length={}", url, filename, data.length);
-    }
-
     private void updateProgress(final int progressPercent) {
         try {
-            final TransactionBuilder builder = performInitialized("send gpx route upload progress");
-            builder.add(new SetProgressAction(getContext().getString(R.string.gpx_route_upload_in_progress), true, progressPercent, getContext()));
-            builder.queue(getQueue());
+            final ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("send gpx route upload progress");
+            builder.setProgress(R.string.gpx_route_upload_in_progress, true, progressPercent);
+            builder.queue();
         } catch (final Exception e) {
             LOG.error("Failed to update progress notification", e);
         }

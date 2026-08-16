@@ -51,11 +51,11 @@ public class ActivityUser {
 
     private static final String defaultUserName = "gadgetbridge-user";
     public static final int defaultUserGender = GENDER_FEMALE;
-    public static final String defaultUserDateOfBirth = "1970-01-01";
+    public static final String defaultUserDateOfBirth = "2000-01-01";
     public static final int defaultUserAge = 0;
     public static final int defaultUserHeightCm = 175;
     public static final int defaultUserWeightKg = 70;
-    public static final int defaultUserSleepDurationGoal = 7;
+    public static final int defaultUserSleepDurationGoal = 7 * 60;
     public static final int defaultUserStepsGoal = 8000;
     public static final int defaultUserCaloriesBurntGoal = 350;
     public static final int defaultUserDistanceGoalMeters = 5000;
@@ -70,14 +70,14 @@ public class ActivityUser {
     public static final String PREF_USER_GENDER = "activity_user_gender";
     public static final String PREF_USER_HEIGHT_CM = "activity_user_height_cm";
     public static final String PREF_USER_WEIGHT_KG = "activity_user_weight_kg";
-    public static final String PREF_USER_SLEEP_DURATION = "activity_user_sleep_duration";
+    public static final String PREF_USER_SLEEP_DURATION_MINUTES = "activity_user_sleep_duration_minutes";
     public static final String PREF_USER_STEPS_GOAL = "fitness_goal"; // FIXME: for compatibility
     public static final String PREF_USER_CALORIES_BURNT = "activity_user_calories_burnt";
     public static final String PREF_USER_DISTANCE_METERS = "activity_user_distance_meters";
     public static final String PREF_USER_ACTIVETIME_MINUTES = "activity_user_activetime_minutes";
     public static final String PREF_USER_STEP_LENGTH_CM = "activity_user_step_length_cm";
     public static final String PREF_USER_GOAL_WEIGHT_KG = "activity_user_goal_weight_kg";
-    public static final String PREF_USER_GOAL_STANDING_TIME_HOURS = "activity_user_goal_standing_time_minutes";
+    public static final String PREF_USER_GOAL_STANDING_TIME_HOURS = "activity_user_goal_standing_hours";
     public static final String PREF_USER_GOAL_FAT_BURN_TIME_MINUTES = "activity_user_goal_fat_burn_time_minutes";
 
     public ActivityUser() {
@@ -129,11 +129,11 @@ public class ActivityUser {
     }
 
     /**
-     * @return the user defined sleep duration or the default value when none is set or the stored
+     * @return the user defined sleep duration in minutes or the default value when none is set or the stored
      * value is out of any logical bounds.
      */
     public int getSleepDurationGoal() {
-        if (activityUserSleepDurationGoal < 1 || activityUserSleepDurationGoal > 24) {
+        if (activityUserSleepDurationGoal < 1 || activityUserSleepDurationGoal > 24 * 60) {
             activityUserSleepDurationGoal = defaultUserSleepDurationGoal;
         }
         return activityUserSleepDurationGoal;
@@ -147,7 +147,11 @@ public class ActivityUser {
     }
 
     public int getAge() {
-        return Period.between(getDateOfBirth(), LocalDate.now()).getYears();
+        return getAgeAt(LocalDate.now());
+    }
+
+    public int getAgeAt(final LocalDate when) {
+        return Period.between(getDateOfBirth(), when).getYears();
     }
 
     private void fetchPreferences() {
@@ -157,7 +161,7 @@ public class ActivityUser {
         activityUserHeightCm = prefs.getInt(PREF_USER_HEIGHT_CM, defaultUserHeightCm);
         activityUserWeightKg = prefs.getInt(PREF_USER_WEIGHT_KG, defaultUserWeightKg);
         activityUserDateOfBirth = prefs.getLocalDate(PREF_USER_DATE_OF_BIRTH, defaultUserDateOfBirth);
-        activityUserSleepDurationGoal = prefs.getInt(PREF_USER_SLEEP_DURATION, defaultUserSleepDurationGoal);
+        activityUserSleepDurationGoal = prefs.getInt(PREF_USER_SLEEP_DURATION_MINUTES, defaultUserSleepDurationGoal);
         activityUserStepsGoal = prefs.getInt(PREF_USER_STEPS_GOAL, defaultUserStepsGoal);
         activityUserCaloriesBurntGoal = prefs.getInt(PREF_USER_CALORIES_BURNT, defaultUserCaloriesBurntGoal);
         activityUserDistanceGoalMeters = prefs.getInt(PREF_USER_DISTANCE_METERS, defaultUserDistanceGoalMeters);

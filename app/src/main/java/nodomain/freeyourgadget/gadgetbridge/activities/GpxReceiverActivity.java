@@ -35,7 +35,7 @@ import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.util.FileUtils;
 
 public class GpxReceiverActivity extends AbstractGBActivity {
-    private static final Logger LOG = LoggerFactory.getLogger(ActivitySummaryDetail.class);
+    private static final Logger LOG = LoggerFactory.getLogger(GpxReceiverActivity.class);
     boolean toOverwrite = false;
     ArrayList<FileToProcess> fileList = new ArrayList<>();
 
@@ -99,7 +99,7 @@ public class GpxReceiverActivity extends AbstractGBActivity {
             gpx_receiver_overwrite_label.setVisibility(View.GONE);
         }
 
-        gpx_receiver_received_label.setText(String.format("%s %s", getString(R.string.gpx_receiver_files_received), fileList.toArray().length));
+        gpx_receiver_received_label.setText(String.format("%s %s", getString(R.string.gpx_receiver_files_received), fileList.size()));
         gpx_receiver_files_listing.setText(fileListingText.toString());
     }
 
@@ -115,7 +115,9 @@ public class GpxReceiverActivity extends AbstractGBActivity {
     private File create_file_from_uri(Uri source) {
         File destination = null;
         try {
-            File external = FileUtils.getExternalFilesDir();
+            File external = new File(FileUtils.getExternalFilesDir(), "gpx");
+            //noinspection ResultOfMethodCallIgnored
+            external.mkdirs();
             String fileName = get_file_name(source);
 
             if (fileName != null) {

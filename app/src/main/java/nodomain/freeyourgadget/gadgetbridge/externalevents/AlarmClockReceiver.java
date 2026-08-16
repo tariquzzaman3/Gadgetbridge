@@ -20,14 +20,26 @@ package nodomain.freeyourgadget.gadgetbridge.externalevents;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.text.format.DateFormat;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Date;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationType;
+import nodomain.freeyourgadget.gadgetbridge.util.NotificationUtils;
 
 public class AlarmClockReceiver extends BroadcastReceiver {
+    private static final Logger LOG = LoggerFactory.getLogger(AlarmClockReceiver.class);
+
+    public static final String PACKAGE_AOSP = "com.android.deskclock";
+    public static final String PACKAGE_CLOCK_GOOGLE = "com.google.android.deskclock";
+
     /**
      * AlarmActivity and AlarmService (when unbound) listen for this broadcast intent
      * so that other applications can snooze the alarm (after ALARM_ALERT_ACTION and before
@@ -52,34 +64,63 @@ public class AlarmClockReceiver extends BroadcastReceiver {
 
 
     @Override
-    public void onReceive(Context context, Intent intent) {
-        String action = intent.getAction();
+    public void onReceive(final Context context, final Intent intent) {
+        final String action = intent.getAction();
+        if (action == null) {
+            return;
+        }
+
+        LOG.debug("Got alarm action: {}", action);
+
+        final String packageName;
+        if (action.startsWith(PACKAGE_AOSP)) {
+            packageName = PACKAGE_AOSP;
+        } else if (action.startsWith(PACKAGE_CLOCK_GOOGLE)) {
+            packageName = PACKAGE_CLOCK_GOOGLE;
+        } else {
+            LOG.warn("Unknown clock app package name");
+            return;
+        }
+
+        if (GBApplication.getPrefs().getString("notification_list_is_blacklist", "true").equals("true")) {
+            if (GBApplication.appIsNotifBlacklisted(packageName)) {
+                LOG.info("Ignoring alarm action, application is blacklisted");
+                return;
+            }
+        } else {
+            if (!GBApplication.appIsNotifBlacklisted(packageName)) {
+                LOG.info("Ignoring alarm action, application is not whitelisted");
+                return;
+            }
+        }
+
         if (ALARM_ALERT_ACTION.equals(action) || GOOGLE_CLOCK_ALARM_ALERT_ACTION.equals(action)) {
-            sendAlarm(true);
+            sendAlarm(context, true, packageName);
         } else if (ALARM_DONE_ACTION.equals(action) || GOOGLE_CLOCK_ALARM_DONE_ACTION.equals(action)) {
-            sendAlarm(false);
+            sendAlarm(context, false, packageName);
         }
     }
 
-
-
-    private synchronized void sendAlarm(boolean on) {
+    private synchronized void sendAlarm(Context context, boolean on, String packageName) {
         dismissLastAlarm();
         if (on) {
             NotificationSpec notificationSpec = new NotificationSpec();
             //TODO: can we attach a dismiss action to the notification and not use the notification ID explicitly?
             lastId = notificationSpec.getId();
             notificationSpec.type = NotificationType.GENERIC_ALARM_CLOCK;
-            notificationSpec.sourceName = "ALARMCLOCKRECEIVER";
+            notificationSpec.sourceAppId = packageName;
+            final String appLabel = NotificationUtils.getApplicationLabel(context, packageName);
+            notificationSpec.sourceName = appLabel != null ? appLabel : "Alarm Clock";
+            notificationSpec.title = context.getString(R.string.menuitem_alarm);
+            notificationSpec.body = DateFormat.getTimeFormat(context).format(new Date());
             notificationSpec.attachedActions = new ArrayList<>();
 
             // DISMISS ALL action
             NotificationSpec.Action dismissAllAction = new NotificationSpec.Action();
-            dismissAllAction.title = "Dismiss All";
+            dismissAllAction.title = context.getString(R.string.notifications_dismiss_all);
             dismissAllAction.type = NotificationSpec.Action.TYPE_SYNTECTIC_DISMISS_ALL;
             notificationSpec.attachedActions.add(dismissAllAction);
 
-            // can we get the alarm title somehow?
             GBApplication.deviceService().onNotification(notificationSpec);
         }
     }
@@ -90,5 +131,4 @@ public class AlarmClockReceiver extends BroadcastReceiver {
             lastId = 0;
         }
     }
-
 }

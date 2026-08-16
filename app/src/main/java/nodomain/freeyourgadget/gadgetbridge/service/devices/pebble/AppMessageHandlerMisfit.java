@@ -24,6 +24,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.SimpleTimeZone;
 import java.util.UUID;
@@ -84,9 +85,6 @@ class AppMessageHandlerMisfit extends AppMessageHandler {
                         break;
                     }
 
-                    if (mPebbleProtocol.mFwMajor < 3) {
-                        timestamp -= SimpleTimeZone.getDefault().getOffset(timestamp * 1000L) / 1000;
-                    }
                     Date startDate = new Date((long) timestamp * 1000L);
                     Date endDate = new Date((long) (timestamp + samples * 60) * 1000L);
                     LOG.info("got data from " + startDate + " to " + endDate);
@@ -108,7 +106,7 @@ class AppMessageHandlerMisfit extends AppMessageHandler {
                         }
                         LOG.info("total steps for above period: " + totalSteps);
 
-                        sampleProvider.addGBActivitySamples(misfitSamples);
+                        sampleProvider.addGBActivitySamples(Arrays.asList(misfitSamples));
                     } catch (Exception e) {
                         LOG.error("Error acquiring database", e);
                         return null;

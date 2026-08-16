@@ -16,24 +16,16 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.huawei.huaweiwatch4pro;
 
+import androidx.annotation.NonNull;
+
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiBRCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiConstants;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class HuaweiWatch4ProCoordinator extends HuaweiBRCoordinator {
-    public HuaweiWatch4ProCoordinator() {
-        super();
-        getHuaweiCoordinator().setTransactionCrypted(true);
-    }
-
-    @Override
-    public DeviceType getDeviceType() {
-        return DeviceType.HUAWEIWATCH4PRO;
-    }
-
     @Override
     protected Pattern getSupportedDeviceName() {
         return Pattern.compile("(" + HuaweiConstants.HU_WATCH4_NAME + "|" + HuaweiConstants.HU_WATCH4PRO_NAME + ").*", Pattern.CASE_INSENSITIVE);
@@ -45,8 +37,13 @@ public class HuaweiWatch4ProCoordinator extends HuaweiBRCoordinator {
     }
 
     @Override
-    public boolean supportsUnicodeEmojis() {
+    public boolean supportsUnicodeEmojis(@NonNull GBDevice device) {
         // HarmonyOS watch
         return true;
+    }
+
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.WATCH;
     }
 }

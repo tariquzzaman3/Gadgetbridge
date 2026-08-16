@@ -26,12 +26,11 @@ import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInf
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInfo;
 import nodomain.freeyourgadget.gadgetbridge.devices.jyou.BFH16Constants;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
+public class BandWPSeriesDeviceSupport extends AbstractBTLESingleDeviceSupport {
 
     private static final Logger LOG = LoggerFactory.getLogger(BandWPSeriesDeviceSupport.class);
 
@@ -55,7 +54,7 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
         // mark the device as initializing
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         getDevice().setBatteryLabel(R.string.left_earbud, 0);
         getDevice().setBatteryLabel(R.string.right_earbud, 1);
@@ -69,10 +68,10 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         }
 
         // mark the device as initialized
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
 
-        builder.notify(getCharacteristic(UUID_RPC_RESPONSE_CHARACTERISTIC), true);
-        builder.notify(getCharacteristic(UUID_RPC_NOTIFICATION_CHARACTERISTIC), true);
+        builder.notify(UUID_RPC_RESPONSE_CHARACTERISTIC, true);
+        builder.notify(UUID_RPC_NOTIFICATION_CHARACTERISTIC, true);
         BandWBLEProfile.requestFirmware(builder);
         BandWBLEProfile.requestDeviceName(builder);
         BandWBLEProfile.requestBatteryLevels(builder);
@@ -83,19 +82,20 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         return builder;
     }
 
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-        super.onCharacteristicChanged(gatt, characteristic);
+    @Override
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
+        super.onCharacteristicChanged(gatt, characteristic, value);
 
         UUID characteristicUUID = characteristic.getUuid();
 
         if (UUID_RPC_RESPONSE_CHARACTERISTIC.equals(characteristicUUID) || UUID_RPC_NOTIFICATION_CHARACTERISTIC.equals(characteristicUUID)) {
-            return handleRPCResponse(characteristic);
+            return handleRPCResponse(characteristic, value);
         }
         return false;
     }
 
-    private boolean handleRPCResponse(BluetoothGattCharacteristic characteristic) {
-        BandWPSeriesResponse response = new BandWPSeriesResponse(characteristic.getValue());
+    private boolean handleRPCResponse(BluetoothGattCharacteristic characteristic, byte[] value) {
+        BandWPSeriesResponse response = new BandWPSeriesResponse(value);
         LOG.debug("Got RPC response: Type {}, commandID {}, namespace {}, errorCode {}, payload {}",
                 response.messageType,
                 response.commandId,
@@ -150,7 +150,7 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             payloadValue = response.payloadUnpacker.unpackInt();
         } catch (IOException e) {
-            GB.toast("Could not extract ancMode from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR);
+            GB.toast("Could not extract ancMode from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR, e);
             return false;
         }
         Editor editor = GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress()).edit();
@@ -185,7 +185,7 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             wearSensorEnabled = response.getPayloadBoolean();
         } catch (IOException e) {
-            GB.toast("Failed to unpack wear sensor status from payload " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR);
+            GB.toast("Failed to unpack wear sensor status from payload " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR, e);
             return false;
         }
         Editor editor = GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress()).edit();
@@ -229,7 +229,7 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             payloadValue = response.payloadUnpacker.unpackBoolean();
         } catch (IOException e) {
-            GB.toast("Could not extract vptEnabled from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR);
+            GB.toast("Could not extract vptEnabled from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR, e);
             return false;
         }
         int vptLevel = GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress()).getInt(PREF_BANDW_PSERIES_VPT_LEVEL, 0);
@@ -249,7 +249,7 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             payloadValue = response.payloadUnpacker.unpackInt();
         } catch (IOException e) {
-            GB.toast("Could not extract vptLevel from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR);
+            GB.toast("Could not extract vptLevel from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR, e);
             return false;
         }
         boolean vptEnabled = GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress()).getBoolean(PREF_BANDW_PSERIES_VPT_ENABLED, false);
@@ -260,6 +260,7 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         return true;
     }
 
+    @Override
     public void onSendConfiguration(String config) {
         try {
             TransactionBuilder builder = performInitialized("sendConfig");
@@ -280,9 +281,9 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
                     BandWBLEProfile.setWearSensorEnabled(builder, wearSensorEnabled);
                     break;
             }
-            performImmediately(builder);
+            builder.queueImmediately();
         } catch (IOException e) {
-            GB.toast("Failed to send settings update", Toast.LENGTH_SHORT, GB.ERROR);
+            GB.toast("Failed to send settings update", Toast.LENGTH_SHORT, GB.ERROR, e);
         }
     }
 
@@ -296,7 +297,7 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             payloadValue = response.payloadUnpacker.unpackBoolean();
         } catch (IOException e) {
-            GB.toast("Could not extract response from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR);
+            GB.toast("Could not extract response from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR, e);
             return false;
         }
         return payloadValue;
@@ -307,7 +308,7 @@ public class BandWPSeriesDeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             payloadValue = response.payloadUnpacker.unpackInt();
         } catch (IOException e) {
-            GB.toast("Could not extract response from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR);
+            GB.toast("Could not extract response from payload: " + Arrays.toString(response.payload), Toast.LENGTH_SHORT, GB.ERROR, e);
             return false;
         }
         return payloadValue == 0;

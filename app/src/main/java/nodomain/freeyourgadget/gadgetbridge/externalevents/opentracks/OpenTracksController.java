@@ -27,10 +27,21 @@ import android.widget.Toast;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.export.ActivityTrackExporter;
+import nodomain.freeyourgadget.gadgetbridge.export.GPXExporter;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivityPoint;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivityTrack;
+import nodomain.freeyourgadget.gadgetbridge.util.FileUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
@@ -45,7 +56,7 @@ public class OpenTracksController extends Activity {
      * their documentation here: https://github.com/OpenTracksApp/OpenTracks#api
      * `startRecording()` sends an explicit Intent to OpenTracks signalling it
      * to start recording. It passes along the package name and class name of
-     * our `OpenTracksController` which OpenTracks will use to send the 
+     * our `OpenTracksController` which OpenTracks will use to send the
      * statistics URIs to. After starting the recording service, OpenTracks
      * uses a new explicit Intent to start our `OpenTracksController` and passes
      * along the URIs and the read permissions for those URIs (using
@@ -76,10 +87,13 @@ public class OpenTracksController extends Activity {
                 gbApp.getOpenTracksObserver().unregister();
             }
             Uri tracksUri = uris.get(0);
-            LOG.info("Registering OpenTracksContentObserver with tracks URI: " + tracksUri);
-            gbApp.setOpenTracksObserver(new OpenTracksContentObserver(this, tracksUri, protocolVersion));
+            Uri trackpointsUri = uris.get(1);
+            LOG.info("Registering OpenTracksContentObserver with tracks URI: {}", tracksUri);
+            LOG.info("Registering OpenTracksContentObserver with trackpoints URI: {}", trackpointsUri);
+            gbApp.setOpenTracksObserver(new OpenTracksContentObserver(this, tracksUri, trackpointsUri, protocolVersion));
             try {
                 getContentResolver().registerContentObserver(tracksUri, false, gbApp.getOpenTracksObserver());
+                getContentResolver().registerContentObserver(trackpointsUri, false, gbApp.getOpenTracksObserver());
             } catch (final SecurityException se) {
                 LOG.error("Error registering OpenTracksContentObserver", se);
             }
@@ -87,57 +101,53 @@ public class OpenTracksController extends Activity {
         moveTaskToBack(true);
     }
 
-    public static void sendIntent(Context context, String className, String category, String icon) {
+    public static void sendIntent(Context context, String actionClassSuffix, String category, OpenTracksActivityType openTracksActivityType) {
         Prefs prefs = GBApplication.getPrefs();
         String packageName = prefs.getString("opentracks_packagename", "de.dennisguse.opentracks");
+        String classPackageBase = packageName;
+        if (packageName.startsWith("de.dennisguse.opentracks")) {
+            classPackageBase = "de.dennisguse.opentracks";
+        } else if (packageName.startsWith("de.storchp.opentracks")) {
+            classPackageBase = "de.storchp.opentracks";
+        }
+
         Intent intent = new Intent();
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.setClassName(packageName, className);
+        intent.setClassName(packageName, classPackageBase + actionClassSuffix);
         intent.putExtra("STATS_TARGET_PACKAGE", context.getPackageName());
         intent.putExtra("STATS_TARGET_CLASS", OpenTracksController.class.getName());
         if (category != null) {
             intent.putExtra("TRACK_CATEGORY", category);
         }
-        if (icon != null) {
-            intent.putExtra("TRACK_ICON", icon);
+        if (openTracksActivityType != null) {
+            intent.putExtra("TRACK_ICON", openTracksActivityType.getId());
         }
         try {
             context.startActivity(intent);
         } catch (Exception e) {
-            GB.toast(e.getMessage(), Toast.LENGTH_LONG, GB.WARN);
+            GB.toast(e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.WARN, e);
         }
     }
 
     public static void startRecording(Context context) {
-        sendIntent(context, "de.dennisguse.opentracks.publicapi.StartRecording", null, null);
+        sendIntent(context, ".publicapi.StartRecording", null, null);
     }
 
     public static void startRecording(Context context, ActivityKind activityKind) {
         final String category = activityKind.getLabel(context);
-        final String icon;
-        switch (activityKind) {
-            case CYCLING:
-                icon = "BIKE";
-                break;
-            case HIKING:
-            case WALKING:
-                icon = "WALK";
-                break;
-            case RUNNING:
-                icon = "RUN";
-                break;
-            default:
-                LOG.warn("Unmapped activity kind icon for {}", activityKind);
-                icon = null;
+        final OpenTracksActivityType openTracksActivityType = OpenTracksActivityType.fromActivityKind(activityKind);
+        if (openTracksActivityType == OpenTracksActivityType.UNKNOWN) {
+            LOG.warn("Unmapped activity kind icon for {}", activityKind);
         }
 
-        sendIntent(context, "de.dennisguse.opentracks.publicapi.StartRecording", category, icon);
+        sendIntent(context, ".publicapi.StartRecording", category, openTracksActivityType);
     }
 
     public static void stopRecording(Context context) {
-        sendIntent(context, "de.dennisguse.opentracks.publicapi.StopRecording", null, null);
+        sendIntent(context, ".publicapi.StopRecording", null, null);
         OpenTracksContentObserver openTracksObserver = GBApplication.app().getOpenTracksObserver();
         if (openTracksObserver != null) {
+            saveToGpx(openTracksObserver.getActivityTrack());
             openTracksObserver.finish();
         }
         GBApplication.app().setOpenTracksObserver(null);
@@ -149,6 +159,41 @@ public class OpenTracksController extends Activity {
             startRecording(context);
         } else {
             stopRecording(context);
+        }
+    }
+
+    private static void saveToGpx(ActivityTrack activityTrack) {
+        if (activityTrack == null || activityTrack.getSegments() == null || activityTrack.getSegments().isEmpty()) {
+            LOG.debug("No GPS track points to save — skipping GPX export");
+            return;
+        } else {
+            boolean trackpointsFound = false;
+            for (List<ActivityPoint> segment : activityTrack.getSegments()) {
+                if (!segment.isEmpty()) {
+                    trackpointsFound = true;
+                }
+            }
+            if (!trackpointsFound) {
+                LOG.debug("No GPS track points to save — skipping GPX export");
+                return;
+            }
+        }
+
+        final SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault());
+        final String gpxName = sdf.format(new Date());
+
+        activityTrack.setName(gpxName);
+
+        try {
+            final File gpxDir = new File(FileUtils.getExternalFilesDir(), "gpx");
+            //noinspection ResultOfMethodCallIgnored
+            gpxDir.mkdirs();
+            final File gpxFile = new File(gpxDir, gpxName + ".gpx");
+            final GPXExporter gpxExporter = new GPXExporter();
+            gpxExporter.performExport(activityTrack, gpxFile, null);
+            LOG.info("Saved GPX received from OpenTracks to {}", gpxFile.getPath());
+        } catch (IOException | ActivityTrackExporter.GPXTrackEmptyException e) {
+            LOG.error("Error while writing generated GPX file", e);
         }
     }
 }

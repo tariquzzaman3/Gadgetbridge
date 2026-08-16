@@ -27,7 +27,6 @@
     <string name="app_configure">Configurează</string>
     <string name="blacklist_all_for_notifications">Blochează toate notificările</string>
     <string name="whitelist_all_for_notifications">Permite toate notificările</string>
-    <string name="title_activity_calblacklist">Calendare blocate</string>
     <string name="title_activity_fw_app_insaller">Instalare firmware</string>
     <string name="fw_multi_upgrade_notice">Ești pe punctul de a instala firmware-ul %1$s si %2$s, În locul celor deja instalate pe Mi Band.</string>
     <string name="miband_firmware_known">Firmware-ul a fost testat și este compatibil cu Gadgetbridge.</string>
@@ -65,7 +64,6 @@
     <string name="appmanager_installed_watchfaces">Cadrane instalate</string>
     <string name="appmananger_app_delete">Șterge</string>
     <string name="appmanager_app_openinstore">Caută in magazinul Pebble</string>
-    <string name="appmanager_weather_install_provider">Instalează aplicația Notificări Meteo</string>
     <string name="app_move_to_top">Mută la început</string>
     <string name="fw_upgrade_notice">Ești pe punctul de a instala firmware-ul %s.</string>
     <string name="fw_upgrade_notice_amazfitbip">Ești pe punctul de a instala firmware-ul %s pe Amazfit Bip.
@@ -178,7 +176,6 @@
     <string name="debugactivity_confirm_remove_device_preferences_title">Elimini preferințele dispozitivului?</string>
     <string name="device_card_activity_card_title_summary">Alege ce detalii vor fii afișate pe cardul dispozitivului</string>
     <string name="about_description_generic">Înlocuitor sub o licență copyleft pentru aplicațiile cu sursă închisă Android, de administrare a unor dispozitive portabile.</string>
-    <string name="gps_gnolass">GPS + GNOLASS</string>
     <string name="gadgetbridge_running_main_nightly">Nightly GB este pornit</string>
     <string name="action_changelog">Jurnal de modificări</string>
     <string name="about_activity_title_generic">Despre Gadgetbridge</string>
@@ -193,7 +190,6 @@
     <string name="application_name_main_nightly">Gadgetbridge (Nightly)</string>
     <string name="gps_galileo">GPS + GALILEO</string>
     <string name="debugactivity_really_factoryreset_title">Chiar dorești o restaurare a setărilor din fabrică?</string>
-    <string name="devicetype_xiaomi_watch_s1_active">Xiaomi Watch S1 Active</string>
     <string name="fw_upgrade_notice_miband7">Ești pe cale să instalezi firmware-ul %s pe Xiaomi Smart Band 7.
 \n
 \nDupă instalarea fișierului .zip, brățara va reporni.
@@ -362,7 +358,6 @@
     <string name="pref_theme_black_background">Utilizare fundal negru în Tema întunecată</string>
     <string name="pref_summary_notification_delay_calls">Întârziere înainte de a trimite notificări privind apelurile primite către dispozitiv, în secunde.</string>
     <string name="pref_title_canned_reply_suffix">Sufix comun</string>
-    <string name="activity_prefs_alarm_min_heart_rate">Puls minim</string>
     <string name="pref_screen_notification_profile_calendar">Notificare calendar</string>
     <string name="reminder_time">Timp</string>
     <string name="pref_pair_bluetooth_calls_help_2">2. Accesează setările Bluetooth de pe telefon și asociază cu noul dispozitiv care apare în listă (nume similar cu ceasul actual, dar cu un sufix, de exemplu „Amazfit GTR 4 - AFC8”).</string>
@@ -500,11 +495,7 @@
 \n
 \nACȚIONEZI PE PROPRIU RISC!</string>
     <string name="vibration_profile_short">Scurt</string>
-    <string name="fw_upgrade_notice_zepp_os">Ești pe cale să instalezi firmware-ul %s pe %s.
-\n
-\nDupă instalarea fișierului .zip, brățara va reporni.
-\n
-\nACȚIONEZI PE PROPRIU RISC!</string>
+    <string name="fw_upgrade_notice_zepp_os">Ești pe cale să instalezi firmware-ul %s pe %s. \n \nDupă instalarea fișierului .zip, brățara va reporni. \n \nACȚIONEZI PE PROPRIU RISC!</string>
     <string name="wearmode_band">Bandă (brățară)</string>
     <string name="pref_summary_casio_alert_email">Alertă (vibrare/bip) pentru notificări prin e-mail</string>
     <string name="pref_title_casio_alert_call">Alertă pentru apeluri primite</string>
@@ -636,7 +627,6 @@
     <string name="zetime_title_screentime">Durata afișării în secunde</string>
     <string name="zetime_title_heart_rate_alarm">Alarmă de puls</string>
     <string name="zetime_title_heart_rate_alarm_summary">Ceasul va avertiza când pulsul depășește limitele.</string>
-    <string name="activity_prefs_alarm_max_heart_rate">Puls maxim</string>
     <string name="zetime_analog_mode_handsandsteps">Mâinile și pașii</string>
     <string name="zetime_prefs_inactivity_we">Miercuri</string>
     <string name="zetime_prefs_inactivity_th">Joi</string>
@@ -812,8 +802,6 @@
     <string name="sleep_colored_stats_deep_avg">Mediu profund</string>
     <string name="sleep_colored_stats_light_avg">Mediu ușor</string>
     <string name="stats_empty_value">-</string>
-    <string name="stats_lowest_hr">Cel mai mic puls</string>
-    <string name="stats_highest_hr">Cel mai mare puls</string>
     <string name="femometer_measurement_mode_quick">Modul rapid (30s)</string>
     <string name="pref_workout_detection_title">Detectarea antrenamentului</string>
     <string name="prefs_charts_tabs">File de diagrame</string>
@@ -963,16 +951,9 @@
     <string name="pref_sleep_breathing_quality_monitoring">Monitorizarea calității respirației în somn</string>
     <string name="miband_prefs_device_time_offset_hours">Compensarea timpului dispozitivului în ore (pentru detectarea somnului lucrătorilor în ture)</string>
     <string name="miband2_prefs_dateformat">Formatul datei</string>
-    <string name="dateformat_date_time">Timp și dată</string>
+    <string name="dateformat_date_time"><![CDATA[Timp și dată]]></string>
     <string name="prefs_disconnect_notification_summary">Notificare pe dispozitiv când este deconectat de la Bluetooth.</string>
     <string name="mi2_prefs_button_actions">Acțiunile butonului</string>
-    <string name="weather_notification_label">Asigură-te că acest skin este activat în aplicația Notificare vreme pentru a obține informații despre vreme pe Pebble.
-\n
-\nNu este necesară nicio configurație aici.
-\n
-\nPoți activa aplicația meteo de sistem a Pebble din gestionarea aplicației.
-\n
-\nCadranele de ceas acceptate vor afișa automat vremea.</string>
     <string name="button_watchface_select_image">Schimbă imaginea de fundal</string>
     <string name="watchface_widget_type_calories">Calorii</string>
     <string name="watchface_widget_type_2nd_tz">al 2-lea fus orar</string>
@@ -1046,7 +1027,7 @@
     <string name="watchface_setting_wrist_flick_move_relative">Mișcarea acelor în raport cu timpul</string>
     <string name="watchface_setting_wrist_flick_hour">Ac oră (de la -360 la 360)</string>
     <string name="weeksteps_today_steps_description">Pași astăzi, obiectiv: %1$s</string>
-    <string name="overstep">Depășire: %1$d</string>
+    <string name="overstep">Depășire: %1$s</string>
     <string name="app_install_info">Ești pe cale să instalezi următoarea aplicație:
 \n
 \n%1$s
@@ -1147,7 +1128,7 @@
 \nNotă: Nu trebuie să instalezi .res dacă este exact același cu cel instalat anterior.
 \n
 \nACȚIONEZI PE PROPRIU RISC!</string>
-    <string name="lack_of_step">Lipsa pașilor: %1$d</string>
+    <string name="lack_of_step">Lipsa pașilor: %1$s</string>
     <string name="fw_upgrade_notice_amazfitbip3pro">Ești pe cale să instalezi firmware-ul %s pe Amazfit Bip 3 Pro.
 \n
 \nAsigură-te că instalezi fișierul .fw, iar după aceea fișierul .res. Ceasul se va reporni după instalarea fișierului .fw.
@@ -1178,4 +1159,62 @@
     <string name="prefs_stress_monitoring_description">Monitorizarea nivelului de stres în timpul odihnei</string>
     <string name="prefs_relaxation_reminder_title">Memento de relaxare</string>
     <string name="pref_dashboard_widget_today_24h_summary">Afișează activitatea într-un singur cerc de 24 de ore în loc de un cerc dublu de 12 ore</string>
+    <string name="sports_activity_quick_filter_last_week">Săptămăna precedentă</string>
+    <string name="purple">Violet</string>
+    <string name="Speed">Viteză</string>
+    <string name="preview_image">Previzualizare imagine</string>
+    <string name="active_calories_goal">Țintă curentă</string>
+    <string name="total_calories_burnt">Total consumate</string>
+    <string name="cyan">Cyan</string>
+    <string name="green">Verde</string>
+    <string name="white">Alb</string>
+    <string name="prefs_wena3_hint_lift_wrist">Pornește ecranul când privești la încheietură</string>
+    <string name="gree_controller_host">Gazdă</string>
+    <string name="blue">Albastru</string>
+    <string name="prefs_wena3_title_screen">Reglaje ecran</string>
+    <string name="dual_device_mode_summary">Permite conectarea căștilor la două dispozitive simultan</string>
+    <string name="pref_description_general">Pornire, limbă, regiune, locație</string>
+    <string name="pref_description_deprecated_functionalities">Setări care vor fi eliminate într-o versiune ulterioară</string>
+    <string name="fw_upgrade_notice_huawei">Urmează să instalezi firmware-ul %s pe %s.\n\nFirmware-ul actual este %s.\n\nDispozitivul tău va reporni după instalarea noului firmware.\n\nCONTINUĂ PE PROPRIA RĂSPUNDERE!</string>
+    <string name="pref_description_user_interface">Tema, ecran principal</string>
+    <string name="pref_description_about_you">Data nașterii, gen, înălțime, greutate, obiective</string>
+    <string name="pref_title_pebble_always_ack_pebblekit">Confirmare prematură PebbleKit</string>
+    <string name="pref_title_calendar_lookahead">Numărul de zile în avans</string>
+    <string name="fw_upgrade_notice_miband6">Urmează să instalezi firmware-ul %s pe Mi Band 6.\n\nTe rugăm să te asiguri că instalezi mai întâi fișierul .fw, iar apoi fișierul .res. Brățara ta va reporni după instalarea fișierului .fw.\n\nNotă: Nu trebuie să instalezi fișierul .res dacă este exact același cu cel instalat anterior.\n\nCONTINUĂ PE PROPRIA RĂSPUNDERE!</string>
+    <string name="pref_description_automations">Export automat, preluare automată</string>
+    <string name="pref_title_user_interface">Interfață utilizator</string>
+    <string name="title_activity_musicmanager">Managerul de muzică</string>
+    <string name="pref_title_nagivation_apps">Aplicații de navigare</string>
+    <string name="pref_summary_pebble_enable_applogs">Jurnalele din aplicațiile ceasului vor fi înregistrate de Gadgetbridge (necesită reconectare)</string>
+    <string name="fw_upgrade_notice_amazfitx">Urmează să instalezi firmware-ul %s pe Amazfit X.\n\nTe rugăm să te asiguri că instalezi mai întâi fișierul .fw, iar apoi fișierul .res. Brățara ta va reporni după instalarea fișierului .fw.\n\nNotă: Nu trebuie să instalezi fișierul .res dacă este exact același cu cel instalat anterior.\n\nCONTINUĂ PE PROPRIA RĂSPUNDERE!</string>
+    <string name="pref_header_external_integrations">Integrări externe</string>
+    <string name="pref_header_automations">Automatizări</string>
+    <string name="pref_header_main_screen">Ecran principal</string>
+    <string name="search">Caută</string>
+    <string name="pref_vibration_intensity">Intensitatea vibraţiei</string>
+    <string name="pref_title_relax_firmware_checks">Activați acest lucru dacă doriți să instalați un firmware care nu este destinat dispozitivului (pe propriul risc)</string>
+    <string name="range_percentage_float">%.1f%% - %.1f%%</string>
+    <string name="fw_upgrade_notice_miband4">Sunteți pe cale să instalați firmware-ul %s pe Mi Band 4.\n\nAsigurați-vă că instalați fișierul .fw, iar după aceea fișierul .res. Trupa ta va reporni după instalarea fișierului .fw.\n\nNotă: Nu trebuie să instalați .res dacă este exact același cu cel instalat anterior.\n\nPROCEDATI PE PROPRIU RISC!</string>
+    <string name="pref_description_dashboard">Widget-uri, dispozitive de inclus</string>
+    <string name="pref_title_sync_birthdays">Sincronizați zilele de naștere</string>
+    <string name="zepp_os_install_map_instructions">După ce instalarea începe pe telefon, trebuie să acceptați și pe ecranul ceasului.</string>
+    <string name="fw_upgrade_notice_amazfitcor2">Ești pe punctul de a instala firmware-ul %s pe Amazfit Cor 2. \n\n \nAi grijă să instalezi fișierul .fw, si apoi fișierul .res. Ceasul va reporni după ce se instalează fișierul .fw. \n\n \nNotă: Nu este necesar să instalezi fișierul .res dacă acest fișier este identic cu cel instalat anterior. \n\n \nCOMPLET NETESTAT, PROBABIL CĂ TREBUIE SĂ FOLOSIȚI UN FIRMWARE BEATS_W DACĂ NUMELE DISPOZITIVULUI ESTE \"Amazfit Band 2\"</string>
+    <string name="fw_upgrade_notice_miband5">Sunteți pe cale să instalați firmware-ul %s pe Mi Band 5.\n\nAsigurați-vă că instalați fișierul .fw, iar după aceea fișierul .res. Trupa ta va reporni după instalarea fișierului .fw.\n\nNotă: Nu trebuie să instalați .res dacă este exact același cu cel instalat anterior.\n\nPROCEDATI PE PROPRIU RISC!</string>
+    <string name="open_source_licenses">Licențe</string>
+    <string name="audio_recordings">Inregistrări audio</string>
+    <string name="dialog_close">Închide</string>
+    <string name="dialog_open_url">Deschide URL</string>
+    <string name="pref_summary_sync_birthdays">Sincronizați zilele de naștere ale persoanelor de contact alături de evenimentele din calendar</string>
+    <string name="pref_summary_calendar_lookahead">Sincronizați până la %1s zile de evenimente calendaristice</string>
+    <string name="pref_title_stable_connection">Conexiune Stabilă</string>
+    <string name="remote_control">Telecomandă</string>
+    <string name="pref_description_notifications">Notificări app, whitelist/blacklist</string>
+    <string name="pref_title_pebble_enable_applogs">Activați logging pentru aplicația ceasului</string>
+    <string name="pref_summary_relax_firmware_checks">Relaxați verificările firmware-ului</string>
+    <string name="pref_workout_send_gps_timeout_title">Trimite timeout GPS</string>
+    <string name="pref_workout_send_gps_timeout_summary">Opriți trimiterea datelor GPS atunci când dispozitivul nu mai trimite date antrenament (milisecunde)</string>
+    <string name="pref_description_developer_options">Log-uri, Intent API</string>
+    <string name="range_percentage">%1$d%% - %2$d%%</string>
+    <string name="range_degrees">%1$dº - %2$dº</string>
+    <string name="fw_upgrade_notice_amazfitvergel">Sunteți pe cale să instalați firmware-ul %s pe Amazfit Verge Lite.\n\nAsigurați-vă că instalați fișierul .fw, apoi fișierul .res și, în sfârșit, fișierul .gps. Ceasul se va reporni după instalarea fișierului .fw.\n\nNotă: Nu trebuie să instalați .res și .gps dacă aceste fișiere sunt exact aceleași cu cele instalate anterior.\n\nPROCEDATI PE PROPRIU RISC!</string>
 </resources>

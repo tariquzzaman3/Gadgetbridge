@@ -1,4 +1,4 @@
-/*  Copyright (C) 2023-2024 Andreas Shimokawa, José Rebelo
+/*  Copyright (C) 2023-2026 Andreas Shimokawa, José Rebelo
 
     This file is part of Gadgetbridge.
 
@@ -24,8 +24,10 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.os.Bundle;
 import android.provider.MediaStore;
 
+import androidx.annotation.Nullable;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.apache.commons.lang3.ArrayUtils;
@@ -44,8 +46,6 @@ import java.util.Map;
 
 import lineageos.weather.util.WeatherUtils;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
-import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.SettingsActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEvent;
@@ -55,12 +55,13 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceService;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.TemperatureUnit;
 import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.weather.Weather;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
 import nodomain.freeyourgadget.gadgetbridge.service.serial.GBDeviceProtocol;
 import nodomain.freeyourgadget.gadgetbridge.util.BitmapUtil;
 import nodomain.freeyourgadget.gadgetbridge.util.NotificationUtils;
-import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
 
 public class PixooProtocol extends GBDeviceProtocol {
@@ -313,25 +314,31 @@ public class PixooProtocol extends GBDeviceProtocol {
 
 
     @Override
-    public byte[] encodeSendWeather(WeatherSpec weatherSpec) {
+    public byte[] encodeSendWeather() {
+        final WeatherSpec weatherSpec = Weather.getWeatherSpec();
+        if (weatherSpec == null) {
+            LOG.warn("No weather found in singleton");
+            return null;
+        }
+
         byte pixooWeatherCode = 0;
-        if (weatherSpec.currentConditionCode >= 200 && weatherSpec.currentConditionCode <= 299) {
+        if (weatherSpec.getCurrentConditionCode() >= 200 && weatherSpec.getCurrentConditionCode() <= 299) {
             pixooWeatherCode = 5;
-        } else if (weatherSpec.currentConditionCode >= 300 && weatherSpec.currentConditionCode < 600) {
+        } else if (weatherSpec.getCurrentConditionCode() >= 300 && weatherSpec.getCurrentConditionCode() < 600) {
             pixooWeatherCode = 6;
-        } else if (weatherSpec.currentConditionCode >= 600 && weatherSpec.currentConditionCode < 700) {
+        } else if (weatherSpec.getCurrentConditionCode() >= 600 && weatherSpec.getCurrentConditionCode() < 700) {
             pixooWeatherCode = 8;
-        } else if (weatherSpec.currentConditionCode >= 700 && weatherSpec.currentConditionCode < 800) {
+        } else if (weatherSpec.getCurrentConditionCode() >= 700 && weatherSpec.getCurrentConditionCode() < 800) {
             pixooWeatherCode = 9;
-        } else if (weatherSpec.currentConditionCode == 800) {
+        } else if (weatherSpec.getCurrentConditionCode() == 800) {
             pixooWeatherCode = 1;
-        } else if (weatherSpec.currentConditionCode >= 801 && weatherSpec.currentConditionCode <= 804) {
+        } else if (weatherSpec.getCurrentConditionCode() >= 801 && weatherSpec.getCurrentConditionCode() <= 804) {
             pixooWeatherCode = 3;
         }
 
-        byte temp = (byte) (weatherSpec.currentTemp - 273);
-        String units = GBApplication.getPrefs().getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM, GBApplication.getContext().getString(R.string.p_unit_metric));
-        if (units.equals(GBApplication.getContext().getString(R.string.p_unit_imperial))) {
+        byte temp = (byte) (weatherSpec.getCurrentTemp() - 273);
+        final TemperatureUnit temperatureUnit = GBApplication.getPrefs().getTemperatureUnit();
+        if (temperatureUnit == TemperatureUnit.FAHRENHEIT) {
             temp = (byte) WeatherUtils.celsiusToFahrenheit(temp);
         }
 
@@ -464,7 +471,7 @@ public class PixooProtocol extends GBDeviceProtocol {
     }
 
     @Override
-    public byte[] encodeTestNewFunction() {
+    public byte[] encodeTestNewFunction(@Nullable Bundle options) {
         //return encodeAudioModeCommand(1); // works
         //return encodeEffectModeCommand(5); // does nothing
         //return encodeClockModeCommand(0, true, true, false, true, 127, 127, 127); // works r,g,b up to 127

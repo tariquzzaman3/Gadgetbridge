@@ -19,6 +19,7 @@ package nodomain.freeyourgadget.gadgetbridge.devices.huami.miband3;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 
@@ -55,7 +56,7 @@ public class MiBand3Coordinator extends HuamiCoordinator {
     }
 
     @Override
-    public InstallHandler findInstallHandler(final Uri uri, final Context context) {
+    public InstallHandler findInstallHandler(final Uri uri, final Bundle options, final Context context) {
         final MiBand3FWInstallHandler handler = new MiBand3FWInstallHandler(uri, context);
         return handler.isValid() ? handler : null;
     }
@@ -66,12 +67,12 @@ public class MiBand3Coordinator extends HuamiCoordinator {
     }
 
     @Override
-    public boolean supportsWeather() {
+    public boolean supportsWeather(final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsActivityTracks() {
+    public boolean supportsRecordedActivities(final GBDevice device) {
         return true;
     }
 
@@ -154,7 +155,7 @@ public class MiBand3Coordinator extends HuamiCoordinator {
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return MiBand3Support.class;
     }
 
@@ -169,7 +170,7 @@ public class MiBand3Coordinator extends HuamiCoordinator {
     }
 
     @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_miband2_disabled;
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.FITNESS_BAND;
     }
 }

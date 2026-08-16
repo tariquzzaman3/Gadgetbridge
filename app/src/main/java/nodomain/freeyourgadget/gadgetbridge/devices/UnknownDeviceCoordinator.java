@@ -18,23 +18,18 @@
 package nodomain.freeyourgadget.gadgetbridge.devices;
 
 import android.app.Activity;
-import android.content.Context;
-import android.net.Uri;
-
-import java.util.Collections;
-import java.util.List;
 
 import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
-import nodomain.freeyourgadget.gadgetbridge.GBException;
+import java.util.List;
+
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.ControlCenterv2;
 import nodomain.freeyourgadget.gadgetbridge.entities.AbstractActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
@@ -85,7 +80,7 @@ public class UnknownDeviceCoordinator extends AbstractDeviceCoordinator {
         }
 
         @Override
-        public void addGBActivitySamples(AbstractActivitySample[] activitySamples) {
+        public void addGBActivitySamples(@NonNull List<AbstractActivitySample> activitySamples) {
         }
 
         @Override
@@ -111,6 +106,12 @@ public class UnknownDeviceCoordinator extends AbstractDeviceCoordinator {
             return null;
         }
 
+        @Nullable
+        @Override
+        public AbstractActivitySample getFirstActivitySample(final int after) {
+            return null;
+        }
+
     }
 
     public UnknownDeviceCoordinator() {
@@ -118,12 +119,8 @@ public class UnknownDeviceCoordinator extends AbstractDeviceCoordinator {
     }
 
     @Override
-    public boolean supports(GBDeviceCandidate candidate) {
+    public boolean supports(@NonNull GBDeviceCandidate candidate) {
         return false;
-    }
-
-    @Override
-    protected void deleteDevice(@NonNull GBDevice gbDevice, @NonNull Device device, @NonNull DaoSession session) throws GBException {
     }
 
     @Override
@@ -133,12 +130,7 @@ public class UnknownDeviceCoordinator extends AbstractDeviceCoordinator {
 
     @Override
     public SampleProvider<?> getSampleProvider(GBDevice device, DaoSession session) {
-        return new UnknownSampleProvider();
-    }
-
-    @Override
-    public InstallHandler findInstallHandler(Uri uri, Context context) {
-        return null;
+        return sampleProvider;
     }
 
     @Override
@@ -146,14 +138,9 @@ public class UnknownDeviceCoordinator extends AbstractDeviceCoordinator {
         return "Generic";
     }
 
-    @Override
-    public Class<? extends Activity> getAppsManagementActivity() {
-        return null;
-    }
-
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return UnknownDeviceSupport.class;
     }
 
@@ -170,8 +157,7 @@ public class UnknownDeviceCoordinator extends AbstractDeviceCoordinator {
     }
 
     @Override
-    @DrawableRes
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_unknown_disabled;
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceCoordinator.DeviceKind.UNKNOWN;
     }
 }

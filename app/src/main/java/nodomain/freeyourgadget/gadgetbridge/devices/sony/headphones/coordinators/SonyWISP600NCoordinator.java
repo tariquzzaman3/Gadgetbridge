@@ -19,14 +19,15 @@ package nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.coordinator
 import androidx.annotation.NonNull;
 
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCapabilities;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class SonyWISP600NCoordinator extends SonyHeadphonesCoordinator {
     @Override
@@ -38,9 +39,10 @@ public class SonyWISP600NCoordinator extends SonyHeadphonesCoordinator {
         return R.string.devicetype_sony_wi_sp600n;
     }
 
+    @NonNull
     @Override
-    public List<SonyHeadphonesCapabilities> getCapabilities() {
-        return Arrays.asList(
+    public Set<SonyHeadphonesCapabilities> getDefaultCapabilities() {
+        return new HashSet<>(Arrays.asList(
                 SonyHeadphonesCapabilities.BatterySingle,
                 SonyHeadphonesCapabilities.AmbientSoundControl,
                 SonyHeadphonesCapabilities.WindNoiseReduction,
@@ -51,6 +53,11 @@ public class SonyWISP600NCoordinator extends SonyHeadphonesCoordinator {
                 SonyHeadphonesCapabilities.AutomaticPowerOffByTime,
                 SonyHeadphonesCapabilities.VoiceNotifications,
                 SonyHeadphonesCapabilities.Volume
-        );
+        ));
+    }
+
+    @Override
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.EARBUDS;
     }
 }

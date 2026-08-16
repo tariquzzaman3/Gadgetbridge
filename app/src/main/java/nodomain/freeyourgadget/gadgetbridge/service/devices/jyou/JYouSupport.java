@@ -23,8 +23,8 @@ import android.widget.Toast;
 import org.slf4j.Logger;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
 
@@ -35,13 +35,13 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.util.AlarmUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
 
-public class JYouSupport extends AbstractBTLEDeviceSupport {
+public class JYouSupport extends AbstractBTLESingleDeviceSupport {
 
     private Logger logger;
 
@@ -63,8 +63,7 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
         logger.info("Initializing");
 
-        gbDevice.setState(GBDevice.State.INITIALIZING);
-        gbDevice.sendDeviceUpdateIntent(getContext());
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         BluetoothGattCharacteristic measureCharacteristic = getCharacteristic(JYouConstants.UUID_CHARACTERISTIC_MEASURE);
         ctrlCharacteristic = getCharacteristic(JYouConstants.UUID_CHARACTERISTIC_CONTROL);
@@ -74,8 +73,7 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
 
         syncSettings(builder);
 
-        gbDevice.setState(GBDevice.State.INITIALIZED);
-        gbDevice.sendDeviceUpdateIntent(getContext());
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
 
         logger.info("Initialization Done");
 
@@ -84,8 +82,9 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        return super.onCharacteristicChanged(gatt, characteristic);
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] value) {
+        return super.onCharacteristicChanged(gatt, characteristic, value);
     }
 
     protected void syncDateAndTime(TransactionBuilder builder) {
@@ -142,7 +141,7 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
                 }
                 builder.write(ctrlCharacteristic, currentPacket);
             }
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             logger.warn(e.getMessage());
         }
@@ -206,7 +205,7 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
                         alarms.get(i).getEnabled() ? cal.get(Calendar.MINUTE) : -1
                 ));
             }
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
             GB.toast(getContext(), "Alarm settings applied - do note that the current device does not support day specification", Toast.LENGTH_LONG, GB.INFO);
         } catch(IOException e) {
             logger.warn(e.getMessage());
@@ -218,7 +217,7 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
         try {
             TransactionBuilder builder = performInitialized("SetTime");
             syncDateAndTime(builder);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch(IOException e) {
             logger.warn(e.getMessage());
         }
@@ -243,7 +242,7 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
             builder.write(ctrlCharacteristic, commandWithChecksum(
                     JYouConstants.CMD_ACTION_REBOOT_DEVICE, 0, 0
             ));
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch(Exception e) {
             logger.warn(e.getMessage());
         }
@@ -256,7 +255,7 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
             builder.write(ctrlCharacteristic, commandWithChecksum(
                     JYouConstants.CMD_ACTION_HEARTRATE_SWITCH, 0, 1
             ));
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch(Exception e) {
             logger.warn(e.getMessage());
         }
@@ -269,7 +268,7 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
             builder.write(ctrlCharacteristic, commandWithChecksum(
                     JYouConstants.CMD_SET_HEARTRATE_AUTO, 0, enable ? 1 : 0
             ));
-            builder.queue(getQueue());
+            builder.queue();
         } catch(Exception e) {
             logger.warn(e.getMessage());
         }
@@ -303,26 +302,22 @@ public class JYouSupport extends AbstractBTLEDeviceSupport {
     }
 
     private byte[] stringToUTF8Bytes(String src, int byteCount) {
-        try {
-            if (src == null)
-                return null;
+        if (src == null)
+            return null;
 
-            for (int i = src.length(); i > 0; i--) {
-                String sub = src.substring(0, i);
-                byte[] subUTF8 = sub.getBytes("UTF-8");
+        for (int i = src.length(); i > 0; i--) {
+            String sub = src.substring(0, i);
+            byte[] subUTF8 = sub.getBytes(StandardCharsets.UTF_8);
 
-                if (subUTF8.length == byteCount) {
-                    return subUTF8;
-                }
-
-                if (subUTF8.length < byteCount) {
-                    byte[] largerSubUTF8 = new byte[byteCount];
-                    System.arraycopy(subUTF8, 0, largerSubUTF8, 0, subUTF8.length);
-                    return largerSubUTF8;
-                }
+            if (subUTF8.length == byteCount) {
+                return subUTF8;
             }
-        } catch (UnsupportedEncodingException e) {
-            logger.warn(e.getMessage());
+
+            if (subUTF8.length < byteCount) {
+                byte[] largerSubUTF8 = new byte[byteCount];
+                System.arraycopy(subUTF8, 0, largerSubUTF8, 0, subUTF8.length);
+                return largerSubUTF8;
+            }
         }
         return null;
     }

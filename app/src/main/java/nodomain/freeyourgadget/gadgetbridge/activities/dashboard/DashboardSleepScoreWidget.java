@@ -38,7 +38,7 @@ import nodomain.freeyourgadget.gadgetbridge.model.SleepScoreSample;
  * create an instance of this fragment.
  */
 public class DashboardSleepScoreWidget extends AbstractGaugeWidget {
-    protected static final Logger LOG = LoggerFactory.getLogger(AbstractDashboardVO2MaxWidget.class);
+    protected static final Logger LOG = LoggerFactory.getLogger(DashboardSleepScoreWidget.class);
     public DashboardSleepScoreWidget() {
         super(R.string.sleep_score, "sleep");
     }
@@ -64,7 +64,7 @@ public class DashboardSleepScoreWidget extends AbstractGaugeWidget {
         final SleepScoreData data = new SleepScoreData();
 
         SleepScoreSample sample = null;
-        try (DBHandler dbHandler = GBApplication.acquireDB()) {
+        try (DBHandler dbHandler = GBApplication.acquireDbReadOnly()) {
             for (GBDevice dev : devices) {
                 TimeSampleProvider<? extends SleepScoreSample> provider = dev.getDeviceCoordinator().getSleepScoreProvider(dev, dbHandler.getDaoSession());
                 final SleepScoreSample latestSample = provider.getLatestSample(dashboardData.timeTo * 1000L);
@@ -96,7 +96,7 @@ public class DashboardSleepScoreWidget extends AbstractGaugeWidget {
 
     @Override
     protected boolean isSupportedBy(final GBDevice device) {
-        return device.getDeviceCoordinator().supportsSleepScore();
+        return device.getDeviceCoordinator().supportsSleepScore(device);
     }
 
     private static class SleepScoreData implements Serializable {

@@ -21,6 +21,7 @@ package nodomain.freeyourgadget.gadgetbridge.devices.pebble;
 import android.app.Activity;
 import android.content.Context;
 import android.net.Uri;
+import android.os.Bundle;
 
 import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
@@ -28,32 +29,34 @@ import androidx.annotation.StringRes;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
-import de.greenrobot.dao.query.QueryBuilder;
+import de.greenrobot.dao.AbstractDao;
+import de.greenrobot.dao.Property;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
-import nodomain.freeyourgadget.gadgetbridge.GBException;
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.activities.ExternalPebbleJSActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.appmanager.AppManagerActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.appmanager.RebbleAppStoreActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettings;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettingsCustomizer;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettingsScreen;
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLClassicDeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.devices.SampleProvider;
-import nodomain.freeyourgadget.gadgetbridge.devices.garmin.GarminSettingsCustomizer;
 import nodomain.freeyourgadget.gadgetbridge.entities.AbstractActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.PebbleHealthActivityOverlayDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.PebbleHealthActivitySampleDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.PebbleMisfitSampleDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.PebbleMorpheuzSampleDao;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.pebble.PebbleSupport;
+import nodomain.freeyourgadget.gadgetbridge.devices.pebble.PebbleHardware;
 import nodomain.freeyourgadget.gadgetbridge.util.PebbleUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.preferences.DevicePrefs;
 
@@ -75,50 +78,44 @@ public class PebbleCoordinator extends AbstractBLClassicDeviceCoordinator {
     }
 
     @Override
-    protected void deleteDevice(@NonNull GBDevice gbDevice, @NonNull Device device, @NonNull DaoSession session) throws GBException {
-        Long deviceId = device.getId();
-        QueryBuilder<?> qb = session.getPebbleHealthActivitySampleDao().queryBuilder();
-        qb.where(PebbleHealthActivitySampleDao.Properties.DeviceId.eq(deviceId)).buildDelete().executeDeleteWithoutDetachingEntities();
-        qb = session.getPebbleHealthActivityOverlayDao().queryBuilder();
-        qb.where(PebbleHealthActivityOverlayDao.Properties.DeviceId.eq(deviceId)).buildDelete().executeDeleteWithoutDetachingEntities();
-        qb = session.getPebbleMisfitSampleDao().queryBuilder();
-        qb.where(PebbleMisfitSampleDao.Properties.DeviceId.eq(deviceId)).buildDelete().executeDeleteWithoutDetachingEntities();
-        qb = session.getPebbleMorpheuzSampleDao().queryBuilder();
-        qb.where(PebbleMorpheuzSampleDao.Properties.DeviceId.eq(deviceId)).buildDelete().executeDeleteWithoutDetachingEntities();
+    public Map<AbstractDao<?, ?>, Property> getAllDeviceDao(@NonNull final DaoSession session) {
+        Map<AbstractDao<?, ?>, Property> map = new HashMap<>(4);
+        map.put(session.getPebbleHealthActivitySampleDao(), PebbleHealthActivitySampleDao.Properties.DeviceId);
+        map.put(session.getPebbleHealthActivityOverlayDao(), PebbleHealthActivityOverlayDao.Properties.DeviceId);
+        map.put(session.getPebbleMisfitSampleDao(), PebbleMisfitSampleDao.Properties.DeviceId);
+        map.put(session.getPebbleMorpheuzSampleDao(), PebbleMorpheuzSampleDao.Properties.DeviceId);
+        return map;
     }
 
     @Override
     public SampleProvider<? extends AbstractActivitySample> getSampleProvider(GBDevice device, DaoSession session) {
         DevicePrefs prefs = GBApplication.getDevicePrefs(device);
         int activityTracker = prefs.getInt("pebble_activitytracker", SampleProvider.PROVIDER_PEBBLE_HEALTH);
-        switch (activityTracker) {
-            case SampleProvider.PROVIDER_PEBBLE_HEALTH:
-                return new PebbleHealthSampleProvider(device, session);
-            case SampleProvider.PROVIDER_PEBBLE_MISFIT:
-                return new PebbleMisfitSampleProvider(device, session);
-            case SampleProvider.PROVIDER_PEBBLE_MORPHEUZ:
-                return new PebbleMorpheuzSampleProvider(device, session);
-            default:
-                return new PebbleHealthSampleProvider(device, session);
-        }
+        return switch (activityTracker) {
+            case SampleProvider.PROVIDER_PEBBLE_MISFIT -> new PebbleMisfitSampleProvider(device, session);
+            case SampleProvider.PROVIDER_PEBBLE_MORPHEUZ -> new PebbleMorpheuzSampleProvider(device, session);
+            default -> new PebbleHealthSampleProvider(device, session);
+        };
     }
 
     @Override
-    public InstallHandler findInstallHandler(Uri uri, Context context) {
+    public InstallHandler findInstallHandler(Uri uri, Bundle options, Context context) {
         PBWInstallHandler installHandler = new PBWInstallHandler(uri, context);
         return installHandler.isValid() ? installHandler : null;
     }
 
     @Override
-    public boolean supportsFlashing() { return true; }
-
-    @Override
-    public boolean supportsActivityDataFetching() {
-        return false;
+    public boolean supportsFlashing(@NonNull GBDevice device) {
+        return true;
     }
 
     @Override
-    public boolean supportsActivityTracking() {
+    public boolean supportsActivityTracking(@NonNull GBDevice device) {
+        return true;
+    }
+
+    @Override
+    public boolean supportsDataFetching(@NonNull GBDevice device) {
         return true;
     }
 
@@ -128,18 +125,13 @@ public class PebbleCoordinator extends AbstractBLClassicDeviceCoordinator {
     }
 
     @Override
-    public int getAlarmSlotCount(GBDevice device) {
-        return 0;
-    }
-
-    @Override
     public int getCannedRepliesSlotCount(final GBDevice device) {
         return 16;
     }
 
     @Override
     public boolean supportsHeartRateMeasurement(GBDevice device) {
-        return PebbleUtils.hasHRM(device.getModel());
+        return PebbleHardware.hasHRM(device.getModel());
     }
 
     @Override
@@ -153,8 +145,18 @@ public class PebbleCoordinator extends AbstractBLClassicDeviceCoordinator {
     }
 
     @Override
-    public Class<? extends Activity> getAppsManagementActivity() {
+    public Class<? extends Activity> getAppsManagementActivity(final GBDevice device) {
         return AppManagerActivity.class;
+    }
+
+    @Override
+    public Class<? extends Activity> getAppStoreActivity(final GBDevice device) {
+        return RebbleAppStoreActivity.class;
+    }
+
+    @Override
+    public Class<? extends Activity> getAppConfigurationActivity(final GBDevice device) {
+        return ExternalPebbleJSActivity.class;
     }
 
     @Override
@@ -173,65 +175,51 @@ public class PebbleCoordinator extends AbstractBLClassicDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsAppListFetching() {
-        List<GBDevice> devices = GBApplication.app().getDeviceManager().getSelectedDevices();
-        for(GBDevice device : devices){
-            if(device.getType() == DeviceType.PEBBLE){
-                if (device.getFirmwareVersion() != null) {
-                    return PebbleUtils.getFwMajor(device.getFirmwareVersion()) < 3;
-                }
-            }
-        }
-
+    public boolean supportsAppListFetching(final GBDevice device) {
         return false;
     }
 
     @Override
-    public boolean supportsAppReordering() {
-        List<GBDevice> devices = GBApplication.app().getDeviceManager().getSelectedDevices();
-        for(GBDevice device : devices){
-            if(device.getType() == DeviceType.PEBBLE){
-                if (device.getFirmwareVersion() != null) {
-                    return PebbleUtils.getFwMajor(device.getFirmwareVersion()) >= 3;
-                }
-            }
-        }
-        return false;
-    }
-
-    @Override
-    public boolean supportsCalendarEvents() {
+    public boolean supportsAppReordering(final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsRealtimeData() {
-        return false;
-    }
-
-    @Override
-    public boolean supportsWeather() {
+    public boolean supportsCalendarEvents(final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsFindDevice() {
+    public boolean supportsWeather(final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsMusicInfo() {
+    public boolean supportsFindDevice(@NonNull GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsUnicodeEmojis() {
+    public boolean supportsMusicInfo(@NonNull GBDevice device) {
+        return true;
+    }
+
+    @Override
+    public boolean supportsUnicodeEmojis(@NonNull GBDevice device) {
+        return true;
+    }
+
+    @Override
+    public boolean supportsDebugLogs(@NonNull GBDevice device) {
         return true;
     }
 
     @Override
     public DeviceSpecificSettings getDeviceSpecificSettings(final GBDevice device) {
         final DeviceSpecificSettings deviceSpecificSettings = new DeviceSpecificSettings();
+
+        final List<Integer> generic = deviceSpecificSettings.addRootScreen(DeviceSpecificSettingsScreen.GENERIC);
+        generic.add(R.xml.devicesettings_pebble_generic);
 
         final List<Integer> notifications = deviceSpecificSettings.addRootScreen(DeviceSpecificSettingsScreen.CALLS_AND_NOTIFICATIONS);
         notifications.add(R.xml.devicesettings_autoremove_notifications);
@@ -260,10 +248,9 @@ public class PebbleCoordinator extends AbstractBLClassicDeviceCoordinator {
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return PebbleSupport.class;
     }
-
 
     @Override
     @StringRes
@@ -278,15 +265,13 @@ public class PebbleCoordinator extends AbstractBLClassicDeviceCoordinator {
         return R.drawable.ic_device_pebble;
     }
 
-    @Override
-    @DrawableRes
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_pebble_disabled;
-    }
-
     public boolean isBackgroundJsEnabled(final GBDevice device) {
         DevicePrefs deviceSpecificPreferences = GBApplication.getDevicePrefs(device);
         return deviceSpecificPreferences.getBoolean(BG_JS_ENABLED, BG_JS_ENABLED_DEFAULT);
     }
 
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.WATCH;
+    }
 }

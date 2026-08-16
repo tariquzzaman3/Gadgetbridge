@@ -21,10 +21,14 @@ package nodomain.freeyourgadget.gadgetbridge.devices.hplus;
 * @author Quallenauge &lt;Hamsi2k@freenet.de&gt;
 */
 
+import androidx.annotation.NonNull;
 
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.hplus.EXRIZUK8Support;
 
 /**
  * Pseudo Coordinator for the EXRIZU K8, a sub type of the HPLUS devices
@@ -43,5 +47,16 @@ public class EXRIZUK8Coordinator extends HPlusCoordinator {
     @Override
     public int getDeviceNameResource() {
         return R.string.devicetype_exrizu_k8;
+    }
+
+    @NonNull
+    @Override
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
+        return EXRIZUK8Support.class;
+    }
+
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.FITNESS_BAND;
     }
 }

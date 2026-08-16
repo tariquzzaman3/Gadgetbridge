@@ -49,27 +49,33 @@ import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiPacket;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.App;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.Calls;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.CameraRemote;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.DataSync;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.DeviceConfig;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.Ephemeris;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.EphemerisFileUpload;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.Earphones;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.FileDownloadService2C;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.FindPhone;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.GpsAndTime;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.Menstrual;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.MusicControl;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.FileUpload;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.Notifications;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.OTA;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.P2P;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.Watchface;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.Weather;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryState;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetBatteryLevelRequest;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.Request;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetPhoneInfoRequest;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.Request;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendFileUploadComplete;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendGpsStatusRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendMenstrualModifyTimeRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendFileUploadAck;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendFileUploadChunk;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendFileUploadHash;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendPermissionCheckResponse;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendWatchfaceConfirm;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SendWatchfaceOperation;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.SetMusicStatusRequest;
@@ -100,9 +106,18 @@ public class AsynchronousResponse {
     }
 
     public void handleResponse(HuaweiPacket response) {
-        // Ignore messages if the key isn't set yet
-        if (support.getParamsProvider().getSecretKey() == null)
+        // Ignore messages if the key isn't set yet.
+        //
+        // Note: during STS reconnect the watch fires an async PermissionCheck (service 1 / cmd 0x38,
+        // permission=0x0002) before it sends the STS AUTH_START_RESPONSE. It is purely informational
+        // and must NOT be answered here: the official Honor app only replies to permission==1 (SMS)
+        // and simply ignores every other permission, yet still reconnects. Answering permission=2
+        // with our {permission,status} format makes the watch reject it (error 0x186A4) and it then
+        // loops on the error instead of ever sending the STS response. So we drop async messages
+        // during auth exactly as before; the STS response arrives on its own within the timeout.
+        if (support.getParamsProvider().getSecretKey() == null) {
             return;
+        }
 
         try {
             response.parseTlv();
@@ -127,9 +142,30 @@ public class AsynchronousResponse {
             handleEphemeris(response);
             handleEphemerisUploadService(response);
             handleAsyncBattery(response);
+            handleNotifications(response);
+            handlePermissionCheck(response);
+            handleDataSyncCommands(response);
+            handleOTA(response);
+            handleFileDownload(response);
+            handleExtraMediaVolume(response);
+
         } catch (Request.ResponseParseException e) {
             LOG.error("Response parse exception", e);
         }
+    }
+
+    private void handleExtraMediaVolume(HuaweiPacket response) throws Request.ResponseParseException {
+        if (response.serviceId != Earphones.id || response.commandId != Earphones.GetExtraMediaVolume.id) {
+            return;
+        }
+        if (!(response instanceof Earphones.GetExtraMediaVolume.Response)) {
+            throw new Request.ResponseTypeMismatchException(response, Earphones.GetExtraMediaVolume.Response.class);
+        }
+
+        boolean enabled = ((Earphones.GetExtraMediaVolume.Response) response).enabled;
+        GBApplication.getDeviceSpecificSharedPrefs(support.getDeviceMac()).edit()
+                .putBoolean(DeviceSettingsPreferenceConst.PREF_HUAWEI_FREEBUDS_EXTRA_MEDIA_VOLUME, enabled)
+                .apply();
     }
 
     private void handleFindPhone(HuaweiPacket response) throws Request.ResponseParseException {
@@ -250,7 +286,7 @@ public class AsynchronousResponse {
 
                 MusicControl.MusicStatusResponse resp = (MusicControl.MusicStatusResponse) response;
                 if (resp.status != -1 && resp.status != 0x000186A0) {
-                    LOG.warn("Music information error, will stop here: " + Integer.toHexString(resp.status));
+                    LOG.warn("Music information error, will stop here: {}", Integer.toHexString(resp.status));
                     return;
                 }
 
@@ -308,26 +344,22 @@ public class AsynchronousResponse {
                 if (resp.volumePresent) {
                     byte volume = resp.volume;
                     if (volume > audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)) {
-                        LOG.warn("Music - Received volume is too high: 0x"
-                                + Integer.toHexString(volume)
-                                + " > 0x"
-                                + Integer.toHexString(audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
-                        );
+                        LOG.warn("Music - Received volume is too high: 0x{} > 0x{}",
+                                Integer.toHexString(volume),
+                                Integer.toHexString(audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)));
                         // TODO: probably best to send back an error code, though I wouldn't know which
                         return;
                     }
-                    if (Build.VERSION.SDK_INT > 28) {
+                    if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
                         if (volume < audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC)) {
-                            LOG.warn("Music - Received volume is too low: 0x"
-                                    + Integer.toHexString(volume)
-                                    + " < 0x"
-                                    + audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC)
-                            );
+                            LOG.warn("Music - Received volume is too low: 0x{} < 0x{}",
+                                    Integer.toHexString(volume),
+                                    audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC));
                             // TODO: probably best to send back an error code, though I wouldn't know which
                             return;
                         }
                     }
-                    LOG.debug("Music - Setting volume to: 0x" + Integer.toHexString(volume));
+                    LOG.debug("Music - Setting volume to: 0x{}", Integer.toHexString(volume));
                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0);
                 }
 
@@ -383,7 +415,7 @@ public class AsynchronousResponse {
                     callControlEvent.event = GBDeviceEventCallControl.Event.REJECT;
                     LOG.info("Rejected call");
 
-                    if (!prefs.getBoolean("enable_call_reject", true)) {
+                    if (!prefs.getBoolean(DeviceSettingsPreferenceConst.PREF_ENABLE_CALL_REJECT, true)) {
                         LOG.info("Disabled rejecting calls, ignoring");
                         return;
                     }
@@ -409,7 +441,7 @@ public class AsynchronousResponse {
             try {
                 getPhoneInfoReq.doPerform();
             } catch (IOException e) {
-                e.printStackTrace();
+                LOG.error("Error send GetPhoneInfoRequest", e);
             }
         }
     }
@@ -425,7 +457,7 @@ public class AsynchronousResponse {
             try {
                 sendMenstrualModifyTimeReq.doPerform();
             } catch (IOException e) {
-                e.printStackTrace();
+                LOG.error("Error send SendMenstrualModifyTimeRequest", e);
             }
 
         }
@@ -510,15 +542,32 @@ public class AsynchronousResponse {
                 } else {
                     try {
                         byte fileId = support.huaweiUploadManager.getFileUploadInfo().getFileId();
+                        SendFileUploadComplete sendFileUploadComplete = new SendFileUploadComplete(this.support, fileId);
+                        sendFileUploadComplete.doPerform();
                         if (support.huaweiUploadManager.getFileUploadInfo().getFileUploadCallback() != null) {
                             support.huaweiUploadManager.getFileUploadInfo().getFileUploadCallback().onUploadComplete();
                         }
                         //Cleanup
                         support.huaweiUploadManager.setFileUploadInfo(null);
-                        SendFileUploadComplete sendFileUploadComplete = new SendFileUploadComplete(this.support, fileId);
-                        sendFileUploadComplete.doPerform();
                     } catch (IOException e) {
                         LOG.error("Could not send file upload result request", e);
+                    }
+                }
+            } else if(response.commandId == FileUpload.FileUploadDeviceResponse.id) {
+                // TODO: I don't currently know how to recover from this state. The proper solution is restart the watch or wait while timeout is expired in the watch
+                // Usually happened on the programmer error on the previous state.
+                // The value of timeout is unknown
+                LOG.error("File upload error. Possible error in the previous state. Try to restart your watch.");
+                if (support.huaweiUploadManager.getFileUploadInfo() == null) {
+                    LOG.error("No current upload");
+                } else {
+                    FileUpload.FileUploadDeviceResponse.Response resp = (FileUpload.FileUploadDeviceResponse.Response) response;
+                    if(support.huaweiUploadManager.getFileUploadInfo().getFileId() == resp.fileId) {
+                        if (support.huaweiUploadManager.getFileUploadInfo().getFileUploadCallback() != null) {
+                            support.huaweiUploadManager.getFileUploadInfo().getFileUploadCallback().onError(resp.code);
+                        }
+                        //Cleanup
+                        support.huaweiUploadManager.setFileUploadInfo(null);
                     }
                 }
             }
@@ -549,16 +598,11 @@ public class AsynchronousResponse {
 
     private void handleApp(HuaweiPacket response) throws Request.ResponseParseException {
         if (response.serviceId == App.id) {
-            if (response.commandId == 0x2) {
-                try {
-                    byte status = response.getTlv().getByte(0x1);
-                    if (status == (byte) 0x66 || status == (byte) 0x69) {
-                        this.support.getHuaweiAppManager().requestAppList();
-                    }
-                } catch (HuaweiPacket.MissingTagException e) {
-                    LOG.error("Could not send watchface confirm request", e);
-                }
-
+            if (response.commandId == App.AppInstallStatus.id) {
+                if (!(response instanceof App.AppInstallStatus.Response))
+                    throw new Request.ResponseTypeMismatchException(response, App.AppInstallStatus.Response.class);
+                App.AppInstallStatus.Response resp = (App.AppInstallStatus.Response) response;
+                this.support.getHuaweiAppManager().handleInstallStatus(resp.status, resp.packageName);
             }
         }
     }
@@ -576,7 +620,7 @@ public class AsynchronousResponse {
     }
 
     private void handleWeatherCheck(HuaweiPacket response) {
-        if (response.serviceId == Weather.id && response.commandId == 0x04) {
+        if (response.serviceId == Weather.id && response.commandId == Weather.WeatherDeviceRequest.id) {
             support.huaweiWeatherManager.handleAsyncMessage(response);
         }
     }
@@ -695,7 +739,7 @@ public class AsynchronousResponse {
 
             if (resp.multi_level == null) {
                 byte batteryLevel = resp.level;
-                this.support.getDevice().setBatteryLevel(batteryLevel);
+                this.support.getDevice().setBatteryLevel(batteryLevel, 0);
 
                 GBDeviceEventBatteryInfo batteryInfo = new GBDeviceEventBatteryInfo();
                 batteryInfo.state = BatteryState.BATTERY_NORMAL;
@@ -723,6 +767,115 @@ public class AsynchronousResponse {
                     LOG.error("Failed to start the battery polling");
                 }
             }
+        }
+    }
+
+    private void handleNotifications(HuaweiPacket response) {
+        if (response.serviceId == Notifications.id && response.commandId == Notifications.NotificationReply.id) {
+            if (!(response instanceof Notifications.NotificationReply.ReplyResponse)) {
+                return;
+            }
+            LOG.info("Notification response");
+            support.getHuaweiNotificationsManager().onReplyResponse((Notifications.NotificationReply.ReplyResponse) response);
+        }
+    }
+
+    private void handlePermissionCheck(HuaweiPacket response) {
+        if (response.serviceId == DeviceConfig.id && response.commandId == DeviceConfig.PermissionCheck.id) {
+            if (!(response instanceof DeviceConfig.PermissionCheck.PermissionCheckRequest)) {
+                return;
+            }
+            DeviceConfig.PermissionCheck.PermissionCheckRequest permissionCheckResp = (DeviceConfig.PermissionCheck.PermissionCheckRequest) response;
+
+//            short status = 1;
+//            // TODO: we should check ability to perform specific action. I do not know which action can be here,
+//            //    1 is SMS permission
+//            if(permissionCheckResp.permission == 1) {
+//                status = 0;
+//            }
+            // TODO: return no permission for now. Return status 1 for activate call reject replies. Something should be set on notification to enable processing.
+            //    Currently watch does not send call reject to the GB. Additional research required.
+            short status = 0;
+            SendPermissionCheckResponse getPhoneInfoReq = new SendPermissionCheckResponse(this.support, permissionCheckResp.permission, status);
+            try {
+                getPhoneInfoReq.doPerform();
+            } catch (IOException e) {
+                LOG.error("Failed to send permission check ACK", e);
+            }
+        }
+    }
+
+    private void handleDataSyncCommands(HuaweiPacket response) throws Request.ResponseTypeMismatchException {
+        if (response.serviceId == DataSync.id) {
+            if (response.commandId == DataSync.ConfigCommand.id) {
+                if (!(response instanceof DataSync.ConfigCommand.Response)) {
+                    throw new Request.ResponseTypeMismatchException(response, DataSync.ConfigCommand.class);
+                }
+                DataSync.ConfigCommand.Response resp = (DataSync.ConfigCommand.Response) response;
+                support.getHuaweiDataSyncManager().handleConfigCommandResponse(resp.srcPackage, resp.dstPackage, resp.data);
+            } else if (response.commandId == DataSync.EventCommand.id) {
+                if (!(response instanceof DataSync.EventCommand.Response)) {
+                    throw new Request.ResponseTypeMismatchException(response, DataSync.EventCommand.class);
+                }
+                DataSync.EventCommand.Response resp = (DataSync.EventCommand.Response) response;
+                support.getHuaweiDataSyncManager().handleEventCommandResponse(resp.srcPackage, resp.dstPackage, resp.data);
+            } else if (response.commandId == DataSync.DataCommand.id) {
+                if (!(response instanceof DataSync.DataCommand.Response)) {
+                    throw new Request.ResponseTypeMismatchException(response, DataSync.EventCommand.class);
+                }
+                DataSync.DataCommand.Response resp = (DataSync.DataCommand.Response) response;
+                support.getHuaweiDataSyncManager().handleDataCommandResponse(resp.srcPackage, resp.dstPackage, resp.data);
+            } else if (response.commandId == DataSync.DictDataCommand.id) {
+                if (!(response instanceof DataSync.DictDataCommand.Response)) {
+                    throw new Request.ResponseTypeMismatchException(response, DataSync.EventCommand.class);
+                }
+                DataSync.DictDataCommand.Response resp = (DataSync.DictDataCommand.Response) response;
+                support.getHuaweiDataSyncManager().handleDictDataCommandResponse(resp.srcPackage, resp.dstPackage, resp.data);
+            }
+        }
+    }
+
+    private void handleOTA(HuaweiPacket response) throws Request.ResponseTypeMismatchException {
+        if (response.serviceId != OTA.id)
+            return;
+        if (response.commandId == OTA.DeviceRequest.id) {
+            if (!(response instanceof OTA.DeviceRequest.Response)) {
+                throw new Request.ResponseTypeMismatchException(response, OTA.DeviceRequest.class);
+            }
+            OTA.DeviceRequest.Response resp = (OTA.DeviceRequest.Response) response;
+            support.getHuaweiOTAManager().handleDeviceRequest(resp.status, resp.type);
+        } else  if (response.commandId == OTA.DataChunkRequest.id) {
+            if (!(response instanceof OTA.DataChunkRequest.Response)) {
+                throw new Request.ResponseTypeMismatchException(response, OTA.DataChunkRequest.class);
+            }
+            support.getHuaweiOTAManager().handleDataChunkRequest((OTA.DataChunkRequest.Response) response);
+        } else  if (response.commandId == OTA.SizeReport.id) {
+            if (!(response instanceof OTA.SizeReport.Response)) {
+                throw new Request.ResponseTypeMismatchException(response, OTA.SizeReport.class);
+            }
+            support.getHuaweiOTAManager().handleSizeReport(((OTA.SizeReport.Response) response).size, ((OTA.SizeReport.Response) response).current);
+        } else  if (response.commandId == OTA.UpdateResult.id) {
+            if (!(response instanceof OTA.UpdateResult.Response)) {
+                throw new Request.ResponseTypeMismatchException(response, OTA.UpdateResult.class);
+            }
+            support.getHuaweiOTAManager().handleUploadResult(((OTA.UpdateResult.Response) response).resultCode);
+        } else  if (response.commandId == OTA.DeviceError.id) {
+            if (!(response instanceof OTA.DeviceError.Response)) {
+                throw new Request.ResponseTypeMismatchException(response, OTA.DeviceError.class);
+            }
+            support.getHuaweiOTAManager().handleDeviceError(((OTA.DeviceError.Response) response).errorCode);
+        }
+    }
+
+    void handleFileDownload(HuaweiPacket response) throws Request.ResponseTypeMismatchException {
+        if (response.serviceId != FileDownloadService2C.id)
+            return;
+        if (response.commandId == FileDownloadService2C.IncomingInitRequest.id) {
+            if (!(response instanceof FileDownloadService2C.IncomingInitRequest.Response)) {
+                throw new Request.ResponseTypeMismatchException(response, FileDownloadService2C.IncomingInitRequest.class);
+            }
+            FileDownloadService2C.IncomingInitRequest.Response resp = (FileDownloadService2C.IncomingInitRequest.Response) response;
+            support.deviceFileDownloadRequest(resp.filename, resp.fileType, resp.fileId, resp.fileSize, resp.srcPackage, resp.dstPackage, resp.srcFingerprint, resp.dstFingerprint);
         }
     }
 }

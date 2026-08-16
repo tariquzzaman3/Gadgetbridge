@@ -1,5 +1,7 @@
 package nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.communicator.v1;
 
+import static nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport.calcMaxWriteChunk;
+
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 
@@ -42,7 +44,7 @@ public class CommunicatorV1 implements ICommunicator {
 
     @Override
     public void onMtuChanged(final int mtu) {
-        maxWriteSize = mtu - 3;
+        maxWriteSize = calcMaxWriteChunk(mtu);
     }
 
     @Override
@@ -68,13 +70,23 @@ public class CommunicatorV1 implements ICommunicator {
     }
 
     @Override
+    public void dispose() {
+
+    }
+
+    @Override
+    public void onConnectionStateChange(final BluetoothGatt gatt, final int status, final int newState) {
+
+    }
+
+    @Override
     public void sendMessage(final String taskName, final byte[] message) {
         if (null == message)
             return;
 
-        final byte[] payload = cobsCoDec.encode(message);
+        final byte[] payload = CobsCoDec.encode(message);
 
-        final TransactionBuilder builder = new TransactionBuilder(taskName);
+        final TransactionBuilder builder = mSupport.createTransactionBuilder(taskName);
         int remainingBytes = payload.length;
         if (remainingBytes > maxWriteSize - 1) {
             int position = 0;
@@ -87,13 +99,13 @@ public class CommunicatorV1 implements ICommunicator {
         } else {
             builder.write(characteristicSend, payload);
         }
-        builder.queue(this.mSupport.getQueue());
+        builder.queue();
     }
 
     @Override
-    public boolean onCharacteristicChanged(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic, final byte[] value) {
         if (characteristic.getUuid().equals(characteristicReceive.getUuid())) {
-            this.cobsCoDec.receivedBytes(characteristic.getValue());
+            this.cobsCoDec.receivedBytes(value);
             this.mSupport.onMessage(this.cobsCoDec.retrieveMessage());
 
             return true;
@@ -115,5 +127,20 @@ public class CommunicatorV1 implements ICommunicator {
     @Override
     public void onEnableRealtimeSteps(final boolean enable) {
         LOG.error("onEnableRealtimeSteps is not implemented for V1");
+    }
+
+    @Override
+    public void onEnableRealtimeAccelerometer(final boolean enable) {
+        LOG.error("onEnableRealtimeAccelerometer is not implemented for V1");
+    }
+
+    @Override
+    public void onEnableRealtimeSpo2(final boolean enable) {
+        LOG.error("onEnableRealtimeSpo2 is not implemented for V1");
+    }
+
+    @Override
+    public void onEnableRealtimeRrIntervals(final boolean enable) {
+        LOG.error("onEnableRealtimeRrIntervals is not implemented for V1");
     }
 }

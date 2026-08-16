@@ -20,13 +20,11 @@ import androidx.annotation.NonNull;
 
 import java.util.regex.Pattern;
 
-import nodomain.freeyourgadget.gadgetbridge.GBException;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettings;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettingsScreen;
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLClassicDeviceCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.moondrop.MoondropSpaceTravelDeviceSupport;
@@ -48,14 +46,14 @@ public class MoondropSpaceTravelCoordinator extends AbstractBLClassicDeviceCoord
     }
 
     @Override
-    public int getBatteryCount() {
-        return 0;
+    public int getDefaultIconResource() {
+        return R.drawable.ic_device_nothingear;
     }
 
     @Override
-    protected void deleteDevice(
-            @NonNull GBDevice gbDevice, @NonNull Device device, @NonNull DaoSession session)
-            throws GBException {}
+    public boolean supportsOSBatteryLevel(@NonNull GBDevice device) {
+        return true;
+    }
 
     @Override
     public DeviceSpecificSettings getDeviceSpecificSettings(final GBDevice device) {
@@ -76,7 +74,12 @@ public class MoondropSpaceTravelCoordinator extends AbstractBLClassicDeviceCoord
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return MoondropSpaceTravelDeviceSupport.class;
+    }
+
+    @Override
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.EARBUDS;
     }
 }

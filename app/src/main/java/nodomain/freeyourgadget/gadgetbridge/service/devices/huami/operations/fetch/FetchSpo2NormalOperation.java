@@ -18,6 +18,8 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.huami.operations.fe
 
 import android.widget.Toast;
 
+import androidx.annotation.StringRes;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,14 +33,15 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
+import nodomain.freeyourgadget.gadgetbridge.devices.HuamiSpo2SampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiSpo2SampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuamiSpo2Sample;
 import nodomain.freeyourgadget.gadgetbridge.entities.User;
 import nodomain.freeyourgadget.gadgetbridge.model.Spo2Sample;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.SleepAsAndroidSender;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiFetcher;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 /**
@@ -47,13 +50,14 @@ import nodomain.freeyourgadget.gadgetbridge.util.GB;
 public class FetchSpo2NormalOperation extends AbstractRepeatingFetchOperation {
     private static final Logger LOG = LoggerFactory.getLogger(FetchSpo2NormalOperation.class);
 
-    public FetchSpo2NormalOperation(final HuamiSupport support) {
-        super(support, HuamiFetchDataType.SPO2_NORMAL);
+    public FetchSpo2NormalOperation(final HuamiFetcher fetcher) {
+        super(fetcher, HuamiFetchDataType.SPO2_NORMAL);
     }
 
+    @StringRes
     @Override
-    protected String taskDescription() {
-        return getContext().getString(R.string.busy_task_fetch_spo2_data);
+    public int taskDescription() {
+        return R.string.busy_task_fetch_spo2_data;
     }
 
     @Override
@@ -93,7 +97,23 @@ public class FetchSpo2NormalOperation extends AbstractRepeatingFetchOperation {
             samples.add(sample);
         }
 
+        forwardToSleepAsAndroid(samples);
+
         return persistSamples(samples);
+    }
+
+    private void forwardToSleepAsAndroid(final List<HuamiSpo2Sample> samples) {
+        final SleepAsAndroidSender sleepAsAndroidSender = fetcher.getSleepAsAndroidSender();
+        if (sleepAsAndroidSender == null) {
+            LOG.debug("Not forwarding {} spo2 samples to sleep as android, no sender for this device", samples.size());
+            return;
+        }
+
+        LOG.debug("Forwarding {} spo2 samples to sleep as android", samples.size());
+
+        for (final HuamiSpo2Sample sample : samples) {
+            sleepAsAndroidSender.sendExtra(null, null, (float) sample.getSpo2(), null, sample.getTimestamp());
+        }
     }
 
     protected boolean persistSamples(final List<HuamiSpo2Sample> samples) {

@@ -24,7 +24,7 @@
             android:inputType="number"
             android:key="chart_max_heart_rate"
             android:maxLength="3"
-            android:title="@string/activity_prefs_chart_max_heart_rate"
+            android:title="@string/maxHR"
             app:iconSpaceReserved="false"
             app:useSimpleSummaryProvider="true" />
 
@@ -33,7 +33,7 @@
             android:inputType="number"
             android:key="chart_min_heart_rate"
             android:maxLength="3"
-            android:title="@string/activity_prefs_chart_min_heart_rate"
+            android:title="@string/minHR"
             app:iconSpaceReserved="false"
             app:useSimpleSummaryProvider="true" />
 
@@ -53,12 +53,12 @@
             android:title="@string/pref_title_charts_swipe"
             app:iconSpaceReserved="false" />
 
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="chart_sleep_range_24h"
-            android:layout="@layout/preference_checkbox"
-            android:summaryOff="@string/pref_chart_sleep_rolling_24_off"
-            android:summaryOn="@string/pref_chart_sleep_rolling_24_on"
+        <ListPreference
+            android:defaultValue="18:00"
+            android:entries="@array/sleep_range_entries"
+            android:entryValues="@array/sleep_range_values"
+            android:key="chart_sleep_range_mode"
+            android:summary="@string/pref_summary_chart_sleep_range"
             android:title="@string/pref_title_chart_sleep_rolling_24_hour"
             app:iconSpaceReserved="false" />
 
@@ -76,6 +76,22 @@
             android:summaryOff="@string/pref_charts_range_off"
             android:summaryOn="@string/pref_charts_range_on"
             android:title="@string/pref_title_charts_range"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="charts_show_balance_sleep"
+            android:layout="@layout/preference_checkbox"
+            android:summary="@string/charts_show_balance_sleep_summary"
+            android:title="@string/charts_show_balance_sleep_title"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="charts_show_balance_steps"
+            android:layout="@layout/preference_checkbox"
+            android:summary="@string/charts_show_balance_steps_summary"
+            android:title="@string/charts_show_balance_steps_title"
             app:iconSpaceReserved="false" />
 
         <SwitchPreferenceCompat

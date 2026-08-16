@@ -29,8 +29,10 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Bundle;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.apache.commons.lang3.StringUtils;
@@ -88,13 +90,14 @@ import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationType;
 import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.WorldClock;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.model.weather.Weather;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCharacteristic;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.IntentListener;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.adablefs.AdaBleFsProfile;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.alertnotification.AlertCategory;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.alertnotification.AlertNotificationProfile;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.alertnotification.NewAlert;
@@ -103,13 +106,14 @@ import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.Batter
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.DeviceInfoProfile;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuLogListener {
+public class PineTimeJFSupport extends AbstractBTLESingleDeviceSupport implements DfuLogListener {
     private static final Logger LOG = LoggerFactory.getLogger(PineTimeJFSupport.class);
     private final GBDeviceEventVersionInfo versionCmd = new GBDeviceEventVersionInfo();
     private final GBDeviceEventBatteryInfo batteryCmd = new GBDeviceEventBatteryInfo();
 
     private final DeviceInfoProfile<PineTimeJFSupport> deviceInfoProfile;
     private final BatteryInfoProfile<PineTimeJFSupport> batteryInfoProfile;
+    private final AdaBleFsProfile<PineTimeJFSupport> adaBleFsProfile;
 
     private final int MaxNotificationLength = 100;
     private final int CutNotificationTitleMinAt = 25;
@@ -262,16 +266,36 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
         addSupportedService(PineTimeJFConstants.UUID_CHARACTERISTIC_ALERT_NOTIFICATION_EVENT);
         addSupportedService(PineTimeJFConstants.UUID_SERVICE_MOTION);
         addSupportedService(PineTimeJFConstants.UUID_SERVICE_HEART_RATE);
+        addSupportedService(AdaBleFsProfile.UUID_SERVICE_FS);
 
-        IntentListener mListener = new IntentListener() {
-            @Override
-            public void notify(Intent intent) {
-                String action = intent.getAction();
-                if (DeviceInfoProfile.ACTION_DEVICE_INFO.equals(action)) {
-                    handleDeviceInfo((nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.DeviceInfo) intent.getParcelableExtra(DeviceInfoProfile.EXTRA_DEVICE_INFO));
-                } else if (BatteryInfoProfile.ACTION_BATTERY_INFO.equals(action)) {
-                    handleBatteryInfo((nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfo) intent.getParcelableExtra(BatteryInfoProfile.EXTRA_BATTERY_INFO));
-                }
+        IntentListener mListener = intent -> {
+            LocalBroadcastManager manager = LocalBroadcastManager.getInstance(getContext());
+            String action = intent.getAction();
+            if (DeviceInfoProfile.ACTION_DEVICE_INFO.equals(action)) {
+                handleDeviceInfo(intent.getParcelableExtra(DeviceInfoProfile.EXTRA_DEVICE_INFO));
+            } else if (BatteryInfoProfile.ACTION_BATTERY_INFO.equals(action)) {
+                handleBatteryInfo(intent.getParcelableExtra(BatteryInfoProfile.EXTRA_BATTERY_INFO));
+            } else if (PineTimeJFConstants.ACTION_UPLOAD_PROGRESS.equals(action)) {
+                String filename = intent.getStringExtra("filename");
+                String currentAction = intent.getStringExtra("currentAction");
+                int currentActionNr = intent.getIntExtra("currentActionNr", 0);
+                int allActionsCount = intent.getIntExtra("allActionsCount", 0);
+                String progressText = String.format(getContext().getString(R.string.infinitime_resource_upload_progress_status), currentActionNr, allActionsCount, currentAction, filename);
+                manager.sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_TEXT).putExtra(GB.DISPLAY_MESSAGE_MESSAGE, progressText));
+            } else if (PineTimeJFConstants.ACTION_UPLOAD_FINISHED.equals(action)) {
+                String progressText = getContext().getString(R.string.devicestatus_upload_completed);
+                manager.sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_TEXT).putExtra(GB.DISPLAY_MESSAGE_MESSAGE, progressText));
+                manager.sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_BAR).putExtra(GB.PROGRESS_BAR_INDETERMINATE, false));
+                manager.sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_BAR).putExtra(GB.PROGRESS_BAR_PROGRESS, 100));
+                GB.updateInstallNotification(progressText, false, 0, getContext());
+                gbDevice.unsetBusyTask();
+            } else if (PineTimeJFConstants.ACTION_UPLOAD_ERROR.equals(action)) {
+                String errorMsg = intent.getStringExtra("errorMsg");
+                manager.sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_TEXT).putExtra(GB.DISPLAY_MESSAGE_MESSAGE, errorMsg));
+                manager.sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_BAR).putExtra(GB.PROGRESS_BAR_INDETERMINATE, false));
+                manager.sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_BAR).putExtra(GB.PROGRESS_BAR_PROGRESS, 0));
+                GB.updateInstallNotification(getContext().getString(R.string.devicestatus_upload_failed), false, 0, getContext());
+                gbDevice.unsetBusyTask();
             }
         };
 
@@ -285,6 +309,10 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
         batteryInfoProfile = new BatteryInfoProfile<>(this);
         batteryInfoProfile.addListener(mListener);
         addSupportedProfile(batteryInfoProfile);
+
+        adaBleFsProfile = new AdaBleFsProfile<>(this);
+        adaBleFsProfile.addListener(mListener);
+        addSupportedProfile(adaBleFsProfile);
     }
 
     private void handleBatteryInfo(nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfo info) {
@@ -299,7 +327,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
 
     @Override
     public void onNotification(NotificationSpec notificationSpec) {
-        TransactionBuilder builder = new TransactionBuilder("notification");
+        TransactionBuilder builder = createTransactionBuilder("notification");
 
         String message;
         String source = null;
@@ -337,22 +365,23 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
         AlertNotificationProfile<?> profile = new AlertNotificationProfile<>(this);
         profile.setMaxLength(MaxNotificationLength);
         profile.newAlert(builder, alert, OverflowStrategy.TRUNCATE);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
     public void onSetNavigationInfo(NavigationInfoSpec navigationInfoSpec) {
-        TransactionBuilder builder = new TransactionBuilder("navigation info");
-        if (navigationInfoSpec.instruction == null) {
-            navigationInfoSpec.instruction = "";
+        TransactionBuilder builder = createTransactionBuilder("navigation info");
+        if (navigationInfoSpec.getInstruction() == null) {
+            navigationInfoSpec.setInstruction("");
         }
-        if (navigationInfoSpec.distanceToTurn == null) {
-            navigationInfoSpec.distanceToTurn = "";
+        if (navigationInfoSpec.getDistanceToTurn() == null) {
+            navigationInfoSpec.setDistanceToTurn("");
         }
-        safeWriteToCharacteristic(builder, PineTimeJFConstants.UUID_CHARACTERISTICS_NAVIGATION_NARRATIVE, navigationInfoSpec.instruction.getBytes(StandardCharsets.UTF_8));
-        safeWriteToCharacteristic(builder, PineTimeJFConstants.UUID_CHARACTERISTICS_NAVIGATION_MAN_DISTANCE, navigationInfoSpec.distanceToTurn.getBytes(StandardCharsets.UTF_8));
+        safeWriteToCharacteristic(builder, PineTimeJFConstants.UUID_CHARACTERISTICS_NAVIGATION_NARRATIVE, navigationInfoSpec.getInstruction().getBytes(StandardCharsets.UTF_8));
+        safeWriteToCharacteristic(builder, PineTimeJFConstants.UUID_CHARACTERISTICS_NAVIGATION_MAN_DISTANCE, navigationInfoSpec.getDistanceToTurn().getBytes(StandardCharsets.UTF_8));
+        safeWriteToCharacteristic(builder, PineTimeJFConstants.UUID_CHARACTERISTICS_NAVIGATION_PROGRESS, ByteBuffer.allocate(1).put((byte) navigationInfoSpec.getCompletionPercent()).array());
         String iconname;
-        switch (navigationInfoSpec.nextAction) {
+        switch (navigationInfoSpec.getNextAction()) {
             case NavigationInfoSpec.ACTION_CONTINUE:
                 iconname = "continue";
                 break;
@@ -385,13 +414,22 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                 iconname = "uturn";
                 break;
             case NavigationInfoSpec.ACTION_ROUNDABOUT_RIGHT:
-		iconname = "roundabout-right";
-		break;
+                iconname = "roundabout-right";
+                break;
             case NavigationInfoSpec.ACTION_ROUNDABOUT_LEFT:
                 iconname = "roundabout-left";
                 break;
+            case NavigationInfoSpec.ACTION_ROUNDABOUT_STRAIGHT:
+                iconname = "roundabout-straight";
+                break;
             case NavigationInfoSpec.ACTION_OFFROUTE:
                 iconname = "close";
+                break;
+            case NavigationInfoSpec.ACTION_FINISH:
+                iconname = "flag";
+                break;
+            case NavigationInfoSpec.ACTION_MERGE:
+                iconname = "merge-straight";
                 break;
             default:
                 iconname = "invalid";
@@ -399,7 +437,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
         }
 
         safeWriteToCharacteristic(builder, PineTimeJFConstants.UUID_CHARACTERISTICS_NAVIGATION_FLAGS, iconname.getBytes(StandardCharsets.UTF_8));
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
@@ -414,16 +452,16 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
         byte[] bytesCurrentTime = BLETypeConversions.calendarToCurrentTime(now, 0);
         byte[] bytesLocalTime = BLETypeConversions.calendarToLocalTime(now);
 
-        TransactionBuilder builder = new TransactionBuilder("set time");
-        builder.write(getCharacteristic(GattCharacteristic.UUID_CHARACTERISTIC_CURRENT_TIME), bytesCurrentTime);
-        builder.write(getCharacteristic(GattCharacteristic.UUID_CHARACTERISTIC_LOCAL_TIME), bytesLocalTime);
-        builder.queue(getQueue());
+        TransactionBuilder builder = createTransactionBuilder("set time");
+        builder.write(GattCharacteristic.UUID_CHARACTERISTIC_CURRENT_TIME, bytesCurrentTime);
+        builder.write(GattCharacteristic.UUID_CHARACTERISTIC_LOCAL_TIME, bytesLocalTime);
+        builder.queue();
     }
 
     @Override
     public void onSetCallState(CallSpec callSpec) {
         if (callSpec.command == CallSpec.CALL_INCOMING) {
-            TransactionBuilder builder = new TransactionBuilder("incomingcall");
+            TransactionBuilder builder = createTransactionBuilder("incomingcall");
 
             String message;
             if (isFirmwareAtLeastVersion0_15() && callSpec.sourceName != null) {
@@ -436,17 +474,50 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
             AlertNotificationProfile<?> profile = new AlertNotificationProfile<>(this);
             profile.setMaxLength(MaxNotificationLength);
             profile.newAlert(builder, alert, OverflowStrategy.TRUNCATE);
-            builder.queue(getQueue());
+            builder.queue();
         }
     }
 
     @Override
-    public void onInstallApp(Uri uri) {
-        try {
-            handler = new PineTimeInstallHandler(uri, getContext());
+    public void onInstallApp(Uri uri, @NonNull final Bundle options) {
+        handler = new PineTimeInstallHandler(uri, getContext());
+        if (!handler.isValid()) {
+            LocalBroadcastManager.getInstance(getContext()).sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_TEXT)
+                    .putExtra(GB.DISPLAY_MESSAGE_MESSAGE, getContext().getString(R.string.fwinstaller_firmware_not_compatible_to_device)));
+            return;
+        }
+        if (handler.updateType == PineTimeInstallHandler.InfiniTimeUpdateType.DFU) {
+            installDfu(uri);
+        } else if (handler.updateType == PineTimeInstallHandler.InfiniTimeUpdateType.RESOURCES) {
+            installResource(uri);
+        }
+    }
 
+    public void installResource(Uri uri) {
+        try {
+            gbDevice.setBusyTask(R.string.uploading_resources, getContext());
+            adaBleFsProfile.loadResources(uri, getContext(), getQueue());
+
+            LocalBroadcastManager.getInstance(getContext()).sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_BAR)
+                    .putExtra(GB.PROGRESS_BAR_INDETERMINATE, true)
+            );
+            LocalBroadcastManager.getInstance(getContext()).sendBroadcast(new Intent(GB.ACTION_SET_PROGRESS_TEXT)
+                    .putExtra(GB.DISPLAY_MESSAGE_MESSAGE, getContext().getString(R.string.devicestatus_upload_starting))
+            );
+        } catch (Exception ex) {
+            GB.toast(getContext(), getContext().getString(R.string.updatefirmwareoperation_write_failed) + ":" + ex.getMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
+            if (gbDevice.isBusy() && gbDevice.getBusyTask().equals(getContext().getString(R.string.uploading_resources))) {
+                gbDevice.unsetBusyTask();
+            }
+        }
+
+    }
+
+    public void installDfu(Uri uri) {
+        handler = new PineTimeInstallHandler(uri, getContext());
+        try {
             if (handler.isValid()) {
-                gbDevice.setBusyTask("firmware upgrade");
+                gbDevice.setBusyTask(R.string.updating_firmware, getContext());
                 DfuServiceInitiator starter = new DfuServiceInitiator(getDevice().getAddress())
                         .setDeviceName(getDevice().getName())
                         .setKeepBond(true)
@@ -470,7 +541,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .putExtra(GB.DISPLAY_MESSAGE_MESSAGE, getContext().getString(R.string.fwinstaller_firmware_not_compatible_to_device)));
             }
         } catch (Exception ex) {
-            GB.toast(getContext(), getContext().getString(R.string.updatefirmwareoperation_write_failed) + ":" + ex.getMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
+            GB.toast(getContext(), getContext().getString(R.string.updatefirmwareoperation_write_failed) + ":" + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
             if (gbDevice.isBusy() && gbDevice.getBusyTask().equals("firmware upgrade")) {
                 gbDevice.unsetBusyTask();
             }
@@ -487,28 +558,29 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
         requestDeviceInfo(builder);
-        if (GBApplication.getPrefs().getBoolean("datetime_synconconnect", true)) {
+        if (GBApplication.getPrefs().syncTime()) {
             onSetTime();
         }
         setWorldClocks();
-        builder.notify(getCharacteristic(PineTimeJFConstants.UUID_CHARACTERISTICS_MUSIC_EVENT), true);
+        builder.notify(PineTimeJFConstants.UUID_CHARACTERISTICS_MUSIC_EVENT, true);
         BluetoothGattCharacteristic alertNotificationEventCharacteristic = getCharacteristic(PineTimeJFConstants.UUID_CHARACTERISTIC_ALERT_NOTIFICATION_EVENT);
         if (alertNotificationEventCharacteristic != null) {
             builder.notify(alertNotificationEventCharacteristic, true);
         }
 
         if (getSupportedServices().contains(PineTimeJFConstants.UUID_SERVICE_MOTION)) {
-            builder.notify(getCharacteristic(PineTimeJFConstants.UUID_CHARACTERISTIC_MOTION_STEP_COUNT), true);
+            builder.notify(PineTimeJFConstants.UUID_CHARACTERISTIC_MOTION_STEP_COUNT, true);
             //builder.notify(getCharacteristic(PineTimeJFConstants.UUID_CHARACTERISTIC_MOTION_RAW_XYZ_VALUES), false); // issue #2527
         }
 
-        builder.notify(getCharacteristic(PineTimeJFConstants.UUID_CHARACTERISTIC_HEART_RATE_MEASUREMENT), true);
+        builder.notify(PineTimeJFConstants.UUID_CHARACTERISTIC_HEART_RATE_MEASUREMENT, true);
 
         setInitialized(builder);
         batteryInfoProfile.requestBatteryInfo(builder);
         batteryInfoProfile.enableNotify(builder, true);
+        adaBleFsProfile.enableNotify(builder, true);
 
         builder.requestMtu(256);
         return builder;
@@ -542,7 +614,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                 safeWriteToCharacteristic(builder, PineTimeJFConstants.UUID_CHARACTERISTICS_MUSIC_TRACK_TOTAL, intToBytes(musicSpec.trackCount));
             }
 
-            builder.queue(getQueue());
+            builder.queue();
         } catch (Exception e) {
             LOG.error("Error sending music info", e);
         }
@@ -577,7 +649,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                 safeWriteToCharacteristic(builder, PineTimeJFConstants.UUID_CHARACTERISTICS_MUSIC_SHUFFLE, intToBytes(stateSpec.repeat));
             }
 
-            builder.queue(getQueue());
+            builder.queue();
 
         } catch (Exception e) {
             LOG.error("Error sending music state", e);
@@ -587,8 +659,9 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic, int status) {
-        if (super.onCharacteristicRead(gatt, characteristic, status)) {
+                                        BluetoothGattCharacteristic characteristic, byte[] value,
+                                        int status) {
+        if (super.onCharacteristicRead(gatt, characteristic, value, status)) {
             return true;
         }
         UUID characteristicUUID = characteristic.getUuid();
@@ -631,9 +704,9 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                 baos.write(new byte[9]);
             }
 
-            TransactionBuilder builder = new TransactionBuilder("set world clocks");
-            builder.write(getCharacteristic(PineTimeJFConstants.UUID_CHARACTERISTIC_WORLD_TIME), baos.toByteArray());
-            builder.queue(getQueue());
+            TransactionBuilder builder = createTransactionBuilder("set world clocks");
+            builder.write(PineTimeJFConstants.UUID_CHARACTERISTIC_WORLD_TIME, baos.toByteArray());
+            builder.queue();
         } catch (Exception e) {
             LOG.error("Error sending world clocks", e);
         }
@@ -651,14 +724,14 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] value) {
+        if (super.onCharacteristicChanged(gatt, characteristic, value)) {
             return true;
         }
 
         UUID characteristicUUID = characteristic.getUuid();
         if (characteristicUUID.equals(PineTimeJFConstants.UUID_CHARACTERISTICS_MUSIC_EVENT)) {
-            byte[] value = characteristic.getValue();
             GBDeviceEventMusicControl deviceEventMusicControl = new GBDeviceEventMusicControl();
 
             switch (value[0]) {
@@ -686,7 +759,6 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
             evaluateGBDeviceEvent(deviceEventMusicControl);
             return true;
         } else if (characteristicUUID.equals(PineTimeJFConstants.UUID_CHARACTERISTIC_ALERT_NOTIFICATION_EVENT)) {
-            byte[] value = characteristic.getValue();
             GBDeviceEventCallControl deviceEventCallControl = new GBDeviceEventCallControl();
             switch (value[0]) {
                 case 0:
@@ -704,14 +776,14 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
             evaluateGBDeviceEvent(deviceEventCallControl);
             return true;
         } else if (characteristicUUID.equals(PineTimeJFConstants.UUID_CHARACTERISTIC_MOTION_STEP_COUNT)) {
-            int steps = BLETypeConversions.toUint32(characteristic.getValue());
+            int steps = BLETypeConversions.toUint32(value);
             if (LOG.isDebugEnabled()) {
                 LOG.debug("onCharacteristicChanged: MotionService:Steps=" + steps);
             }
             onReceiveStepsSample(steps);
             return true;
         } else if (characteristicUUID.equals(PineTimeJFConstants.UUID_CHARACTERISTIC_HEART_RATE_MEASUREMENT)) {
-            int heartrate = Byte.toUnsignedInt(characteristic.getValue()[1]);
+            int heartrate = Byte.toUnsignedInt(value[1]);
             if (LOG.isDebugEnabled()) {
                 LOG.debug("onCharacteristicChanged: HeartRateMeasurement:HeartRate=" + heartrate);
             }
@@ -724,7 +796,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
     }
 
     private void onSendWeatherCBOR(WeatherSpec weatherSpec) {
-        if (weatherSpec.location != null) {
+        if (weatherSpec.getLocation() != null) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try {
                 new CborEncoder(baos).encode(new CborBuilder()
@@ -732,7 +804,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .put("Timestamp", System.currentTimeMillis() / 1000L)
                         .put("Expires", 60 * 60 * 1 + WEATHER_GRACE_TIME) // 1h
                         .put("EventType", WeatherData.EventType.Location.value)
-                        .put("Location", weatherSpec.location)
+                        .put("Location", weatherSpec.getLocation())
                         .put("Altitude", 0)
                         .put("Latitude", 0)
                         .put("Longitude", 0)
@@ -748,16 +820,16 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                     PineTimeJFConstants.UUID_CHARACTERISTIC_WEATHER_DATA,
                     encodedBytes);
 
-            builder.queue(getQueue());
+            builder.queue();
         }
 
         // Current condition
-        if (weatherSpec.currentCondition != null) {
+        if (weatherSpec.getCurrentCondition() != null) {
             // We can't do anything with this?
         }
 
         // Current humidity
-        if (weatherSpec.currentHumidity > 0) {
+        if (weatherSpec.getCurrentHumidity() > 0) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try {
                 new CborEncoder(baos).encode(new CborBuilder()
@@ -765,7 +837,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .put("Timestamp", System.currentTimeMillis() / 1000L)
                         .put("Expires", 60 * 60 * 1 + WEATHER_GRACE_TIME) // 1h this should be the weather provider's interval, really
                         .put("EventType", WeatherData.EventType.Humidity.value)
-                        .put("Humidity", (int) weatherSpec.currentHumidity)
+                        .put("Humidity", (int) weatherSpec.getCurrentHumidity())
                         .end()
                         .build()
                 );
@@ -778,11 +850,11 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                     PineTimeJFConstants.UUID_CHARACTERISTIC_WEATHER_DATA,
                     encodedBytes);
 
-            builder.queue(getQueue());
+            builder.queue();
         }
 
         // Current temperature
-        if (weatherSpec.currentTemp >= -273.15) {
+        if (weatherSpec.getCurrentTemp() >= -273.15) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try {
                 new CborEncoder(baos).encode(new CborBuilder()
@@ -790,7 +862,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .put("Timestamp", System.currentTimeMillis() / 1000L)
                         .put("Expires", 60 * 60 * 1 + WEATHER_GRACE_TIME) // 1h this should be the weather provider's interval, really
                         .put("EventType", WeatherData.EventType.Temperature.value)
-                        .put("Temperature", (int) ((weatherSpec.currentTemp - 273.15) * 100))
+                        .put("Temperature", (int) ((weatherSpec.getCurrentTemp() - 273.15) * 100))
                         .put("DewPoint", (int) (-32768))
                         .end()
                         .build()
@@ -804,7 +876,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                     PineTimeJFConstants.UUID_CHARACTERISTIC_WEATHER_DATA,
                     encodedBytes);
 
-            builder.queue(getQueue());
+            builder.queue();
         }
 
         // 24h temperature forecast
@@ -838,7 +910,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
         */
 
         // Wind speed
-        if (weatherSpec.windSpeed != 0.0f) {
+        if (weatherSpec.getWindSpeed() != 0.0f) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try {
                 new CborEncoder(baos).encode(new CborBuilder()
@@ -846,10 +918,10 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .put("Timestamp", System.currentTimeMillis() / 1000L)
                         .put("Expires", 60 * 60 * 1 + WEATHER_GRACE_TIME) // 1h
                         .put("EventType", WeatherData.EventType.Wind.value)
-                        .put("SpeedMin", (int) (weatherSpec.windSpeed / 60 / 60 * 1000))
-                        .put("SpeedMax", (int) (weatherSpec.windSpeed / 60 / 60 * 1000))
-                        .put("DirectionMin", (int) (0.71 * weatherSpec.windDirection))
-                        .put("DirectionMax", (int) (0.71 * weatherSpec.windDirection))
+                        .put("SpeedMin", (int) (weatherSpec.getWindSpeed() / 60 / 60 * 1000))
+                        .put("SpeedMax", (int) (weatherSpec.getWindSpeed() / 60 / 60 * 1000))
+                        .put("DirectionMin", (int) (0.71 * weatherSpec.getWindDirection()))
+                        .put("DirectionMax", (int) (0.71 * weatherSpec.getWindDirection()))
                         .end()
                         .build()
                 );
@@ -862,11 +934,11 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                     PineTimeJFConstants.UUID_CHARACTERISTIC_WEATHER_DATA,
                     encodedBytes);
 
-            builder.queue(getQueue());
+            builder.queue();
         }
 
         // Current weather condition
-        if (mapOpenWeatherConditionToPineTimePrecipitation(weatherSpec.currentConditionCode) != WeatherData.PrecipitationType.Length) {
+        if (mapOpenWeatherConditionToPineTimePrecipitation(weatherSpec.getCurrentConditionCode()) != WeatherData.PrecipitationType.Length) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try {
                 new CborEncoder(baos).encode(new CborBuilder()
@@ -874,7 +946,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .put("Timestamp", System.currentTimeMillis() / 1000L)
                         .put("Expires", 60 * 60 * 1 + WEATHER_GRACE_TIME) // 1h
                         .put("EventType", WeatherData.EventType.Precipitation.value)
-                        .put("Type", (int) mapOpenWeatherConditionToPineTimePrecipitation(weatherSpec.currentConditionCode).value)
+                        .put("Type", (int) mapOpenWeatherConditionToPineTimePrecipitation(weatherSpec.getCurrentConditionCode()).value)
                         .put("Amount", (int) 0)
                         .end()
                         .build()
@@ -888,10 +960,10 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                     PineTimeJFConstants.UUID_CHARACTERISTIC_WEATHER_DATA,
                     encodedBytes);
 
-            builder.queue(getQueue());
+            builder.queue();
         }
 
-        if (mapOpenWeatherConditionToPineTimeObscuration(weatherSpec.currentConditionCode) != WeatherData.ObscurationType.Length) {
+        if (mapOpenWeatherConditionToPineTimeObscuration(weatherSpec.getCurrentConditionCode()) != WeatherData.ObscurationType.Length) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try {
                 new CborEncoder(baos).encode(new CborBuilder()
@@ -899,7 +971,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .put("Timestamp", System.currentTimeMillis() / 1000L)
                         .put("Expires", 60 * 60 * 1 + WEATHER_GRACE_TIME) // 1h
                         .put("EventType", WeatherData.EventType.Obscuration.value)
-                        .put("Type", (int) mapOpenWeatherConditionToPineTimeObscuration(weatherSpec.currentConditionCode).value)
+                        .put("Type", (int) mapOpenWeatherConditionToPineTimeObscuration(weatherSpec.getCurrentConditionCode()).value)
                         .put("Amount", (int) 65535)
                         .end()
                         .build()
@@ -913,10 +985,10 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                     PineTimeJFConstants.UUID_CHARACTERISTIC_WEATHER_DATA,
                     encodedBytes);
 
-            builder.queue(getQueue());
+            builder.queue();
         }
 
-        if (mapOpenWeatherConditionToPineTimeSpecial(weatherSpec.currentConditionCode) != WeatherData.SpecialType.Length) {
+        if (mapOpenWeatherConditionToPineTimeSpecial(weatherSpec.getCurrentConditionCode()) != WeatherData.SpecialType.Length) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try {
                 new CborEncoder(baos).encode(new CborBuilder()
@@ -924,7 +996,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .put("Timestamp", System.currentTimeMillis() / 1000L)
                         .put("Expires", 60 * 60 * 1 + WEATHER_GRACE_TIME) // 1h
                         .put("EventType", WeatherData.EventType.Special.value)
-                        .put("Type", mapOpenWeatherConditionToPineTimeSpecial(weatherSpec.currentConditionCode).value)
+                        .put("Type", mapOpenWeatherConditionToPineTimeSpecial(weatherSpec.getCurrentConditionCode()).value)
                         .end()
                         .build()
                 );
@@ -937,10 +1009,10 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                     PineTimeJFConstants.UUID_CHARACTERISTIC_WEATHER_DATA,
                     encodedBytes);
 
-            builder.queue(getQueue());
+            builder.queue();
         }
 
-        if (mapOpenWeatherConditionToCloudCover(weatherSpec.currentConditionCode) != -1) {
+        if (mapOpenWeatherConditionToCloudCover(weatherSpec.getCurrentConditionCode()) != -1) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try {
                 new CborEncoder(baos).encode(new CborBuilder()
@@ -948,7 +1020,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                         .put("Timestamp", System.currentTimeMillis() / 1000L)
                         .put("Expires", 60 * 60 * 1 + WEATHER_GRACE_TIME) // 1h
                         .put("EventType", WeatherData.EventType.Clouds.value)
-                        .put("Amount", (int) (mapOpenWeatherConditionToCloudCover(weatherSpec.currentConditionCode)))
+                        .put("Amount", (int) (mapOpenWeatherConditionToCloudCover(weatherSpec.getCurrentConditionCode())))
                         .end()
                         .build()
                 );
@@ -961,48 +1033,63 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                     PineTimeJFConstants.UUID_CHARACTERISTIC_WEATHER_DATA,
                     encodedBytes);
 
-            builder.queue(getQueue());
+            builder.queue();
         }
 
         LOG.debug("Wrote weather data");
     }
 
     private void onSendWeatherSimple(WeatherSpec weatherSpec) {
-        long timestampLocal = weatherSpec.timestamp + Calendar.getInstance().getTimeZone().getOffset(Calendar.getInstance(TimeZone.getTimeZone("UTC")).getTimeInMillis()) / 1000L;
+        long timestampLocal = weatherSpec.getTimestamp() + Calendar.getInstance().getTimeZone().getOffset(Calendar.getInstance(TimeZone.getTimeZone("UTC")).getTimeInMillis()) / 1000L;
 
-        ByteBuffer currentPacket = ByteBuffer.allocate(49).order(ByteOrder.LITTLE_ENDIAN);
+        int weatherMemAlloc = 49;
+        byte version = 0;
+        if (isFirmwareAtLeastVersion0_15()) {
+            weatherMemAlloc = 53;
+            version = 1;
+        }
+        ByteBuffer currentPacket = ByteBuffer.allocate(weatherMemAlloc).order(ByteOrder.LITTLE_ENDIAN);
+        currentPacket.put(1, version);
         currentPacket.putLong(2, timestampLocal);
-        currentPacket.putShort(10, (short) ((weatherSpec.currentTemp - 273.15) * 100));
-        currentPacket.putShort(12, (short) ((weatherSpec.todayMinTemp - 273.15) * 100));
-        currentPacket.putShort(14, (short) ((weatherSpec.todayMaxTemp - 273.15) * 100));
-        if (weatherSpec.location != null) {
-            byte[] locationBytes = nodomain.freeyourgadget.gadgetbridge.util.StringUtils.truncateToBytes(weatherSpec.location, 32);
+        currentPacket.putShort(10, (short) ((weatherSpec.getCurrentTemp() - 273.15) * 100));
+        currentPacket.putShort(12, (short) ((weatherSpec.getTodayMinTemp() - 273.15) * 100));
+        currentPacket.putShort(14, (short) ((weatherSpec.getTodayMaxTemp() - 273.15) * 100));
+        if (weatherSpec.getLocation() != null) {
+            byte[] locationBytes = nodomain.freeyourgadget.gadgetbridge.util.StringUtils.truncateToBytes(weatherSpec.getLocation(), 32);
             for (int i = 0; i < locationBytes.length; i++) {
                 currentPacket.put(16 + i, locationBytes[i]);
             }
         }
-        currentPacket.put(48, mapOpenWeatherConditionToPineTimeCondition(weatherSpec.currentConditionCode).value);
+        currentPacket.put(48, mapOpenWeatherConditionToPineTimeCondition(weatherSpec.getCurrentConditionCode()).value);
+
+        if (isFirmwareAtLeastVersion0_15()) {
+            // Calculate sunrise and sunset minutes since midnight
+            short sunriseMinutes = (short) ((weatherSpec.getSunRise() + Calendar.getInstance().getTimeZone().getOffset(Calendar.getInstance(TimeZone.getTimeZone("UTC")).getTimeInMillis()) / 1000L) / 60 % 1440);
+            short sunsetMinutes = (short) ((weatherSpec.getSunSet() + Calendar.getInstance().getTimeZone().getOffset(Calendar.getInstance(TimeZone.getTimeZone("UTC")).getTimeInMillis()) / 1000L) / 60 % 1440);
+            currentPacket.putShort(49, sunriseMinutes);
+            currentPacket.putShort(51, sunsetMinutes);
+        }
 
         TransactionBuilder currentBuilder = createTransactionBuilder("SimpleWeatherData");
         safeWriteToCharacteristic(currentBuilder,
             PineTimeJFConstants.UUID_CHARACTERISTIC_SIMPLE_WEATHER_DATA,
             currentPacket.array());
 
-        currentBuilder.queue(getQueue());
+        currentBuilder.queue();
 
-        if (weatherSpec.forecasts == null) {
+        if (weatherSpec.getForecasts() == null) {
             return;
         }
 
         ByteBuffer forecastPacket = ByteBuffer.allocate(36).order(ByteOrder.LITTLE_ENDIAN);
         forecastPacket.put(0, (byte) 1);
         forecastPacket.putLong(2, timestampLocal);
-        byte nbDays = (byte) Math.min(weatherSpec.forecasts.size(), 5);
+        byte nbDays = (byte) Math.min(weatherSpec.getForecasts().size(), 5);
         forecastPacket.put(10, nbDays);
         for (int i = 0; i < nbDays; i++) {
-            forecastPacket.putShort(11 + i * 5, (short) ((weatherSpec.forecasts.get(i).minTemp - 273.15) * 100));
-            forecastPacket.putShort(11 + i * 5 + 2, (short) ((weatherSpec.forecasts.get(i).maxTemp - 273.15) * 100));
-            forecastPacket.put(11 + i * 5 + 4, mapOpenWeatherConditionToPineTimeCondition(weatherSpec.forecasts.get(i).conditionCode).value);
+            forecastPacket.putShort(11 + i * 5, (short) ((weatherSpec.getForecasts().get(i).getMinTemp() - 273.15) * 100));
+            forecastPacket.putShort(11 + i * 5 + 2, (short) ((weatherSpec.getForecasts().get(i).getMaxTemp() - 273.15) * 100));
+            forecastPacket.put(11 + i * 5 + 4, mapOpenWeatherConditionToPineTimeCondition(weatherSpec.getForecasts().get(i).getConditionCode()).value);
         }
 
         TransactionBuilder forecastBuilder = createTransactionBuilder("SimpleWeatherData");
@@ -1010,12 +1097,16 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
                 PineTimeJFConstants.UUID_CHARACTERISTIC_SIMPLE_WEATHER_DATA,
                 forecastPacket.array());
 
-        forecastBuilder.queue(getQueue());
+        forecastBuilder.queue();
     }
 
     @Override
-    public void onSendWeather(ArrayList<WeatherSpec> weatherSpecs) {
-        WeatherSpec weatherSpec = weatherSpecs.get(0);
+    public void onSendWeather() {
+        WeatherSpec weatherSpec = Weather.getWeatherSpec();
+        if (weatherSpec == null) {
+            LOG.warn("No weather found in singleton");
+            return;
+        }
 
         if (this.firmwareVersionMajor < 1 || (this.firmwareVersionMajor == 1 && this.firmwareVersionMinor <= 7)) {
             // Not supported
@@ -1052,7 +1143,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
     }
 
     private void setInitialized(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
     }
 
     private void requestDeviceInfo(TransactionBuilder builder) {
@@ -1242,7 +1333,7 @@ public class PineTimeJFSupport extends AbstractBTLEDeviceSupport implements DfuL
             GB.signalActivityDataFinish(getDevice());
 
         } catch (Exception ex) {
-            GB.toast(getContext(), "Error saving samples: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error saving samples: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
             GB.updateTransferNotification(null, "Data transfer failed", false, 0, getContext());
 
             LOG.error(ex.getMessage());

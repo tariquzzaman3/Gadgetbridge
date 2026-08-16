@@ -16,14 +16,19 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.lefun;
 
+import androidx.annotation.NonNull;
+
+import java.util.regex.Pattern;
+
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
 
 public class VivitarHrBpMonitorActivityTrackerCoordinator extends LefunDeviceCoordinator {
-    public boolean supports(GBDeviceCandidate candidate) {
-        // Since the Lefun coordinator overrides supports, we also need to
-        return "IMP-2027".equals(candidate.getName());
+    @NonNull
+    @Override
+    protected Pattern getSupportedDeviceName() {
+        return Pattern.compile("^IMP-2027$");
     }
 
     @Override
@@ -40,7 +45,7 @@ public class VivitarHrBpMonitorActivityTrackerCoordinator extends LefunDeviceCoo
     }
 
     @Override
-    public boolean supportsRealtimeData() {
+    public boolean supportsRealtimeData(@NonNull GBDevice device) {
         return false;  // not supported
     }
 
@@ -50,12 +55,7 @@ public class VivitarHrBpMonitorActivityTrackerCoordinator extends LefunDeviceCoo
     }
 
     @Override
-    public int getDefaultIconResource() {
-        return R.drawable.ic_device_h30_h10;
-    }
-
-    @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_h30_h10_disabled;
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceCoordinator.DeviceKind.FITNESS_BAND;
     }
 }

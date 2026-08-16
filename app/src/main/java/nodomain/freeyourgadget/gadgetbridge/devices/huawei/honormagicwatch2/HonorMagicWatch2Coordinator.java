@@ -16,27 +16,24 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.huawei.honormagicwatch2;
 
+import androidx.annotation.NonNull;
+
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiBRCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiConstants;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class HonorMagicWatch2Coordinator extends HuaweiBRCoordinator {
-    public HonorMagicWatch2Coordinator() {
-        super();
-        getHuaweiCoordinator().setTransactionCrypted(false);
+    @Override
+    public boolean isTransactionCrypted() {
+        return false;
     }
 
     @Override
     public String getManufacturer() {
         return "Honor";
-    }
-
-    @Override
-    public DeviceType getDeviceType() {
-        return DeviceType.HONORMAGICWATCH2;
     }
 
     @Override
@@ -47,5 +44,10 @@ public class HonorMagicWatch2Coordinator extends HuaweiBRCoordinator {
     @Override
     public int getDeviceNameResource() {
         return R.string.devicetype_honor_magicwatch2;
+    }
+
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.WATCH;
     }
 }

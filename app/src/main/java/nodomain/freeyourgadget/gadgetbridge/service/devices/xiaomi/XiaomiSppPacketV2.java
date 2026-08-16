@@ -153,7 +153,7 @@ public abstract class XiaomiSppPacketV2 {
 
                     // SEND_TIMEOUT (type 4) = 0x2710 -> 10000ms
                     KEY_SEND_TIMEOUT,
-                    0x02,
+                    0x02, 0x00,
                     0x10, 0x27,
             };
         }
@@ -287,6 +287,7 @@ public abstract class XiaomiSppPacketV2 {
                 return this;
             }
 
+            @Override
             public XiaomiSppPacketV2 build() {
                 return new DataPacket(this);
             }

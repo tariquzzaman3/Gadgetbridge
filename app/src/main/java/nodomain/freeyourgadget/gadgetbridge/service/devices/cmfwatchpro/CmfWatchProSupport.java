@@ -1,4 +1,4 @@
-/*  Copyright (C) 2024 José Rebelo
+/*  Copyright (C) 2024-2026 José Rebelo
 
     This file is part of Gadgetbridge.
 
@@ -25,8 +25,10 @@ import android.location.Location;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import net.e175.klaus.solarpositioning.DeltaT;
@@ -42,6 +44,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -69,18 +74,18 @@ import nodomain.freeyourgadget.gadgetbridge.model.Contact;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.model.Weather;
+import nodomain.freeyourgadget.gadgetbridge.model.weather.Weather;
+import nodomain.freeyourgadget.gadgetbridge.model.weather.WeatherMapper;
 import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.pebble.webview.CurrentPosition;
+import nodomain.freeyourgadget.gadgetbridge.webview.CurrentPosition;
 import nodomain.freeyourgadget.gadgetbridge.service.serial.GBDeviceProtocol;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.MediaManager;
 
-public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements CmfCharacteristic.Handler {
+public class CmfWatchProSupport extends AbstractBTLESingleDeviceSupport implements CmfCharacteristic.Handler {
     private static final Logger LOG = LoggerFactory.getLogger(CmfWatchProSupport.class);
 
     public static final UUID UUID_SERVICE_CMF_CMD = UUID.fromString("0000fff0-0000-1000-8000-00805f9b34fb");
@@ -95,6 +100,10 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     public static final UUID UUID_CHARACTERISTIC_CMF_SHELL_WRITE = UUID.fromString("77d4ff01-2fe2-2334-0d35-9ccd078f529c");
     public static final UUID UUID_CHARACTERISTIC_CMF_SHELL_READ = UUID.fromString("77d4ff02-2fe2-2334-0d35-9ccd078f529c");
 
+    public static final UUID UUID_SERVICE_CMF_FIRMWARE = UUID.fromString("02f00000-0000-0000-0000-00000000fe00");
+    public static final UUID UUID_CHARACTERISTIC_CMF_FIRMWARE_WRITE = UUID.fromString("02f00000-0000-0000-0000-00000000ff01");
+    public static final UUID UUID_CHARACTERISTIC_CMF_FIRMWARE_READ = UUID.fromString("02f00000-0000-0000-0000-00000000ff02");
+
     // An a5 byte is used a lot in single payloads, probably as a "proof of encryption"?
     public static final byte A5 = (byte) 0xa5;
 
@@ -102,6 +111,10 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     private CmfCharacteristic characteristicCommandWrite;
     private CmfCharacteristic characteristicDataRead;
     private CmfCharacteristic characteristicDataWrite;
+    @Nullable
+    private CmfCharacteristic characteristicFirmwareRead;
+    @Nullable
+    private CmfCharacteristic characteristicFirmwareWrite;
 
     private final byte[] authRandom1 = new byte[16];
     private final byte[] authAppSecret = new byte[16];
@@ -117,41 +130,43 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
         addSupportedService(UUID_SERVICE_CMF_CMD);
         addSupportedService(UUID_SERVICE_CMF_DATA);
         addSupportedService(UUID_SERVICE_CMF_SHELL);
+        addSupportedService(UUID_SERVICE_CMF_FIRMWARE);
     }
 
     @Override
     public boolean useAutoConnect() {
         return true;
     }
+
     @Override
     protected TransactionBuilder initializeDevice(final TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         final BluetoothGattCharacteristic btCharacteristicCommandRead = getCharacteristic(UUID_CHARACTERISTIC_CMF_COMMAND_READ);
         if (btCharacteristicCommandRead == null) {
             LOG.warn("Characteristic command read is null, will attempt to reconnect");
-            builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.WAITING_FOR_RECONNECT, getContext()));
+            builder.setDeviceState(GBDevice.State.WAITING_FOR_RECONNECT);
             return builder;
         }
 
         final BluetoothGattCharacteristic btCharacteristicCommandWrite = getCharacteristic(UUID_CHARACTERISTIC_CMF_COMMAND_WRITE);
         if (btCharacteristicCommandWrite == null) {
             LOG.warn("Characteristic command write is null, will attempt to reconnect");
-            builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.WAITING_FOR_RECONNECT, getContext()));
+            builder.setDeviceState(GBDevice.State.WAITING_FOR_RECONNECT);
             return builder;
         }
 
         final BluetoothGattCharacteristic btCharacteristicDataWrite = getCharacteristic(UUID_CHARACTERISTIC_CMF_DATA_WRITE);
         if (btCharacteristicDataWrite == null) {
             LOG.warn("Characteristic data write is null, will attempt to reconnect");
-            builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.WAITING_FOR_RECONNECT, getContext()));
+            builder.setDeviceState(GBDevice.State.WAITING_FOR_RECONNECT);
             return builder;
         }
 
         final BluetoothGattCharacteristic btCharacteristicDataRead = getCharacteristic(UUID_CHARACTERISTIC_CMF_DATA_READ);
         if (btCharacteristicDataRead == null) {
             LOG.warn("Characteristic data read is null, will attempt to reconnect");
-            builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.WAITING_FOR_RECONNECT, getContext()));
+            builder.setDeviceState(GBDevice.State.WAITING_FOR_RECONNECT);
             return builder;
         }
 
@@ -165,20 +180,37 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
             LOG.warn("Characteristic shell read is null");
         }
 
+        final BluetoothGattCharacteristic btCharacteristicFirmwareWrite = getCharacteristic(UUID_CHARACTERISTIC_CMF_FIRMWARE_WRITE);
+        if (btCharacteristicFirmwareWrite == null) {
+            LOG.warn("Characteristic firmware write is null");
+        }
+
+        final BluetoothGattCharacteristic btCharacteristicFirmwareRead = getCharacteristic(UUID_CHARACTERISTIC_CMF_FIRMWARE_READ);
+        if (btCharacteristicFirmwareRead == null) {
+            LOG.warn("Characteristic firmware read is null");
+        }
+
         dataUploader = new CmfDataUploader(this);
 
         characteristicCommandRead = new CmfCharacteristic(btCharacteristicCommandRead, this);
         characteristicCommandWrite = new CmfCharacteristic(btCharacteristicCommandWrite, null);
         characteristicDataRead = new CmfCharacteristic(btCharacteristicDataRead, dataUploader);
         characteristicDataWrite = new CmfCharacteristic(btCharacteristicDataWrite, null);
+        if (btCharacteristicFirmwareRead != null && btCharacteristicFirmwareWrite != null) {
+            characteristicFirmwareRead = new CmfCharacteristic(btCharacteristicFirmwareRead, dataUploader);
+            characteristicFirmwareWrite = new CmfCharacteristic(btCharacteristicFirmwareWrite, null);
+        }
 
         builder.notify(btCharacteristicCommandRead, true);
         builder.notify(btCharacteristicDataRead, true);
         if (btCharacteristicShellRead != null) {
             builder.notify(btCharacteristicShellRead, true);
         }
+        if (btCharacteristicFirmwareRead != null) {
+            builder.notify(btCharacteristicFirmwareRead, true);
+        }
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.AUTHENTICATING, getContext()));
+        builder.setDeviceState(GBDevice.State.AUTHENTICATING);
 
         final byte[] secretKey = getSecretKey(getDevice());
 
@@ -187,13 +219,19 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
             characteristicCommandWrite.setSessionKey(secretKey);
             characteristicDataRead.setSessionKey(secretKey);
             characteristicDataWrite.setSessionKey(secretKey);
+            if (characteristicFirmwareRead != null) {
+                characteristicFirmwareRead.setSessionKey(secretKey);
+            }
+            if (characteristicFirmwareWrite != null) {
+                characteristicFirmwareWrite.setSessionKey(secretKey);
+            }
 
             sendCommand(builder, CmfCommand.AUTH_PHONE_NAME, ArrayUtils.addAll(new byte[]{A5}, Build.MODEL.getBytes(StandardCharsets.UTF_8)));
         } else if (btCharacteristicShellWrite != null) {
-            builder.write(getCharacteristic(UUID_CHARACTERISTIC_CMF_SHELL_WRITE), "AT GETSECRET".getBytes());
+            builder.write(UUID_CHARACTERISTIC_CMF_SHELL_WRITE, "AT GETSECRET".getBytes());
         } else {
             GB.toast(getContext(), R.string.authentication_failed_check_key, Toast.LENGTH_LONG, GB.WARN);
-            builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.NOT_CONNECTED, getContext()));
+            builder.setDeviceState(GBDevice.State.NOT_CONNECTED);
         }
 
         return builder;
@@ -208,19 +246,22 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
 
     @Override
     public boolean onCharacteristicChanged(final BluetoothGatt gatt,
-                                           final BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+                                           final BluetoothGattCharacteristic characteristic,
+                                           final byte[] value) {
+        if (super.onCharacteristicChanged(gatt, characteristic, value)) {
             return true;
         }
 
         final UUID characteristicUUID = characteristic.getUuid();
-        final byte[] value = characteristic.getValue();
 
         if (characteristicUUID.equals(characteristicCommandRead.getCharacteristicUUID())) {
             characteristicCommandRead.onCharacteristicChanged(value);
             return true;
         } else if (characteristicUUID.equals(characteristicDataRead.getCharacteristicUUID())) {
             characteristicDataRead.onCharacteristicChanged(value);
+            return true;
+        } else if (characteristicFirmwareRead != null && characteristicUUID.equals(characteristicFirmwareRead.getCharacteristicUUID())) {
+            characteristicFirmwareRead.onCharacteristicChanged(value);
             return true;
         } else if (characteristicUUID.equals(UUID_CHARACTERISTIC_CMF_SHELL_READ)) {
             handleShellCommand(value);
@@ -234,6 +275,10 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     @Override
     public void onMtuChanged(final BluetoothGatt gatt, final int mtu, final int status) {
         super.onMtuChanged(gatt, mtu, status);
+
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            return;
+        }
 
         characteristicCommandRead.setMtu(mtu);
         characteristicCommandWrite.setMtu(mtu);
@@ -252,6 +297,10 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
         }
 
         switch (cmd) {
+            case DATA_TRANSFER_FIRMWARE_INIT_1_REPLY:
+                // This one comes in the command characteristic because of reasons
+                dataUploader.onCommand(cmd, payload);
+                return;
             case AUTH_PAIR_REPLY:
                 final byte[] authRandom2 = ArrayUtils.subarray(payload, 0, 16);
                 final byte[] signedAuthRandom2 = ArrayUtils.subarray(payload, 16, 48);
@@ -323,6 +372,12 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
                     characteristicCommandWrite.setSessionKey(sessionKey);
                     characteristicDataRead.setSessionKey(sessionKey);
                     characteristicDataWrite.setSessionKey(sessionKey);
+                    if (characteristicFirmwareRead != null) {
+                        characteristicFirmwareRead.setSessionKey(sessionKey);
+                    }
+                    if (characteristicFirmwareWrite != null) {
+                        characteristicFirmwareWrite.setSessionKey(sessionKey);
+                    }
                 } catch (final Exception e) {
                     LOG.error("Failed to compute session key from auth nonce", e);
                     return;
@@ -345,9 +400,22 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
                 //sendCommand(phase2builder, CmfCommand.WATER_REMINDER_GET);
                 //sendCommand(phase2builder, CmfCommand.CONTACTS_GET);
                 //sendCommand(phase2builder, CmfCommand.ALARMS_GET);
+                //sendCommand(phase2builder, CmfCommand.CALL_REMINDER_REQUEST, 0x00);
+                preferences.setGoals(phase2builder);
+                preferences.setMeasurementSystem(phase2builder);
+                preferences.setLanguage(phase2builder);
+                preferences.setTimeFormat(phase2builder);
+                preferences.setDisplayOnLift(phase2builder);
+                preferences.setHeartAlerts(phase2builder);
+                preferences.setSpo2MonitoringInterval(phase2builder);
+                preferences.setStressMonitoringInterval(phase2builder);
+                preferences.setStandingReminder(phase2builder);
+                preferences.setHydrationReminder(phase2builder);
+                preferences.setActivityTypes(phase2builder);
+                preferences.setCallReminders(phase2builder);
                 // TODO premature to mark as initialized?
-                phase2builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
-                phase2builder.queue(getQueue());
+                phase2builder.setDeviceState(GBDevice.State.INITIALIZED);
+                phase2builder.queue();
                 return;
             case BATTERY:
                 final int battery = payload[0] & 0xff;
@@ -390,6 +458,12 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
                 }
                 evaluateGBDeviceEvent(findPhoneEvent);
                 return;
+            case CALL_REMINDER_RESPONSE:
+                LOG.debug("Got call reminder response: {}", GB.hexdump(payload));
+                // 00 -> ack set
+                // 01:00 -> disabled
+                // 01:01 -> enabled
+                break;
             case MUSIC_INFO_ACK:
                 LOG.debug("Got music info ack");
                 break;
@@ -429,7 +503,7 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     public void sendCommand(final String taskName, final CmfCommand cmd, final byte... payload) {
         final TransactionBuilder builder = createTransactionBuilder(taskName);
         sendCommand(builder, cmd, payload);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     public void sendCommand(final TransactionBuilder builder, final CmfCommand cmd, final byte... payload) {
@@ -439,7 +513,13 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     public void sendData(final String taskName, final CmfCommand cmd, final byte... payload) {
         final TransactionBuilder builder = createTransactionBuilder(taskName);
         characteristicDataWrite.sendCommand(builder, cmd, payload);
-        builder.queue(getQueue());
+        builder.queue();
+    }
+
+    public void sendFirmware(final String taskName, final CmfCommand cmd, final byte... payload) {
+        final TransactionBuilder builder = createTransactionBuilder(taskName);
+        characteristicFirmwareWrite.sendCommand(builder, cmd, payload);
+        builder.queue();
     }
 
     private void handleShellCommand(final byte[] bytes) {
@@ -517,7 +597,7 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     public void onSetGpsLocation(final Location location) {
         final TransactionBuilder builder = createTransactionBuilder("set gps location");
         sendGpsCoords(builder, location);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     private void sendGpsCoords(final TransactionBuilder builder, final Location location) {
@@ -582,7 +662,7 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     public void onSetTime() {
         final TransactionBuilder builder = createTransactionBuilder("set time");
         setTime(builder);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     private void setTime(final TransactionBuilder builder) {
@@ -689,7 +769,7 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     }
 
     @Override
-    public void onInstallApp(final Uri uri) {
+    public void onInstallApp(final Uri uri, @NonNull final Bundle options) {
         dataUploader.onInstallApp(uri);
     }
 
@@ -737,8 +817,12 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     }
 
     @Override
-    public void onSendWeather(final ArrayList<WeatherSpec> weatherSpecs) {
-        final WeatherSpec weatherSpec = weatherSpecs.get(0);
+    public void onSendWeather() {
+        WeatherSpec weatherSpec = Weather.getWeatherSpec();
+        if (weatherSpec == null) {
+            LOG.warn("No weather found in singleton");
+            return;
+        }
         // TODO consider adjusting the condition code for clear/sunny so "clear" at night doesn't show a sunny icon (perhaps 23 decimal)?
         // Each weather entry takes up 9 bytes
         // There are 7 of those weather entries - 7*9 bytes
@@ -748,30 +832,42 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
         final boolean supportsSunriseSunset = getCoordinator().supportsSunriseSunset();
         final int payloadLength = (7 * 9) + (24 * 2) + (supportsSunriseSunset ? 32 : 30) + (supportsSunriseSunset ? 7 * 8 : 0);
         final ByteBuffer buf = ByteBuffer.allocate(payloadLength).order(ByteOrder.BIG_ENDIAN);
+
+        long currentTime = System.currentTimeMillis() / 1000;
+        long sunrise = weatherSpec.getSunRise(); // epoch seconds
+        long sunset  = weatherSpec.getSunSet();  // epoch seconds
+        boolean isDay = currentTime >= sunrise && currentTime < sunset;
+
         // start with the current day's weather
-        buf.put(Weather.mapToCmfCondition(weatherSpec.currentConditionCode));
-        buf.put((byte) (weatherSpec.currentTemp - 273 + 100)); // convert Kelvin to C, add 100
-        buf.put((byte) (weatherSpec.todayMaxTemp - 273 + 100)); // convert Kelvin to C, add 100
-        buf.put((byte) (weatherSpec.todayMinTemp - 273 + 100)); // convert Kelvin to C, add 100
-        buf.put((byte) weatherSpec.currentHumidity);
-        buf.putShort((short) (weatherSpec.airQuality != null ? weatherSpec.airQuality.aqi : 0));
-        buf.put((byte) weatherSpec.uvIndex); // UV index isn't shown. uvi decimal/100, so 0x07 = 700 UVI.
-        buf.put((byte) weatherSpec.windSpeed); // isn't shown by watch, unsure of correct units
+        // Condition
+        byte cmfCondition = WeatherMapper.mapToCmfCondition(weatherSpec.getCurrentConditionCode());
+        // If the sun has set, use moon icons where possible
+        if (!isDay) cmfCondition = WeatherMapper.cmfConditionToNight(cmfCondition);
+        buf.put(cmfCondition);
+        // Temperatures, humidity, aqi, uv and wind speed
+        buf.put((byte) (weatherSpec.getCurrentTemp() - 273 + 100)); // convert Kelvin to C, add 100
+        buf.put((byte) (weatherSpec.getTodayMaxTemp() - 273 + 100)); // convert Kelvin to C, add 100
+        buf.put((byte) (weatherSpec.getTodayMinTemp() - 273 + 100)); // convert Kelvin to C, add 100
+        buf.put((byte) weatherSpec.getCurrentHumidity());
+        buf.putShort((short) (weatherSpec.getAirQuality() != null ? weatherSpec.getAirQuality().getAqi() : 0));
+        buf.put((byte) weatherSpec.getUvIndex()); // UV index isn't shown. uvi decimal/100, so 0x07 = 700 UVI.
+        buf.put((byte) weatherSpec.getWindSpeed()); // isn't shown by watch, unsure of correct units
 
         // find out how many future days' forecasts are available
-        int maxForecastsAvailable = weatherSpec.forecasts.size();
+        int maxForecastsAvailable = weatherSpec.getForecasts().size();
         // For each day of the forecast
         for (int i = 0; i < 6; i++) {
             if (i < maxForecastsAvailable) {
-                WeatherSpec.Daily forecastDay = weatherSpec.forecasts.get(i);
-                buf.put((byte) (Weather.mapToCmfCondition(forecastDay.conditionCode)));  // weather condition flag
-                buf.put((byte) (forecastDay.maxTemp - 273 + 100)); // temp in C (not shown in future days' forecasts)
-                buf.put((byte) (forecastDay.maxTemp - 273 + 100)); // max temp in C, + 100
-                buf.put((byte) (forecastDay.minTemp - 273 + 100)); // min temp in C, + 100
-                buf.put((byte) forecastDay.humidity); // humidity as a %
-                buf.putShort((short) (forecastDay.airQuality != null ? forecastDay.airQuality.aqi : 0));
-                buf.put((byte) forecastDay.uvIndex); // UV index isn't shown. uvi decimal/100, so 0x07 = 700 UVI.
-                buf.put((byte) forecastDay.windSpeed); // isn't shown by watch, unsure of correct units
+                WeatherSpec.Daily forecastDay = weatherSpec.getForecasts().get(i);
+                // The watch can only show one icon for future days and this is the "day" icon:
+                buf.put(WeatherMapper.mapToCmfCondition(forecastDay.getConditionCode()));  // weather condition flag
+                buf.put((byte) (forecastDay.getMaxTemp() - 273 + 100)); // temp in C (not shown in future days' forecasts)
+                buf.put((byte) (forecastDay.getMaxTemp() - 273 + 100)); // max temp in C, + 100
+                buf.put((byte) (forecastDay.getMinTemp() - 273 + 100)); // min temp in C, + 100
+                buf.put((byte) forecastDay.getHumidity()); // humidity as a %, not shown by watch?
+                buf.putShort((short) (forecastDay.getAirQuality() != null ? forecastDay.getAirQuality().getAqi() : 0));
+                buf.put((byte) forecastDay.getUvIndex()); // UV index isn't shown. uvi decimal/100, so 0x07 = 700 UVI.
+                buf.put((byte) forecastDay.getWindSpeed()); // isn't shown by watch, unsure of correct units
             } else {
                 // we need to provide a dummy forecast as there's no data available
                 buf.put((byte) 0x00); // NULL weather condition
@@ -785,20 +881,54 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
             }
 
         }
-        // now add the hourly data for today - just condition and temperature
-        int maxHourlyForecastsAvailable = weatherSpec.hourly.size();
-        for (int i = 0; i < 24; i++) {
-            if (i < maxHourlyForecastsAvailable) {
-                WeatherSpec.Hourly forecastHr = weatherSpec.hourly.get(i);
-                buf.put((byte) (forecastHr.temp - 273 + 100)); // temperature
-                buf.put((byte) forecastHr.conditionCode); // condition
-            } else {
-                buf.put((byte) (weatherSpec.currentTemp - 273 + 100)); // assume current temp
-                buf.put((byte) (Weather.mapToCmfCondition(weatherSpec.currentConditionCode))); // current condition
+
+        // hourly data for next 24 hours, the current hour (or hours before that) should not be included! only condition and temperature
+        int maxHourlyForecastsAvailable = weatherSpec.getHourly().size();
+        int writtenHourlyForecasts = 0;
+        long nextHour = ((currentTime + 3600 - 1) / 3600) * 3600;
+
+        // sunset/sunrise stuff, since we only show 24h, only today and tomorrow is important
+        WeatherSpec.Daily tomorrow = weatherSpec.getForecasts().get(0); // Weatherspec is today, forecasts is tomorrow and onward
+        LocalDate tomorrowDate = Instant.ofEpochSecond(tomorrow.getSunRise()).atZone(ZoneOffset.UTC).toLocalDate();
+
+        for (int i = 0; i < maxHourlyForecastsAvailable && writtenHourlyForecasts < 24; i++) {
+            WeatherSpec.Hourly forecastHr = weatherSpec.getHourly().get(i);
+            // Skip current / past hours
+            if (forecastHr.getTimestamp() < nextHour) {
+                continue;
             }
+
+            // Temperature
+            buf.put((byte) (forecastHr.getTemp() - 273 + 100));
+
+            // If the checked forecast-hour is more the current day sunset, check if the day has ended, if so update the sunset/sunrise to be for tomorrow
+            if (forecastHr.getTimestamp() > sunset) {
+                LocalDate forecastHrDate = Instant.ofEpochSecond(forecastHr.getTimestamp()).atZone(ZoneOffset.UTC).toLocalDate();
+                if (forecastHrDate.equals(tomorrowDate)) {
+                    sunrise = tomorrow.getSunRise();
+                    sunset = tomorrow.getSunSet();
+                }
+            }
+            isDay = forecastHr.getTimestamp() >= sunrise && forecastHr.getTimestamp() < sunset;
+
+            // Get condition
+            cmfCondition = WeatherMapper.mapToCmfCondition(forecastHr.getConditionCode());
+            // If the sun has set, use moon icons where possible
+            if (!isDay) cmfCondition = WeatherMapper.cmfConditionToNight(cmfCondition);
+            buf.put(cmfCondition); // condition
+
+            writtenHourlyForecasts++;
         }
+
+        // Pad if fewer than 24 entries were written
+        while (writtenHourlyForecasts < 24) {
+            buf.put((byte) 0x01);
+            buf.put((byte) 0x00);
+            writtenHourlyForecasts++;
+        }
+
         // place name - watch scrolls after ~10 chars. Pad up to 32 bytes.
-        final byte[] locationNameBytes = nodomain.freeyourgadget.gadgetbridge.util.StringUtils.truncateToBytes(weatherSpec.location, 30);
+        final byte[] locationNameBytes = nodomain.freeyourgadget.gadgetbridge.util.StringUtils.truncateToBytes(weatherSpec.getLocation(), 30);
         buf.put(locationNameBytes);
 
         // Sunrise / sunset
@@ -806,21 +936,21 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
             buf.put(new byte[32 - locationNameBytes.length]);
 
             buf.order(ByteOrder.LITTLE_ENDIAN); // why...
-            final Location location = weatherSpec.getLocation() != null ? weatherSpec.getLocation() : new CurrentPosition().getLastKnownLocation();
+            final Location location = weatherSpec.getLocationObject() != null ? weatherSpec.getLocationObject() : new CurrentPosition().getLastKnownLocation();
             final GregorianCalendar sunriseDate = new GregorianCalendar();
 
-            if (weatherSpec.sunRise != 0 && weatherSpec.sunSet != 0) {
-                buf.putInt(weatherSpec.sunRise);
-                buf.putInt(weatherSpec.sunSet);
+            if (weatherSpec.getSunRise() != 0 && weatherSpec.getSunSet() != 0) {
+                buf.putInt(weatherSpec.getSunRise());
+                buf.putInt(weatherSpec.getSunSet());
             } else {
                 putSunriseSunset(buf, location, sunriseDate);
             }
 
             for (int i = 0; i < 6; i++) {
                 sunriseDate.add(Calendar.DAY_OF_MONTH, 1);
-                if (i < weatherSpec.forecasts.size() && weatherSpec.forecasts.get(i).sunRise != 0 && weatherSpec.forecasts.get(i).sunSet != 0) {
-                    buf.putInt(weatherSpec.forecasts.get(i).sunRise);
-                    buf.putInt(weatherSpec.forecasts.get(i).sunSet);
+                if (i < weatherSpec.getForecasts().size() && weatherSpec.getForecasts().get(i).getSunRise() != 0 && weatherSpec.getForecasts().get(i).getSunSet() != 0) {
+                    buf.putInt(weatherSpec.getForecasts().get(i).getSunRise());
+                    buf.putInt(weatherSpec.getForecasts().get(i).getSunSet());
                 } else {
                     putSunriseSunset(buf, location, sunriseDate);
                 }
@@ -848,7 +978,7 @@ public class CmfWatchProSupport extends AbstractBTLEDeviceSupport implements Cmf
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
 
     }
 }

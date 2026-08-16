@@ -19,6 +19,8 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.xiaomi.activity.imp
 import static nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryEntries.SWIM_STYLE;
 import static nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryEntries.TIME_END;
 import static nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryEntries.TIME_START;
+import static nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryEntries.UNIT_NONE;
+import static nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryEntries.UNIT_SECONDS;
 import static nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryEntries.UNIT_UNIX_EPOCH_SECONDS;
 
 import org.slf4j.Logger;
@@ -27,17 +29,34 @@ import org.slf4j.LoggerFactory;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
+import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.activities.workouts.entries.ActivitySummaryProgressEntry;
+import nodomain.freeyourgadget.gadgetbridge.devices.xiaomi.XiaomiWorkoutType;
 import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummary;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryData;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryEntries;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 public class XiaomiSimpleActivityParser {
     private static final Logger LOG = LoggerFactory.getLogger(XiaomiSimpleActivityParser.class);
 
     public static final String XIAOMI_WORKOUT_TYPE = "xiaomiWorkoutType";
+
+    /** Keys that should render even when the parsed value is zero. Default
+     *  {@link ActivitySummaryData#add} drops zeros; for high-signal Xiaomi
+     *  fields users still want to see the row (e.g. so an absent vitality
+     *  gain is visibly "0" rather than missing). */
+    private static final Set<String> ALWAYS_SHOW_KEYS = Set.of(
+            ActivitySummaryEntries.VITALITY_GAIN,
+            ActivitySummaryEntries.WORKOUT_LOAD
+    );
 
     private final int headerSize;
     private final List<XiaomiSimpleDataEntry> dataEntries;
@@ -55,18 +74,25 @@ public class XiaomiSimpleActivityParser {
 
         LOG.debug("Header: {}", GB.hexdump(header));
 
+        final Map<String, Number> hrZones = new HashMap<>(5);
+
         for (int i = 0; i < dataEntries.size(); i++) {
+            final int before = buf.position();
+
             final XiaomiSimpleDataEntry dataEntry = dataEntries.get(i);
 
             final Number value = dataEntry.get(buf);
+            final int fieldSize = buf.position() - before;
             if (value == null) {
-                LOG.debug("Skipping unknown field {}", i);
+                LOG.debug("Field {} = {} unknown bytes, skipping", i, fieldSize);
                 continue;
             }
 
+            LOG.debug("Field {} = {} as {} ({}b)", i, value, dataEntry, fieldSize);
+
             // Each bit in the header marks whether the data is valid or not, in order of the fields
             final boolean validData = (header[i / 8] & (1 << (7 - (i % 8)))) != 0;
-            // FIXME: We can't use the header before identifying the correct field lenggths for unknown fields
+            // FIXME: We can't use the header before identifying the correct field lengths for unknown fields
             // or parsing gets out of sync with the header and we will potentially ignore valid data
             //if (!validData) {
             //    LOG.debug("Ignoring non-valid data {}", i);
@@ -99,117 +125,108 @@ public class XiaomiSimpleActivityParser {
 
                 summaryData.add(dataEntry.getKey(), swimStyleName);
             } else if (dataEntry.getKey().equals(XIAOMI_WORKOUT_TYPE)) {
-                switch (value.intValue()) {
-                    case 1:
-                        summary.setActivityKind(ActivityKind.OUTDOOR_RUNNING.getCode());
-                        break;
-                    case 2:
-                        summary.setActivityKind(ActivityKind.WALKING.getCode());
-                        break;
-                    case 4:
-                        summary.setActivityKind(ActivityKind.TREKKING.getCode());
-                        break;
-                    case 5:
-                        summary.setActivityKind(ActivityKind.TRAIL_RUN.getCode());
-                        break;
-                    case 6:
-                        summary.setActivityKind(ActivityKind.OUTDOOR_CYCLING.getCode());
-                        break;
-                    case 7:   // indoor cycling   0x0007
-                        summary.setActivityKind(ActivityKind.INDOOR_CYCLING.getCode());
-                        break;
-                    case 8:   // freestyle        0x0008
-                        summary.setActivityKind(ActivityKind.FREE_TRAINING.getCode());
-                        break;
-                    case 12:  // yoga             0x000c
-                        summary.setActivityKind(ActivityKind.YOGA.getCode());
-                        break;
-                    case 15:
-                        summary.setActivityKind(ActivityKind.OUTDOOR_WALKING.getCode());
-                        break;
-                    case 16:  // HIIT             0x0010
-                        summary.setActivityKind(ActivityKind.HIIT.getCode());
-                        break;
-                    case 201: // skateboard       0x00c9
-                        summary.setActivityKind(ActivityKind.SKATEBOARDING.getCode());
-                        break;
-                    case 202: // roller skating   0x00ca
-                        summary.setActivityKind(ActivityKind.ROLLER_SKATING.getCode());
-                        break;
-                    case 301: // stair climbing   0x012d
-                        summary.setActivityKind(ActivityKind.STAIRS.getCode());
-                        break;
-                    case 303: // core training    0x012f
-                        summary.setActivityKind(ActivityKind.CORE_TRAINING.getCode());
-                        break;
-                    case 304: // flexibility      0x0130
-                        summary.setActivityKind(ActivityKind.FLEXIBILITY.getCode());
-                        break;
-                    case 305: // pilates          0x0131
-                        summary.setActivityKind(ActivityKind.PILATES.getCode());
-                        break;
-                    case 307: // stretching       0x0133
-                        summary.setActivityKind(ActivityKind.STRETCHING.getCode());
-                        break;
-                    case 308: // strength         0x0134
-                        summary.setActivityKind(ActivityKind.STRENGTH_TRAINING.getCode());
-                        break;
-                    case 310: // aerobics         0x0136
-                        summary.setActivityKind(ActivityKind.AEROBICS.getCode());
-                        break;
-                    case 399: // indoor-Fitness   0x018f
-                        summary.setActivityKind(ActivityKind.INDOOR_FITNESS.getCode());
-                        break;
-                    case 499: // dancing          0x01f3
-                        summary.setActivityKind(ActivityKind.DANCE.getCode());
-                        break;
-                    case 600: // Soccer           0x0258
-                        summary.setActivityKind(ActivityKind.SOCCER.getCode());
-                        break;
-                    case 601: // basketball       0x0259
-                        summary.setActivityKind(ActivityKind.BASKETBALL.getCode());
-                        break;
-                    case 607: // table tennis     0x025f
-                        summary.setActivityKind(ActivityKind.TABLE_TENNIS.getCode());
-                        break;
-                    case 608: // badminton        0x0260
-                        summary.setActivityKind(ActivityKind.BADMINTON.getCode());
-                        break;
-                    case 609: // tennis           0x0261
-                        summary.setActivityKind(ActivityKind.TENNIS.getCode());
-                        break;
-                    case 614: // billiard          0x0266
-                        summary.setActivityKind(ActivityKind.BILLIARDS.getCode());
-                        break;
-                    case 619: // golf             0x026b
-                        summary.setActivityKind(ActivityKind.GOLF.getCode());
-                        break;
-                    case 700: // ice skating      0x02bc
-                        summary.setActivityKind(ActivityKind.ICE_SKATING.getCode());
-                        break;
-                    case 708: // snowboard        0x02c4
-                        summary.setActivityKind(ActivityKind.SNOWBOARDING.getCode());
-                        break;
-                    case 709: // skiing           0x02c5
-                        summary.setActivityKind(ActivityKind.SKIING.getCode());
-                        break;
-                    case 808: // shuttlecock      0x0328
-                        summary.setActivityKind(ActivityKind.SHUTTLECOCK.getCode());
-                        break;
-                    default:
-                        summary.setActivityKind(ActivityKind.UNKNOWN.getCode());
+                final ActivityKind activityKind = XiaomiWorkoutType.fromCode(value.intValue());
+                summary.setActivityKind(activityKind.getCode());
+                if (activityKind == ActivityKind.UNKNOWN) {
+                    summaryData.add(dataEntry.getKey(), value, UNIT_NONE);
                 }
+            } else if (ActivitySummaryEntries.HR_ZONES.containsKey(dataEntry.getKey())) {
+                // Save the HR zones so we can add them later in order
+                hrZones.put(dataEntry.getKey(), value);
             } else {
-                summaryData.add(dataEntry.getKey(), value.floatValue(), dataEntry.getUnit());
+                final String key = dataEntry.getKey();
+                final boolean force = ALWAYS_SHOW_KEYS.contains(key);
+                summaryData.add(key, value.floatValue(), dataEntry.getUnit(), force);
             }
         }
+
+        if (!hrZones.isEmpty()) {
+            final int totalTime = hrZones.values().stream().mapToInt(Number::intValue).sum();
+            if (totalTime != 0) {
+                for (Map.Entry<String, Integer> zone : ActivitySummaryEntries.HR_ZONES.entrySet()) {
+                    final String zoneKey = zone.getKey();
+                    if (!hrZones.containsKey(zoneKey)) {
+                        continue;
+                    }
+                    final int zoneColor = zone.getValue();
+                    final int zoneTime = Objects.requireNonNull(hrZones.get(zoneKey)).intValue();
+
+                    final int resolvedColor;
+                    if (zoneColor != 0 && GBApplication.getContext() != null) {
+                        resolvedColor = GBApplication.getContext().getResources().getColor(zoneColor);
+                    } else {
+                        resolvedColor = 0;
+                    }
+                    summaryData.add(
+                            zoneKey,
+                            new ActivitySummaryProgressEntry(
+                                    zoneTime,
+                                    UNIT_SECONDS,
+                                    ((100 * zoneTime) / totalTime),
+                                    resolvedColor
+                            )
+                    );
+                }
+            }
+        }
+
+        // hasGps is derived from rawDetailsPath: WorkoutGpsParser sets the path only when
+        // a non-empty GPS_TRACK file is saved. WorkoutGpsParser also re-runs this derivation
+        // when it persists, so order does not matter.
+        summaryData.setHasGps(summary.getRawDetailsPath() != null);
+
+        computeGoalPercents(summaryData);
 
         summary.setSummaryData(summaryData.toString());
     }
 
+    /** Derive *_goal_percent rows from each (actual, goal) pair the parser emitted.
+     *  Skipped when the goal is zero or the actual is missing. For pace, lower actual
+     *  is better, so percent = goal / actual; for everything else, percent = actual / goal.
+     *  Values are clamped to [0, 999] to keep the rendered chip stable on outliers. */
+    private static void computeGoalPercents(final ActivitySummaryData data) {
+        computeGoalPercent(data, ActivitySummaryEntries.ACTIVE_SECONDS,
+                ActivitySummaryEntries.TIME_GOAL, ActivitySummaryEntries.TIME_GOAL_PERCENT, false);
+        computeGoalPercent(data, ActivitySummaryEntries.CALORIES_BURNT,
+                ActivitySummaryEntries.CALORIES_GOAL, ActivitySummaryEntries.CALORIES_GOAL_PERCENT, false);
+        computeGoalPercent(data, ActivitySummaryEntries.DISTANCE_METERS,
+                ActivitySummaryEntries.DISTANCE_GOAL, ActivitySummaryEntries.DISTANCE_GOAL_PERCENT, false);
+        computeGoalPercent(data, ActivitySummaryEntries.SPEED_AVG,
+                ActivitySummaryEntries.SPEED_GOAL, ActivitySummaryEntries.SPEED_GOAL_PERCENT, false);
+        computeGoalPercent(data, ActivitySummaryEntries.CADENCE_AVG,
+                ActivitySummaryEntries.CADENCE_GOAL, ActivitySummaryEntries.CADENCE_GOAL_PERCENT, false);
+        computeGoalPercent(data, ActivitySummaryEntries.LAPS,
+                ActivitySummaryEntries.LENGTHS_GOAL, ActivitySummaryEntries.LENGTHS_GOAL_PERCENT, false);
+        computeGoalPercent(data, ActivitySummaryEntries.PACE_AVG_SECONDS_KM,
+                ActivitySummaryEntries.PACE_GOAL, ActivitySummaryEntries.PACE_GOAL_PERCENT, true);
+    }
+
+    private static void computeGoalPercent(final ActivitySummaryData data,
+                                           final String actualKey,
+                                           final String goalKey,
+                                           final String percentKey,
+                                           final boolean lowerIsBetter) {
+        final Number actualNum = data.getNumber(actualKey, null);
+        final Number goalNum = data.getNumber(goalKey, null);
+        if (actualNum == null || goalNum == null) return;
+        final double actual = actualNum.doubleValue();
+        final double goal = goalNum.doubleValue();
+        if (goal <= 0) return;
+        final double percent;
+        if (lowerIsBetter) {
+            if (actual <= 0) return;
+            percent = goal / actual * 100.0;
+        } else {
+            percent = actual / goal * 100.0;
+        }
+        if (!Double.isFinite(percent)) return;
+        final double clamped = Math.max(0.0, Math.min(percent, 999.0));
+        data.add(percentKey, (float) clamped, ActivitySummaryEntries.UNIT_PERCENTAGE, true);
+    }
+
     public static class Builder {
         private int headerSize;
-        private List<XiaomiSimpleDataEntry> dataEntries = new ArrayList<>();
+        private final List<XiaomiSimpleDataEntry> dataEntries = new ArrayList<>();
 
         public Builder setHeaderSize(final int headerSize) {
             this.headerSize = headerSize;
@@ -226,6 +243,11 @@ public class XiaomiSimpleActivityParser {
             return this;
         }
 
+        public Builder addShort(final String key, final String unit, final double multiplier) {
+            dataEntries.add(new XiaomiSimpleDataEntry(key, unit, ByteBuffer::getShort, multiplier));
+            return this;
+        }
+
         public Builder addInt(final String key, final String unit) {
             dataEntries.add(new XiaomiSimpleDataEntry(key, unit, ByteBuffer::getInt));
             return this;
@@ -238,9 +260,7 @@ public class XiaomiSimpleActivityParser {
 
         public Builder addUnknown(final int sizeBytes) {
             dataEntries.add(new XiaomiSimpleDataEntry(null, null, buf -> {
-                for (int i = 0; i < sizeBytes; i++) {
-                    buf.get();
-                }
+                buf.get(new byte[sizeBytes]);
                 return null;
             }));
             return this;

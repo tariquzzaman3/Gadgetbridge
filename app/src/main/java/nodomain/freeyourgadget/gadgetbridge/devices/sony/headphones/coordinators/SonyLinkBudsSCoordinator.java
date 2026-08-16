@@ -16,13 +16,18 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.coordinators;
 
+import androidx.annotation.NonNull;
+
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCapabilities;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class SonyLinkBudsSCoordinator extends SonyHeadphonesCoordinator {
     @Override
@@ -30,9 +35,10 @@ public class SonyLinkBudsSCoordinator extends SonyHeadphonesCoordinator {
         return Pattern.compile(".*LinkBuds S.*");
     }
 
+    @NonNull
     @Override
-    public List<SonyHeadphonesCapabilities> getCapabilities() {
-        return Arrays.asList(
+    public Set<SonyHeadphonesCapabilities> getDefaultCapabilities() {
+        return new HashSet<>(Arrays.asList(
                 SonyHeadphonesCapabilities.BatteryDual,
                 SonyHeadphonesCapabilities.BatteryCase,
                 SonyHeadphonesCapabilities.AmbientSoundControl,
@@ -47,7 +53,7 @@ public class SonyLinkBudsSCoordinator extends SonyHeadphonesCoordinator {
                 SonyHeadphonesCapabilities.SpeakToChatConfig,
                 SonyHeadphonesCapabilities.VoiceNotifications,
                 SonyHeadphonesCapabilities.EqualizerWithCustomBands
-        );
+        ));
     }
 
     @Override
@@ -66,7 +72,7 @@ public class SonyLinkBudsSCoordinator extends SonyHeadphonesCoordinator {
     }
 
     @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_galaxy_buds_disabled;
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.EARBUDS;
     }
 }

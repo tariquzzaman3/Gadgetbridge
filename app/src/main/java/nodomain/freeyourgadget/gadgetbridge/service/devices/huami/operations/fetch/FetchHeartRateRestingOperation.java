@@ -18,6 +18,8 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.huami.operations.fe
 
 import android.widget.Toast;
 
+import androidx.annotation.StringRes;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,14 +33,14 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
+import nodomain.freeyourgadget.gadgetbridge.devices.HuamiHeartRateRestingSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiHeartRateRestingSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuamiHeartRateRestingSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.User;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiFetcher;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 /**
@@ -47,13 +49,14 @@ import nodomain.freeyourgadget.gadgetbridge.util.GB;
 public class FetchHeartRateRestingOperation extends AbstractRepeatingFetchOperation {
     private static final Logger LOG = LoggerFactory.getLogger(FetchHeartRateRestingOperation.class);
 
-    public FetchHeartRateRestingOperation(final HuamiSupport support) {
-        super(support, HuamiFetchDataType.RESTING_HEART_RATE);
+    public FetchHeartRateRestingOperation(final HuamiFetcher fetcher) {
+        super(fetcher, HuamiFetchDataType.RESTING_HEART_RATE);
     }
 
+    @StringRes
     @Override
-    protected String taskDescription() {
-        return getContext().getString(R.string.busy_task_fetch_hr_data);
+    public int taskDescription() {
+        return R.string.busy_task_fetch_hr_data;
     }
 
     @Override

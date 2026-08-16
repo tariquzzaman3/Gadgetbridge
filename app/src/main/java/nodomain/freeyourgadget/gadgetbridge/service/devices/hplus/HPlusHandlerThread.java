@@ -37,7 +37,6 @@ import nodomain.freeyourgadget.gadgetbridge.GBException;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.devices.hplus.HPlusConstants;
-import nodomain.freeyourgadget.gadgetbridge.devices.hplus.HPlusCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.hplus.HPlusHealthSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.HPlusHealthActivityOverlay;
@@ -86,6 +85,8 @@ class HPlusHandlerThread extends GBDeviceIoThread {
 
     @Override
     public void run() {
+        LOG.debug("started thread {} for {}", getName(), gbDevice.getAddress());
+
         mQuit = false;
 
         sync();
@@ -98,7 +99,7 @@ class HPlusHandlerThread extends GBDeviceIoThread {
                     try {
                         waitObject.wait(waitTime);
                     } catch (InterruptedException e) {
-                        e.printStackTrace();
+                        LOG.warn("exception in run", e);
                     }
                 }
             }
@@ -132,7 +133,7 @@ class HPlusHandlerThread extends GBDeviceIoThread {
             now = GregorianCalendar.getInstance();
             waitTime = Math.min(mGetDaySummaryTime.getTimeInMillis(), Math.min(mGetDaySlotsTime.getTimeInMillis(), Math.min(mHelloTime.getTimeInMillis(), mGetSleepTime.getTimeInMillis()))) - now.getTimeInMillis();
         }
-
+        LOG.debug("finished thread {}", getName());
     }
 
     @Override
@@ -165,13 +166,13 @@ class HPlusHandlerThread extends GBDeviceIoThread {
             if (!mHPlusSupport.isConnected())
                 mHPlusSupport.connect();
 
-            TransactionBuilder builder = new TransactionBuilder("startSyncDayStats");
+            TransactionBuilder builder = mHPlusSupport.createTransactionBuilder("startSyncDayStats");
 
             builder.write(mHPlusSupport.ctrlCharacteristic, new byte[]{HPlusConstants.CMD_GET_DEVICE_ID});
             builder.write(mHPlusSupport.ctrlCharacteristic, new byte[]{HPlusConstants.CMD_GET_VERSION});
             builder.write(mHPlusSupport.ctrlCharacteristic, new byte[]{HPlusConstants.CMD_GET_CURR_DATA});
 
-            mHPlusSupport.performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (Exception e) {
             LOG.warn("HPlus: Synchronization exception: " + e);
         }
@@ -183,9 +184,9 @@ class HPlusHandlerThread extends GBDeviceIoThread {
 
     public void sendHello() {
         try {
-            TransactionBuilder builder = new TransactionBuilder("hello");
+            TransactionBuilder builder = mHPlusSupport.createTransactionBuilder("hello");
             builder.write(mHPlusSupport.ctrlCharacteristic, HPlusConstants.CMD_ACTION_HELLO);
-            mHPlusSupport.performConnected(builder.getTransaction());
+            builder.queueConnected();
 
         } catch (Exception e) {
 
@@ -265,6 +266,7 @@ class HPlusHandlerThread extends GBDeviceIoThread {
         if (mDaySlotRecords.size() > 0) {
             //Sort the samples
             Collections.sort(mDaySlotRecords, new Comparator<HPlusDataRecordDaySlot>() {
+                @Override
                 public int compare(HPlusDataRecordDaySlot one, HPlusDataRecordDaySlot other) {
                     return one.timestamp - other.timestamp;
                 }
@@ -425,7 +427,7 @@ class HPlusHandlerThread extends GBDeviceIoThread {
 
         prevRealTimeRecord = record;
 
-        getDevice().setBatteryLevel(record.battery);
+        getDevice().setBatteryLevel(record.battery, 0);
 
         try (DBHandler dbHandler = GBApplication.acquireDB()) {
             HPlusHealthSampleProvider provider = new HPlusHealthSampleProvider(getDevice(), dbHandler.getDaoSession());
@@ -540,9 +542,9 @@ class HPlusHandlerThread extends GBDeviceIoThread {
      */
     private void requestNextSleepData() {
         try {
-            TransactionBuilder builder = new TransactionBuilder("requestSleepStats");
+            TransactionBuilder builder = mHPlusSupport.createTransactionBuilder("requestSleepStats");
             builder.write(mHPlusSupport.ctrlCharacteristic, new byte[]{HPlusConstants.CMD_GET_SLEEP});
-            mHPlusSupport.performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (Exception e) {
 
         }
@@ -595,9 +597,9 @@ class HPlusHandlerThread extends GBDeviceIoThread {
         byte[] msg = new byte[]{HPlusConstants.CMD_GET_ACTIVE_DAY, hour, minute, nextHour, nextMinute};
         try {
 
-            TransactionBuilder builder = new TransactionBuilder("getNextDaySlot");
+            TransactionBuilder builder = mHPlusSupport.createTransactionBuilder("getNextDaySlot");
             builder.write(mHPlusSupport.ctrlCharacteristic, msg);
-            mHPlusSupport.performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (Exception e) {
 
         }
@@ -608,9 +610,9 @@ class HPlusHandlerThread extends GBDeviceIoThread {
      */
     public void requestDaySummaryData() {
         try {
-            TransactionBuilder builder = new TransactionBuilder("startSyncDaySummary");
+            TransactionBuilder builder = mHPlusSupport.createTransactionBuilder("startSyncDaySummary");
             builder.write(mHPlusSupport.ctrlCharacteristic, new byte[]{HPlusConstants.CMD_GET_DAY_DATA});
-            mHPlusSupport.performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (Exception e) {
 
         }

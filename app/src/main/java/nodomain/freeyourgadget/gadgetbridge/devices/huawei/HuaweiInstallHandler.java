@@ -17,27 +17,30 @@
 
 package nodomain.freeyourgadget.gadgetbridge.devices.huawei;
 
+import android.app.Activity;
 import android.content.Context;
 import android.net.Uri;
 import android.text.TextUtils;
+
+import androidx.annotation.NonNull;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.InstallActivity;
-import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.FwAppInstallerActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.InstallActivity;
 import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
-
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.GenericItem;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiAppManager;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiFwHelper;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiMusicManager;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiWatchfaceManager;
+import nodomain.freeyourgadget.gadgetbridge.util.audio.AudioInfo;
 
 public class HuaweiInstallHandler implements InstallHandler {
     private static final Logger LOG = LoggerFactory.getLogger(HuaweiInstallHandler.class);
@@ -54,11 +57,11 @@ public class HuaweiInstallHandler implements InstallHandler {
 
     private HuaweiMusicUtils.FormatRestrictions getRestriction(HuaweiMusicUtils.MusicCapabilities capabilities, String ext) {
         List<HuaweiMusicUtils.FormatRestrictions> restrictions = capabilities.formatsRestrictions;
-        if(restrictions == null)
+        if (restrictions == null)
             return null;
 
-        for(HuaweiMusicUtils.FormatRestrictions r: restrictions) {
-            if(ext.equals(r.getName())) {
+        for (HuaweiMusicUtils.FormatRestrictions r : restrictions) {
+            if (ext.equals(r.getName())) {
                 return r;
             }
         }
@@ -66,25 +69,25 @@ public class HuaweiInstallHandler implements InstallHandler {
     }
 
     //TODO: add proper checks
-    private boolean checkMediaCompatibility(HuaweiMusicUtils.MusicCapabilities capabilities, HuaweiMusicManager.AudioInfo currentMusicInfo) {
-        if(capabilities == null) {
+    private boolean checkMediaCompatibility(HuaweiMusicUtils.MusicCapabilities capabilities, AudioInfo currentMusicInfo) {
+        if (capabilities == null) {
             LOG.error("No media info from device");
             return false;
         }
         String ext = currentMusicInfo.getExtension();
 
         List<String> supportedFormats = capabilities.supportedFormats;
-        if(supportedFormats == null) {
+        if (supportedFormats == null) {
             LOG.error("Format not supported {}", ext);
             return false;
         }
-        if(!supportedFormats.contains(ext)) {
+        if (!supportedFormats.contains(ext)) {
             LOG.error("Format not supported {}", ext);
             return false;
         }
 
         HuaweiMusicUtils.FormatRestrictions restrictions = getRestriction(capabilities, ext);
-        if(restrictions == null) {
+        if (restrictions == null) {
             LOG.info("no restriction for: {}", ext);
             return true;
         }
@@ -95,7 +98,7 @@ public class HuaweiInstallHandler implements InstallHandler {
         LOG.info("sampleRate {}", Arrays.toString(restrictions.sampleRates));
         LOG.info("unknownBitrate {}", restrictions.unknownBitrate);
 
-        if(currentMusicInfo.getChannels() > restrictions.channels) {
+        if (currentMusicInfo.getChannels() > restrictions.channels) {
             LOG.error("Not supported channels count {} > {}", currentMusicInfo.getChannels(), restrictions.channels);
             return false;
         }
@@ -107,23 +110,100 @@ public class HuaweiInstallHandler implements InstallHandler {
 
 
     @Override
-    public void validateInstallation(InstallActivity installActivity, GBDevice device) {
+    public void validateInstallation(@NonNull InstallActivity installActivity, @NonNull GBDevice device) {
+        final HuaweiState huaweiDeviceState = HuaweiDeviceStateManager.get(device);
 
-        final DeviceCoordinator coordinator = device.getDeviceCoordinator();
-        if (!(coordinator instanceof HuaweiCoordinatorSupplier)) {
-            LOG.warn("Coordinator is not a HuaweiCoordinatorSupplier: {}", coordinator.getClass());
-            installActivity.setInstallEnabled(false);
+        if (helper.isOfflineMap) {
+            this.valid = true;
+
+            if (device.isBusy()) {
+                installActivity.setInfoText(device.getBusyTask());
+                installActivity.setInstallEnabled(false);
+                return;
+            }
+
+            if (!device.isConnected() || !device.isInitialized()) {
+                LOG.error("Offline Map cannot be uploaded(not connected or wrong device)");
+                installActivity.setInfoText("Offline Map cannot be uploaded (not connected or wrong device)");
+                installActivity.setInstallEnabled(false);
+                return;
+            }
+
+            if (this.helper.isMapContour)
+                this.valid = huaweiDeviceState.supportsOfflineContourMap();
+
+            if (!this.valid) {
+                LOG.error("Offline Map cannot be uploaded");
+                installActivity.setInstallEnabled(false);
+                return;
+            }
+
+            GenericItem installItem = new GenericItem();
+
+            installItem.setName(helper.mapName + "("+ helper.getFileName() +")");
+            installItem.setDetails(String.valueOf(helper.mapVersion));
+            installItem.setIcon(R.drawable.ic_offlinemap);
+
+            installActivity.setInstallItem(installItem);
+
+            installActivity.setInfoText("");
+            installActivity.setInstallEnabled(true);
+
+            LOG.debug("Initialized HuaweiInstallHandler: Offline Map");
+            return;
+        }
+
+        if (helper.isFirmware) {
+            this.valid = true; //NOTE: nothing to verify for now
+
+            if (device.isBusy()) {
+                installActivity.setInfoText(device.getBusyTask());
+                installActivity.setInstallEnabled(false);
+                return;
+            }
+
+            if (!device.isConnected() || !device.isInitialized()) {
+                LOG.error("Firmware cannot be uploaded(not connected or wrong device)");
+                installActivity.setInfoText("Firmware cannot be uploaded (not connected or wrong device)");
+                installActivity.setInstallEnabled(false);
+                return;
+            }
+
+            if (!this.valid) {
+                LOG.error("Firmware cannot be uploaded");
+                installActivity.setInstallEnabled(false);
+                return;
+            }
+
+            GenericItem installItem = new GenericItem();
+
+            installItem.setName(helper.fwInfo.versionName);
+
+            installItem.setDetails(helper.fwInfo.osVersion);
+
+            installItem.setIcon(R.drawable.ic_firmware);
+
+            installActivity.setInstallItem(installItem);
+
+            installActivity.setInfoText(context.getString(R.string.fw_upgrade_notice_huawei, helper.fwInfo.versionName, device.getAliasOrName(), device.getFirmwareVersion()));
+
+            installActivity.setInstallEnabled(true);
+
+            LOG.debug("Initialized HuaweiInstallHandler: Firmware");
             return;
         }
 
         if (helper.isWatchface()) {
-            final HuaweiCoordinatorSupplier huaweiCoordinatorSupplier = (HuaweiCoordinatorSupplier) coordinator;
 
             HuaweiWatchfaceManager.WatchfaceDescription description = helper.getWatchfaceDescription();
 
             HuaweiWatchfaceManager.Resolution resolution = new HuaweiWatchfaceManager.Resolution();
-            String deviceScreen = String.format("%d*%d", huaweiCoordinatorSupplier.getHuaweiCoordinator().getHeight(),
-                    huaweiCoordinatorSupplier.getHuaweiCoordinator().getWidth());
+            String deviceScreen = String.format(
+                    Locale.ROOT,
+                    "%d*%d",
+                    huaweiDeviceState.getHeight(),
+                    huaweiDeviceState.getWidth()
+            );
             this.valid = resolution.isValid(description.screen, deviceScreen);
 
             installActivity.setInstallEnabled(true);
@@ -137,8 +217,6 @@ public class HuaweiInstallHandler implements InstallHandler {
             installItem.setName(description.title);
             installActivity.setInstallItem(installItem);
             if (device.isBusy()) {
-                LOG.error("Watchface cannot be installed (device busy)");
-                installActivity.setInfoText("Watchface cannot be installed (device busy)");
                 installActivity.setInfoText(device.getBusyTask());
                 installActivity.setInstallEnabled(false);
                 return;
@@ -181,8 +259,6 @@ public class HuaweiInstallHandler implements InstallHandler {
             installItem.setName(config.bundleName);
             installActivity.setInstallItem(installItem);
             if (device.isBusy()) {
-                LOG.error("App cannot be installed (device busy)");
-                installActivity.setInfoText("App cannot be installed (device busy)");
                 installActivity.setInfoText(device.getBusyTask());
                 installActivity.setInstallEnabled(false);
                 return;
@@ -209,13 +285,11 @@ public class HuaweiInstallHandler implements InstallHandler {
 
             LOG.debug("Initialized HuaweiInstallHandler: App");
         } else if (helper.isMusic()) {
-            final HuaweiCoordinatorSupplier huaweiCoordinatorSupplier = (HuaweiCoordinatorSupplier) coordinator;
-
-            HuaweiMusicUtils.MusicCapabilities capabilities = huaweiCoordinatorSupplier.getHuaweiCoordinator().getExtendedMusicInfoParams();
-            if(capabilities == null) {
-                capabilities = huaweiCoordinatorSupplier.getHuaweiCoordinator().getMusicInfoParams();
+            HuaweiMusicUtils.MusicCapabilities capabilities = huaweiDeviceState.getExtendedMusicInfoParams();
+            if (capabilities == null) {
+                capabilities = huaweiDeviceState.getMusicInfoParams();
             }
-            HuaweiMusicManager.AudioInfo currentMusicInfo = helper.getMusicInfo();
+            AudioInfo currentMusicInfo = helper.getMusicInfo();
 
             boolean isMediaCompatible = checkMediaCompatibility(capabilities, currentMusicInfo);
 
@@ -228,8 +302,6 @@ public class HuaweiInstallHandler implements InstallHandler {
             installItem.setName(helper.getFileName());
             installActivity.setInstallItem(installItem);
             if (device.isBusy()) {
-                LOG.error("Music cannot be uploaded (device busy)");
-                installActivity.setInfoText("Music cannot be uploaded (device busy)");
                 installActivity.setInfoText(device.getBusyTask());
                 installActivity.setInstallEnabled(false);
                 return;
@@ -260,13 +332,19 @@ public class HuaweiInstallHandler implements InstallHandler {
 
     }
 
+    @NonNull
+    @Override
+    public Class<? extends Activity> getInstallActivity() {
+        return FwAppInstallerActivity.class;
+    }
+
     @Override
     public boolean isValid() {
         return helper.isValid();
     }
 
     @Override
-    public void onStartInstall(GBDevice device) {
+    public void onStartInstall(@NonNull GBDevice device) {
         helper.unsetFwBytes();
     }
 }

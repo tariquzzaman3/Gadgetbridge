@@ -20,37 +20,37 @@ import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 public abstract class GFDIMessage {
     protected static final Logger LOG = LoggerFactory.getLogger(GFDIMessage.class);
-    private static int maxPacketSize = 375; //safe default?
-    protected final ByteBuffer response = ByteBuffer.allocate(1000);
+    protected final ByteBuffer response = ByteBuffer.allocate(10 * 1024); // FIXME we should allocate the minimum necessary for each message
     protected GFDIStatusMessage statusMessage;
     protected GarminMessage garminMessage;
-
-    public static int getMaxPacketSize() {
-        return maxPacketSize;
-    }
-
-    public static void setMaxPacketSize(int maxPacketSize) {
-        GFDIMessage.maxPacketSize = maxPacketSize;
-    }
 
     public static GFDIMessage parseIncoming(byte[] message) {
         final MessageReader messageReader = new MessageReader(message);
 
-        final int messageType = messageReader.readShort();
+        boolean supportedType = false;
+        int messageType = messageReader.readShort();
         try {
+            if ((messageType & 0x8000) != 0) {
+                // final int sequenceNumber = (messageType >> 8) & 0x7f;
+                messageType = (messageType & 0xff) + 5000;
+            }
             final GarminMessage garminMessage = GarminMessage.fromId(messageType);
             if (garminMessage == null) {
-                LOG.warn("Unknown message type {}, message {}", messageType, message);
                 return new UnhandledMessage(messageType);
             }
             final Method m = garminMessage.objectClass.getMethod("parseIncoming", MessageReader.class, GarminMessage.class);
+            supportedType = true;
             return garminMessage.objectClass.cast(m.invoke(null, messageReader, garminMessage));
         } catch (final Exception e) {
             LOG.error("UNHANDLED GFDI MESSAGE TYPE {}, MESSAGE {}", messageType, message, e);
             return new UnhandledMessage(messageType);
         } finally {
-            messageReader.warnIfLeftover(messageType);
+            messageReader.warnIfLeftover(messageType, supportedType);
         }
+    }
+
+    public GarminMessage getGarminMessage() {
+        return garminMessage;
     }
 
     protected abstract boolean generateOutgoing();
@@ -95,10 +95,13 @@ public abstract class GFDIMessage {
         UPLOAD_REQUEST(5003, UploadRequestMessage.class),
         FILE_TRANSFER_DATA(5004, FileTransferDataMessage.class),
         CREATE_FILE(5005, CreateFileMessage.class),
+        FILTER(5007, FilterMessage.class),
         SET_FILE_FLAG(5008, SetFileFlagsMessage.class),
+        FILE_AVAILABLE(5009, FileAvailableMessage.class),
         FIT_DEFINITION(5011, FitDefinitionMessage.class),
         FIT_DATA(5012, FitDataMessage.class),
         WEATHER_REQUEST(5014, WeatherMessage.class),
+        BATTERY_STATUS(5023, BatteryStatusMessage.class),
         DEVICE_INFORMATION(5024, DeviceInformationMessage.class),
         DEVICE_SETTINGS(5026, SetDeviceSettingsMessage.class),
         SYSTEM_EVENT(5030, SystemEventMessage.class),
@@ -107,6 +110,7 @@ public abstract class GFDIMessage {
         NOTIFICATION_CONTROL(5034, NotificationControlMessage.class),
         NOTIFICATION_DATA(5035, NotificationDataMessage.class),
         NOTIFICATION_SUBSCRIPTION(5036, NotificationSubscriptionMessage.class),
+        SYNCHRONIZATION(5037, SynchronizationMessage.class),
         FIND_MY_PHONE_REQUEST(5039, FindMyPhoneRequestMessage.class),
         FIND_MY_PHONE_CANCEL(5040, FindMyPhoneCancelMessage.class),
         MUSIC_CONTROL(5041, MusicControlMessage.class),
@@ -116,23 +120,13 @@ public abstract class GFDIMessage {
         MUSIC_CONTROL_ENTITY_UPDATE(5049, MusicControlEntityUpdateMessage.class),
         CONFIGURATION(5050, ConfigurationMessage.class),
         CURRENT_TIME_REQUEST(5052, CurrentTimeRequestMessage.class),
-        AUTH_NEGOTIATION(5101, AuthNegotiationMessage.class)
-        ;
+        AUTH_NEGOTIATION(5101, AuthNegotiationMessage.class);
         private final Class<? extends GFDIMessage> objectClass;
         private final int id;
 
         GarminMessage(int id, Class<? extends GFDIMessage> objectClass) {
             this.id = id;
             this.objectClass = objectClass;
-        }
-
-        public static Class<? extends GFDIMessage> getClassFromId(final int id) {
-            for (final GarminMessage garminMessage : GarminMessage.values()) {
-                if (garminMessage.getId() == id) {
-                    return garminMessage.getObjectClass();
-                }
-            }
-            return null;
         }
 
         @Nullable
@@ -147,10 +141,6 @@ public abstract class GFDIMessage {
 
         public int getId() {
             return id;
-        }
-
-        private Class<? extends GFDIMessage> getObjectClass() {
-            return objectClass;
         }
     }
 
@@ -207,14 +197,18 @@ public abstract class GFDIMessage {
             }
         }
 
-        public void warnIfLeftover(int messageType) {
+        public void warnIfLeftover(int messageType, boolean supportedType) {
             if (byteBuffer.hasRemaining() && byteBuffer.position() < (byteBuffer.limit())) {
                 int pos = byteBuffer.position();
                 int numBytes = (byteBuffer.limit()) - byteBuffer.position();
                 byte[] leftover = new byte[numBytes];
                 byteBuffer.get(leftover);
                 byteBuffer.position(pos);
-                LOG.warn("Leftover bytes when parsing message type {}. Bytes: {}, complete message: {}", messageType, GB.hexdump(leftover), GB.hexdump(byteBuffer.array()));
+                if (supportedType){
+                    LOG.warn("Leftover bytes when parsing message type {}. Bytes: {}, complete message: {}", messageType, GB.hexdump(leftover), GB.hexdump(byteBuffer.array()));
+                } else {
+                    LOG.warn("Unknown message type {}. Bytes: {}", messageType, GB.hexdump(leftover));
+                }
             }
         }
     }

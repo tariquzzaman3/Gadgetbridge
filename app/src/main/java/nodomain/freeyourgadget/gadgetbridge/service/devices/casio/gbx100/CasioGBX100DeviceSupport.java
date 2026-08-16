@@ -1,4 +1,4 @@
-/*  Copyright (C) 2023-2024 Andreas Böhler, foxstidious, Johannes Krude
+/*  Copyright (C) 2023-2026 Andreas Böhler, foxstidious, Johannes Krude
 
     This file is part of Gadgetbridge.
 
@@ -19,6 +19,7 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.casio.gbx100;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.SharedPreferences;
+import android.os.Bundle;
 import android.os.Handler;
 import android.widget.Toast;
 
@@ -76,6 +77,8 @@ import static nodomain.freeyourgadget.gadgetbridge.model.ActivityUser.PREF_USER_
 import static nodomain.freeyourgadget.gadgetbridge.model.ActivityUser.PREF_USER_HEIGHT_CM;
 import static nodomain.freeyourgadget.gadgetbridge.model.ActivityUser.PREF_USER_STEPS_GOAL;
 import static nodomain.freeyourgadget.gadgetbridge.model.ActivityUser.PREF_USER_WEIGHT_KG;
+
+import androidx.annotation.Nullable;
 
 public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements SharedPreferences.OnSharedPreferenceChangeListener {
     private static final Logger LOG = LoggerFactory.getLogger(CasioGBX100DeviceSupport.class);
@@ -137,15 +140,15 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic, int status) {
+                                        BluetoothGattCharacteristic characteristic, byte[] data,
+                                        int status) {
 
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
 
         if(data.length == 0)
             return true;
 
-        return super.onCharacteristicRead(gatt, characteristic, status);
+        return super.onCharacteristicRead(gatt, characteristic, data, status);
     }
 
     public CasioGBX100ActivitySample getSumWithinRange(int timestamp_from, int timestamp_to) {
@@ -194,7 +197,7 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
 
         } catch (Exception ex) {
             // Why is this a toast? The user doesn't care about the error.
-            GB.toast(getContext(), "Error saving samples: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error saving samples: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
             GB.updateTransferNotification(null, "Data transfer failed", false, 0, getContext());
 
             LOG.error(ex.getMessage());
@@ -211,9 +214,9 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] data) {
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
         if (data.length == 0)
             return true;
 
@@ -230,7 +233,7 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
                     try {
                         TransactionBuilder builder = performInitialized("writeCurrentTime");
                         writeCurrentTime(builder, ZonedDateTime.now());
-                        builder.queue(getQueue());
+                        builder.queue();
                     } catch (IOException e) {
                         LOG.warn("writing current time failed: " + e.getMessage());
                     }
@@ -240,9 +243,10 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
         }
 
         LOG.info("Unhandled characteristic change: " + characteristicUUID + " code: " + String.format("0x%1x ...", data[0]));
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, data);
     }
 
+    @Override
     public void syncProfile() {
         try {
             new SetConfigurationOperation(this, CasioConstants.ConfigurationOption.OPTION_ALL).perform();
@@ -306,24 +310,20 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
             }
             //Shift content to title
             if (!StringUtils.isNullOrEmpty(message)) {
-                title = message.substring(0, Math.min(message.length(), 18)) + "..";
+                title = StringUtils.truncateToBytes(message, 20, "..");
             }
         }
 
         // Make sure title and sender are less than 32 characters
         byte[] titleBytes = new byte[0];
         if (!StringUtils.isNullOrEmpty(title)) {
-            if (title.length() > 32) {
-                title = title.substring(0, 30) + "..";
-            }
+            title = StringUtils.truncateToBytes(title, 32, "..");
             titleBytes = title.getBytes(StandardCharsets.UTF_8);
         }
 
         byte[] senderBytes = new byte[0];
         if (!StringUtils.isNullOrEmpty(sender)) {
-            if (sender.length() > 32) {
-                sender = sender.substring(0, 30) + "..";
-            }
+            sender = StringUtils.truncateToBytes(sender, 32, "..");
             senderBytes = sender.getBytes(StandardCharsets.UTF_8);
         }
 
@@ -402,9 +402,9 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
 
         try {
             TransactionBuilder builder = performInitialized("showNotification");
-            builder.write(getCharacteristic(CasioConstants.CASIO_NOTIFICATION_CHARACTERISTIC_UUID), copy);
+            builder.writeLegacy(getCharacteristic(CasioConstants.CASIO_NOTIFICATION_CHARACTERISTIC_UUID), copy);
             LOG.info("Showing notification, title: {} message: {}", title, message);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             LOG.error("showNotification failed", e);
         }
@@ -546,7 +546,7 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
             TransactionBuilder builder = performInitialized("setAlarm");
             writeAllFeatures(builder, data1);
             writeAllFeatures(builder, data2);
-            builder.queue(getQueue());
+            builder.queue();
         } catch(IOException e) {
             LOG.error("Error setting alarm: " + e.getMessage());
         }
@@ -558,7 +558,7 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
         try {
             TransactionBuilder builder = performInitialized("onSetTime");
             writeCurrentTime(builder, ZonedDateTime.now());
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             LOG.warn("onSetTime failed: " + e.getMessage());
         }
@@ -610,6 +610,7 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
         onSharedPreferenceChanged(null, config);
     }
 
+    @Override
     public void onGetConfigurationFinished() {
         mGetConfigurationPending = false;
     }
@@ -631,19 +632,20 @@ public class CasioGBX100DeviceSupport extends Casio2C2DSupport implements Shared
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
         byte[] data = new byte[2];
         data[0] = (byte)0x2e;
         data[1] = (byte)0x03;
         try {
             TransactionBuilder builder = performInitialized("onTestNewFunction");
             writeAllFeaturesRequest(builder, data);
-            builder.queue(getQueue());
+            builder.queue();
         } catch(IOException e) {
             LOG.error("Error setting alarm: " + e.getMessage());
         }
     }
 
+    @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
         LOG.debug(key + " changed");
 

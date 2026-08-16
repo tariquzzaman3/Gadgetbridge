@@ -17,8 +17,38 @@
 package nodomain.freeyourgadget.gadgetbridge.deviceevents;
 
 
+import android.content.Context;
+import android.content.Intent;
+
+import androidx.annotation.NonNull;
+
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.service.receivers.GBMusicControlReceiver;
+
 public class GBDeviceEventMusicControl extends GBDeviceEvent {
-    public Event event = Event.UNKNOWN;
+    public Event event;
+
+    public GBDeviceEventMusicControl() {
+        this(Event.UNKNOWN);
+    }
+
+    public GBDeviceEventMusicControl(Event event) {
+        this.event = event;
+    }
+
+    @Override
+    public void evaluate(final Context context, @NonNull final GBDevice device) {
+        final Intent musicIntent = new Intent(GBMusicControlReceiver.ACTION_MUSICCONTROL);
+        musicIntent.putExtra("event", event.ordinal());
+        musicIntent.setPackage(context.getPackageName());
+        context.sendBroadcast(musicIntent);
+    }
+
+    @NonNull
+    @Override
+    public String toString() {
+        return super.toString() + "event: " + event;
+    }
 
     public enum Event {
         UNKNOWN,

@@ -20,6 +20,8 @@ import android.content.Context;
 import android.os.AsyncTask;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,10 +35,12 @@ public abstract class DBAccess extends AsyncTask {
     private final String mTask;
     private final Context mContext;
     private Exception mError;
+    private final boolean mForWrite;
 
-    public DBAccess(String task, Context context) {
+    public DBAccess(String task, Context context, boolean forWrite) {
         mTask = task;
         mContext = context;
+        mForWrite = forWrite;
     }
 
     public Context getContext() {
@@ -47,7 +51,7 @@ public abstract class DBAccess extends AsyncTask {
 
     @Override
     protected Object doInBackground(Object[] params) {
-        try (DBHandler db = GBApplication.acquireDB()) {
+        try (DBHandler db = (mForWrite ? GBApplication.acquireDB() : GBApplication.acquireDbReadOnly())) {
             doInBackground(db);
         } catch (Exception e) {
             LOG.error("Error during DBAccess for {}", mTask, e);
@@ -63,9 +67,12 @@ public abstract class DBAccess extends AsyncTask {
         }
     }
 
-
+    @Nullable
+    public Exception getTaskError() {
+        return mError;
+    }
 
     protected void displayError(Throwable error) {
-        GB.toast(getContext(), getContext().getString(R.string.dbaccess_error_executing, error.getMessage()), Toast.LENGTH_LONG, GB.ERROR, error);
+        GB.toast(getContext(), getContext().getString(R.string.dbaccess_error_executing, error.getLocalizedMessage()), Toast.LENGTH_LONG, GB.ERROR, error);
     }
 }

@@ -1,3 +1,19 @@
+/*  Copyright (C) 2024 Me7c7, Vitalii Tomin
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets;
 
 import java.util.ArrayList;
@@ -10,36 +26,33 @@ public class App {
     public static final byte id = 0x2a;
 
     public static class AppDeviceParams {
-        public byte unknown1 = 0;
-        public int unknown2 = 0;
+        public byte type = 0;
+        public int osApiLevel = 0;
         public String osVersion = "";
         public String screenShape = "";
         public int width = 0;
         public int height = 0;
-        public int unknown3 = 0;
+        public int buildLevel = 0;
         public String buildType = "";
     }
 
     public static class InstalledAppInfo {
         public String packageName;
         public String version;
-        public int unknown1;
+        public int size;
         public String appName;
-        public int unknown2;
+        public int appTime;
         public int versionCode;
-        public byte unknown4;
-        public byte unknown6;
+        public byte packageType;
 
         public InstalledAppInfo(HuaweiTLV tlv) throws HuaweiPacket.MissingTagException {
             this.packageName = tlv.getString(0x03);
             this.version = tlv.getString(0x04);
-            this.unknown1 = tlv.getInteger(0x05);
+            this.size = tlv.getInteger(0x05); // Most devices returns 0
             this.appName =  tlv.getString(0x06);
-            this.unknown2 = tlv.getInteger(0x07);
+            this.appTime = tlv.getInteger(0x07); // Most devices returns 0
             this.versionCode = tlv.getInteger(0x09);
-            this.unknown4 = tlv.getByte(0x0a);
-            //{tag: b - Value: } -
-            this.unknown6 = tlv.getByte(0x0d);
+            this.packageType = tlv.getByte(0x0d);
         }
     }
 
@@ -61,6 +74,43 @@ public class App {
         public static class Response extends HuaweiPacket {
             public Response (ParamsProvider paramsProvider) {
                 super(paramsProvider);
+            }
+        }
+    }
+
+    /**
+     * Unsolicited progress and result reports the watch sends while it unpacks and installs a
+     * bundle that was just transferred over the 0x28 file upload service, or while it removes one.
+     * Tag 1 is a percentage up to {@link #PROGRESS_MAX}, above that a state; tag 2 is the package
+     * the report is about. 101 and 104 are not results of their own, they announce that an install
+     * or a removal has begun - 101 arrives right after the transfer, before the first percentage,
+     * and 104 immediately before the 105 that reports the removal itself.
+     */
+    public static class AppInstallStatus {
+        public static final byte id = 0x02;
+
+        /** Highest tag 1 value that is still a percentage rather than a state. */
+        public static final int PROGRESS_MAX = 100;
+        public static final int STATE_INSTALL_STARTED = 101;
+        public static final int STATE_INSTALLED = 102;
+        public static final int STATE_INSTALL_FAILED = 103;
+        public static final int STATE_UNINSTALL_STARTED = 104;
+        public static final int STATE_UNINSTALLED = 105;
+        public static final int STATE_UNINSTALL_FAILED = 106;
+
+        public static class Response extends HuaweiPacket {
+            public int status = 0;
+            public String packageName = "";
+
+            public Response(ParamsProvider paramsProvider) {
+                super(paramsProvider);
+            }
+
+            @Override
+            public void parseTlv() throws HuaweiPacket.ParseException {
+                this.status = this.tlv.getAsInteger(0x01);
+                if (this.tlv.contains(0x02))
+                    this.packageName = this.tlv.getString(0x02);
             }
         }
     }
@@ -123,8 +173,8 @@ public class App {
             public void parseTlv() throws ParseException {
                 if(this.tlv.contains(0x81)) {
                     HuaweiTLV subTlv = this.tlv.getObject(0x81).getObject(0x82);
-                    this.params.unknown1 = subTlv.getByte(0x03);
-                    this.params.unknown2 = subTlv.getInteger(0x04);
+                    this.params.type = subTlv.getByte(0x03); // 38 - liteWearable
+                    this.params.osApiLevel = subTlv.getInteger(0x04);
                     this.params.osVersion = subTlv.getString(0x05);
                     if (subTlv.contains(0x06))
                         this.params.screenShape = subTlv.getString(0x06);
@@ -133,7 +183,7 @@ public class App {
                     if (subTlv.contains(0x08))
                         this.params.height = subTlv.getShort(0x08);
                     if (subTlv.contains(0x09))
-                        this.params.unknown3 = subTlv.getInteger(0x09);
+                        this.params.buildLevel = subTlv.getInteger(0x09);
                     if(subTlv.contains(0x0a))
                         this.params.buildType = subTlv.getString(0x0a);
                 }

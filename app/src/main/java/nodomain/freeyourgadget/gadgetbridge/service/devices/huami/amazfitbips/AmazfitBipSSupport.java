@@ -20,9 +20,6 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.huami.amazfitbips;
 import android.content.Context;
 import android.net.Uri;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
@@ -38,9 +35,6 @@ import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.operations.upd
 import nodomain.freeyourgadget.gadgetbridge.util.Version;
 
 public class AmazfitBipSSupport extends AmazfitBipSupport {
-
-    private static final Logger LOG = LoggerFactory.getLogger(AmazfitBipSSupport.class);
-
     @Override
     public byte getCryptFlags() {
         return (byte) 0x80;
@@ -69,7 +63,7 @@ public class AmazfitBipSSupport extends AmazfitBipSupport {
 
     @Override
     public String windSpeedString(WeatherSpec weatherSpec){
-        return weatherSpec.windSpeed + "km/h";
+        return weatherSpec.getWindSpeed() + "km/h";
     }
 
     @Override
@@ -99,9 +93,8 @@ public class AmazfitBipSSupport extends AmazfitBipSupport {
     }
 
     @Override
-    protected AmazfitBipSSupport setShortcuts(TransactionBuilder builder) {
+    protected void setShortcuts(TransactionBuilder builder) {
         setDisplayItemsNew(builder, true, true, R.array.pref_bips_display_items_default);
-        return this;
     }
 
     private boolean isDTH(Version version) {

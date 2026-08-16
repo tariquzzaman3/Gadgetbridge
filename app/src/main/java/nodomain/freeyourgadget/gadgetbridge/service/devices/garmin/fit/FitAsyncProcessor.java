@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
@@ -17,6 +18,7 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class FitAsyncProcessor {
     private static final Logger LOG = LoggerFactory.getLogger(FitAsyncProcessor.class);
+    private static final AtomicLong THREAD_COUNTER = new AtomicLong(0L);
 
     private final Context context;
     private final GBDevice gbDevice;
@@ -31,11 +33,12 @@ public class FitAsyncProcessor {
     /**
      * Process a list of files asynchronously. Callback is executed on the UI thread.
      */
-    public void process(final List<File> files, final Callback callback) {
+    public void process(final List<File> files, boolean isReprocessing, final Callback callback) {
         LOG.debug("Starting processor for {} files", files.size());
 
         new Thread(() -> {
             try {
+                FitImporter fitImporter = null;
                 int i = 0;
                 for (final File file : files) {
                     i++;
@@ -45,10 +48,13 @@ public class FitAsyncProcessor {
                     FitAsyncProcessor.this.handler.post(() -> callback.onProgress(finalI));
 
                     try {
-                        final FitImporter fitImporter = new FitImporter(context, gbDevice);
-                        fitImporter.importFile(file);
+                        if (fitImporter == null) {
+                            fitImporter = new FitImporter(context, gbDevice);
+                        }
+                        fitImporter.importFile(file, isReprocessing);
                     } catch (final Exception ex) {
                         LOG.error("Exception while importing {}", file, ex);
+                        fitImporter = null;
                         continue; // do not remove from pending files
                     }
 
@@ -67,7 +73,7 @@ public class FitAsyncProcessor {
             }
 
             FitAsyncProcessor.this.handler.post(callback::onFinish);
-        }).start();
+        }, "FitAsyncProcessor_" + THREAD_COUNTER.getAndIncrement()).start();
     }
 
     public interface Callback {

@@ -20,12 +20,13 @@ import android.widget.Toast;
 
 import java.io.IOException;
 
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEOperation;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-public abstract class AbstractMiBandOperation<T extends AbstractBTLEDeviceSupport> extends AbstractBTLEOperation<T> {
+public abstract class AbstractMiBandOperation<T extends AbstractBTLESingleDeviceSupport> extends AbstractBTLEOperation<T> {
     protected AbstractMiBandOperation(T support) {
         super(support);
     }
@@ -33,11 +34,11 @@ public abstract class AbstractMiBandOperation<T extends AbstractBTLEDeviceSuppor
     @Override
     protected void prePerform() throws IOException {
         super.prePerform();
-        getDevice().setBusyTask("Operation starting..."); // mark as busy quickly to avoid interruptions from the outside
+        getDevice().setBusyTask(R.string.busy_task_busy, getContext()); // mark as busy quickly to avoid interruptions from the outside
         TransactionBuilder builder = performInitialized("disabling some notifications");
         enableOtherNotifications(builder, false);
         enableNeededNotifications(builder, true);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
@@ -49,7 +50,7 @@ public abstract class AbstractMiBandOperation<T extends AbstractBTLEDeviceSuppor
                 TransactionBuilder builder = performInitialized("reenabling disabled notifications");
                 handleFinished(builder);
                 builder.setCallback(null); // unset ourselves from being the queue's gatt callback
-                builder.queue(getQueue());
+                builder.queue();
             } catch (IOException ex) {
                 GB.toast(getContext(), "Error enabling Mi Band notifications, you may need to connect and disconnect", Toast.LENGTH_LONG, GB.ERROR, ex);
             }

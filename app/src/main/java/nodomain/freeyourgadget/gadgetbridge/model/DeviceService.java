@@ -1,8 +1,8 @@
-/*  Copyright (C) 2015-2024 Andreas Shimokawa, Arjan Schrijver, Carsten
+/*  Copyright (C) 2015-2026 Andreas Shimokawa, Arjan Schrijver, Carsten
     Pfeiffer, Daniel Dakhno, Daniele Gobbetti, Davis Mosenkovs, Frank Slezak,
     Gabriele Monaco, Gordon Williams, ivanovlev, JohnnySun, José Rebelo, Julien
     Pivotto, Kasha, mvn23, Petr Vaněk, Sebastian Kranz, Steffen Liebergeld,
-    Taavi Eomäe
+    Taavi Eomäe, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -19,6 +19,8 @@
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.model;
+
+import androidx.annotation.Nullable;
 
 import nodomain.freeyourgadget.gadgetbridge.devices.EventHandler;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
@@ -48,6 +50,8 @@ public interface DeviceService extends EventHandler {
     String ACTION_DOWNLOADAPP = PREFIX + ".action.downloadapp";
     String ACTION_DELETEAPP = PREFIX + ".action.deleteapp";
     String ACTION_APP_CONFIGURE = PREFIX + ".action.app_configure";
+    String ACTION_APP_CONFIG_REQUEST = PREFIX + ".action.app_config_request";
+    String ACTION_APP_CONFIG_SET = PREFIX + ".action.app_config_set";
     String ACTION_APP_REORDER = PREFIX + ".action.app_reorder";
     String ACTION_INSTALL = PREFIX + ".action.install";
     String ACTION_RESET = PREFIX + ".action.reset";
@@ -82,6 +86,10 @@ public interface DeviceService extends EventHandler {
     String ACTION_CAMERA_STATUS_CHANGE = PREFIX + ".action.camera_status_change";
     String ACTION_REQUEST_MUSIC_LIST = PREFIX + ".action.request_music_list";
     String ACTION_REQUEST_MUSIC_OPERATION = PREFIX + ".action.request_music_operation";
+    String EXTRA_REQUEST_MUSIC_OPERATION = "operation";
+    String EXTRA_REQUEST_MUSIC_PLAY_LIST_INDEX = "playlistIndex";
+    String EXTRA_REQUEST_MUSIC_PLAY_LIST_NAME = "playlistName";
+    String EXTRA_REQUEST_MUSIC_MUSIC_IDS = "musicIds";
 
     String ACTION_SLEEP_AS_ANDROID = ".action.sleep_as_android";
     String EXTRA_SLEEP_AS_ANDROID_ACTION = "sleepasandroid_action";
@@ -97,10 +105,12 @@ public interface DeviceService extends EventHandler {
     String EXTRA_NOTIFICATION_TITLE = "notification_title";
     String EXTRA_NOTIFICATION_TYPE = "notification_type";
     String EXTRA_NOTIFICATION_ACTIONS = "notification_actions";
-    String EXTRA_NOTIFICATION_PEBBLE_COLOR = "notification_pebble_color";
     String EXTRA_NOTIFICATION_ICONID = "notification_iconid";
+    String EXTRA_NOTIFICATION_ICONPACKAGEID = "notification_iconpackageid";
     String NOTIFICATION_PICTURE_PATH = "notification_picture_path";
     String EXTRA_NOTIFICATION_DNDSUPPRESSED = "notification_dndsuppressed";
+    String EXTRA_NOTIFICATION_CHANNEL_ID = "notification_channel_id";
+    String EXTRA_NOTIFICATION_CATEGORY = "notification_category";
     String EXTRA_FIND_START = "find_start";
     String EXTRA_VIBRATION_INTENSITY = "vibration_intensity";
     String EXTRA_CALL_COMMAND = "call_command";
@@ -108,6 +118,10 @@ public interface DeviceService extends EventHandler {
     String EXTRA_CALL_DISPLAYNAME = "call_displayname";
     String EXTRA_CALL_SOURCENAME = "call_sourcename";
     String EXTRA_CALL_SOURCEAPPID = "call_sourceappid";
+    String EXTRA_CALL_KEY = "call_key";
+    String EXTRA_CALL_CHANNELID = "call_channel_id";
+    String EXTRA_CALL_CATEGORY = "call_category";
+    String EXTRA_CALL_ISVOIP = "call_is_voip";
     String EXTRA_CALL_DNDSUPPRESSED = "call_dndsuppressed";
     String EXTRA_CANNEDMESSAGES = "cannedmessages";
     String EXTRA_CANNEDMESSAGES_TYPE = "cannedmessages_type";
@@ -126,13 +140,16 @@ public interface DeviceService extends EventHandler {
     String EXTRA_PHONE_RINGER_MODE = "ringer_mode";
     String EXTRA_NAVIGATION_INSTRUCTION = "navigation_instruction";
     String EXTRA_NAVIGATION_DISTANCE_TO_TURN = "navigation_distance_to_turn";
+    String EXTRA_NAVIGATION_DISTANCE_TO_TARGET = "navigation_distance_to_target";
     String EXTRA_NAVIGATION_NEXT_ACTION = "navigation_next_action";
     String EXTRA_NAVIGATION_ETA = "navigation_eta";
+    String EXTRA_NAVIGATION_COMPLETION_PERCENT = "navigation_completion_percent";
     String EXTRA_APP_UUID = "app_uuid";
     String EXTRA_APP_START = "app_start";
     String EXTRA_APP_CONFIG = "app_config";
     String EXTRA_APP_CONFIG_ID = "app_config_id";
     String EXTRA_URI = "uri";
+    String EXTRA_OPTIONS = "options";
     String EXTRA_CONFIG = "config";
     String EXTRA_ALARMS = "alarms";
     String EXTRA_REMINDERS = "reminders";
@@ -142,7 +159,6 @@ public interface DeviceService extends EventHandler {
     String EXTRA_CONNECT_FIRST_TIME = "connect_first_time";
     String EXTRA_BOOLEAN_ENABLE = "enable_realtime_steps";
     String EXTRA_INTERVAL_SECONDS = "interval_seconds";
-    String EXTRA_WEATHER = "weather";
     String EXTRA_RECORDED_DATA_TYPES = "data_types";
     String EXTRA_FM_FREQUENCY = "fm_frequency";
     String EXTRA_LED_COLOR = "led_color";
@@ -151,19 +167,16 @@ public interface DeviceService extends EventHandler {
     String EXTRA_CAMERA_EVENT = "event";
     String EXTRA_CAMERA_FILENAME = "filename";
 
-    /**
-     * Use EXTRA_REALTIME_SAMPLE instead
-     */
-    @Deprecated
-    String EXTRA_REALTIME_STEPS = "realtime_steps";
     String EXTRA_REALTIME_SAMPLE = "realtime_sample";
     String EXTRA_TIMESTAMP = "timestamp";
+
     /**
      * Use EXTRA_REALTIME_SAMPLE instead
      */
     @Deprecated
     String EXTRA_HEART_RATE_VALUE = "hr_value";
     String EXTRA_CALENDAREVENT_ID = "calendarevent_id";
+    String EXTRA_CALENDAREVENT_EVENT_ID = "calendarevent_event_id";
     String EXTRA_CALENDAREVENT_TYPE = "calendarevent_type";
     String EXTRA_CALENDAREVENT_TIMESTAMP = "calendarevent_timestamp";
     String EXTRA_CALENDAREVENT_DURATION = "calendarevent_duration";
@@ -173,7 +186,10 @@ public interface DeviceService extends EventHandler {
     String EXTRA_CALENDAREVENT_DESCRIPTION = "calendarevent_description";
     String EXTRA_CALENDAREVENT_LOCATION = "calendarevent_location";
     String EXTRA_CALENDAREVENT_CALNAME = "calendarevent_calname";
+    String EXTRA_CALENDAREVENT_CALENDAR_COLOR = "calendarevent_calendar_color";
     String EXTRA_CALENDAREVENT_COLOR = "calendarevent_color";
+    String EXTRA_CALENDAREVENT_STATUS = "calendarevent_status";
+    String EXTRA_CALENDAREVENT_ATTENDING_STATUS = "calendarevent_attending_status";
 
     void connect();
 
@@ -188,9 +204,13 @@ public interface DeviceService extends EventHandler {
     /**
      * Requests information from the {@link DeviceCommunicationService} about the connection state,
      * firmware info, etc.
-     * <p/>
+     * <p>
      * Note that this will not need a connection to the device -- only the cached information
      * from the service will be reported.
+     * </p>
      */
     void requestDeviceInfo();
+
+    @Nullable
+    GBDevice getDevice();
 }

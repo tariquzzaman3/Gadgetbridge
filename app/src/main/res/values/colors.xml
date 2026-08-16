@@ -21,6 +21,9 @@
     <color name="chart_heartrate" type="color">#ffab40</color>
     <color name="chart_heartrate_alternative" type="color">#8B0000</color>
     <color name="chart_heartrate_fill" type="color">#fadab1</color>
+    <color name="chart_heartrate_minimum" type="color">#3F84E5</color>
+    <color name="chart_heartrate_resting" type="color">#01796F</color>
+    <color name="chart_heartrate_maximum" type="color">#F42C04</color>
 
     <color name="chart_deep_sleep_light" type="color">#0054a3</color>
     <color name="chart_deep_sleep_dark" type="color">#0054a3</color>
@@ -54,6 +57,16 @@
     <color name="hrv_status_low" type="color">#fc5203</color>
     <color name="hrv_status_poor" type="color">#be03fc</color>
     <color name="hrv_status_char_line_color" type="color">#d12a2a</color>
+    <color name="hrv_status_range_color" type="color">#99d12a2a</color>
+    <color name="hrv_status_last_night_color" type="color">#3f7dff</color>
+    <color name="hrv_status_baseline_color" type="color">#0c8a03</color>
+    <color name="hrv_status_baseline_fill_color" type="color">#660c8a03</color>
+    <color name="training_load_dark" type="color">#FFF</color>
+    <color name="training_load" type="color">#1d2436</color>
+    <color name="training_chronic_load" type="color">#8847a1</color>
+    <color name="training_load_optimal" type="color">#59b22c</color>
+    <color name="training_load_low" type="color">#D3D3D3</color>
+    <color name="training_load_high" type="color">#d12a2a</color>
     <color name="vo2max_running_char_line_color" type="color">#46acea</color>
     <color name="vo2max_cycling_char_line_color" type="color">#59b22c</color>
     <color name="vo2max_value_poor_color" type="color">#d93832</color>
@@ -67,6 +80,13 @@
     <color name="calories_color" type="color">#fa4502</color>
     <color name="calories_resting_color" type="color">#1f49f2</color>
     <color name="respiratory_rate_color" type="color">#163ede</color>
+    <color name="chart_temperature" type="color">#ff8f00</color>
+    <color name="chart_temperature_average" type="color">#00acc1</color>
+    <color name="spo2_color" type="color">#aad93832</color>
+    <color name="spo2_avg_color_light" type="color">#630b0d</color>
+    <color name="spo2_avg_color_dark" type="color">#ff9393</color>
+    <color name="blood_pressure_systolic_color" type="color">#d93832</color>
+    <color name="blood_pressure_diastolic_color" type="color">#3F84E5</color>
 
     <color name="value_line_color" type="color">#858585</color>
     <color name="row_separator_light" type="color">#ffe2e2e5</color>
@@ -79,9 +99,34 @@
     <color name="hr_zone_threshold_color" type="color">#FF7043</color>
     <color name="hr_zone_maximum_color" type="color">#F44336</color>
 
+    <color name="chart_cadence_circle" type="color">#FF7043</color>
+    <color name="chart_line_speed" type="color">#80D8FF</color>
+    <color name="chart_line_elevation" type="color">#66BB6A</color>
+    <color name="chart_line_heart_rate" type="color">#F44336</color>
+    <color name="chart_line_power" type="color">#6A0DAD</color>
+    <color name="chart_line_swolf" type="color">#F9DB22</color>
+    <color name="chart_line_stroke_rate" type="color">#6495ED</color>
+    <color name="chart_highline_dolor" type="color">#ffff8800</color>
+    <color name="chart_line_depth" type="color">#ff4040ff</color>
+    <color name="chart_line_distance" type="color">#88FF88</color>
+    <color name="chart_line_stride" type="color">#FF8888</color>
+    <color name="chart_line_body_energy" type="color">#884088</color>
+    <color name="chart_line_stamina" type="color">#8888FF</color>
+    <color name="chart_line_step_length" type="color">#FF4088</color>
+    <color name="chart_cns_toxicity" type="color">#FF4040</color>
+    <color name="chart_n2_load" type="color">#FF8840</color>
+
+    <color name="chart_battery_level" type="color">#60bd6d</color>
+    <color name="chart_battery_voltage" type="color">#3F84E5</color>
+    <color name="chart_battery_current" type="color">#00796B</color>
+    <color name="chart_battery_power" type="color">#6A0DAD</color>
+    <color name="chart_battery_temperature" type="color">#ff8f00</color>
+
     <attr name="row_separator" format="color" />
     <color name="alternate_row_background_light">#FFEDEDED</color>
     <color name="alternate_row_background_dark">#545254</color>
+
+    <color name="map_track_default" type="color">#fc5203</color>
 
     <color name="transparent">#00000000</color>
 

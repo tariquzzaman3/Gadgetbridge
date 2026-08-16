@@ -1,4 +1,4 @@
-/*  Copyright (C) 2022-2024 Andreas Shimokawa
+/*  Copyright (C) 2022-2026 Andreas Shimokawa
 
     This file is part of Gadgetbridge.
 
@@ -19,7 +19,10 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.soflow;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.SharedPreferences;
+import android.os.Bundle;
 import android.widget.Toast;
+
+import androidx.annotation.Nullable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,16 +33,15 @@ import java.util.UUID;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInfo;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.IntentListener;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.DeviceInfoProfile;
 import nodomain.freeyourgadget.gadgetbridge.util.CryptoUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-public class SoFlowSupport extends AbstractBTLEDeviceSupport {
+public class SoFlowSupport extends AbstractBTLESingleDeviceSupport {
 
     public static final UUID UUID_CHARACTERISICS_NOTIFICATION = UUID.fromString("60000002-0000-1000-8000-00805f9b34fb");
     public static final UUID UUID_CHARACTERISICS_WRITE = UUID.fromString("60000003-0000-1000-8000-00805f9b34fb");
@@ -79,9 +81,9 @@ public class SoFlowSupport extends AbstractBTLEDeviceSupport {
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
         aesKey = getSecretKey();
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
         requestDeviceInfo(builder);
-        builder.notify(getCharacteristic(UUID_CHARACTERISICS_NOTIFICATION), true);
+        builder.notify(UUID_CHARACTERISICS_NOTIFICATION, true);
         writeEncrypted(builder, COMMAND_REQUEST_SESSION);
         setInitialized(builder);
         return builder;
@@ -93,13 +95,13 @@ public class SoFlowSupport extends AbstractBTLEDeviceSupport {
     }
 
     private void setInitialized(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
     }
 
     private void writeEncrypted(TransactionBuilder builder, byte[] data) {
         try {
             LOG.debug("will encrypt " + GB.hexdump(data));
-            builder.write(getCharacteristic(UUID_CHARACTERISICS_WRITE), CryptoUtils.encryptAES(data, aesKey));
+            builder.write(UUID_CHARACTERISICS_WRITE, CryptoUtils.encryptAES(data, aesKey));
         } catch (Exception e) {
             LOG.error("error while encrypting data");
         }
@@ -139,15 +141,16 @@ public class SoFlowSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] value) {
+        if (super.onCharacteristicChanged(gatt, characteristic, value)) {
             return true;
         }
 
         UUID characteristicUUID = characteristic.getUuid();
         if (UUID_CHARACTERISICS_NOTIFICATION.equals(characteristicUUID)) {
             try {
-                byte[] data = CryptoUtils.decryptAES(characteristic.getValue(), aesKey);
+                byte[] data = CryptoUtils.decryptAES(value, aesKey);
                 if (data[0] == 0x06 && data[1] == 0x01 && data[2] == 0x07) {
                     session[0] = data[3];
                     session[1] = data[4];
@@ -198,7 +201,7 @@ public class SoFlowSupport extends AbstractBTLEDeviceSupport {
                     writeEncrypted(builder, COMMAND_UNLOCK);
                 }
             }
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             GB.toast("Error setting configuration", Toast.LENGTH_LONG, GB.ERROR, e);
         }
@@ -206,8 +209,9 @@ public class SoFlowSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic, int status) {
-        if (super.onCharacteristicRead(gatt, characteristic, status)) {
+                                        BluetoothGattCharacteristic characteristic, byte[] value,
+                                        int status) {
+        if (super.onCharacteristicRead(gatt, characteristic, value, status)) {
             return true;
         }
         UUID characteristicUUID = characteristic.getUuid();
@@ -217,12 +221,12 @@ public class SoFlowSupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
         TransactionBuilder builder;
         try {
             builder = performInitialized("request unknown");
             writeEncrypted(builder,COMMAND_REQUEST_LOCK);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             GB.toast("Error setting configuration", Toast.LENGTH_LONG, GB.ERROR, e);
         }

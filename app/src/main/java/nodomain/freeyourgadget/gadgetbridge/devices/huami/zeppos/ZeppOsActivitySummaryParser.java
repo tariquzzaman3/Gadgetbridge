@@ -20,24 +20,32 @@ import static nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryEntries.
 
 import android.content.Context;
 
+import androidx.core.content.ContextCompat;
+
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import org.apache.commons.lang3.ArrayUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 
+import nodomain.freeyourgadget.gadgetbridge.GBException;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.workouts.entries.ActivitySummaryProgressEntry;
+import nodomain.freeyourgadget.gadgetbridge.activities.workouts.entries.ActivitySummaryTableBuilder;
+import nodomain.freeyourgadget.gadgetbridge.activities.workouts.entries.ActivitySummaryValue;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiActivitySummaryParser;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivityTrack;
 import nodomain.freeyourgadget.gadgetbridge.proto.HuamiProtos;
 import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummary;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.AbstractHuamiActivityDetailsParser;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsActivityDetailsParser;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsActivityTrack;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsActivityType;
 
 public class ZeppOsActivitySummaryParser extends HuamiActivitySummaryParser {
@@ -74,19 +82,24 @@ public class ZeppOsActivitySummaryParser extends HuamiActivitySummaryParser {
             return;
         }
 
+        final ActivityKind activityKind;
         if (summaryProto.hasType()) {
-            final ZeppOsActivityType activityType = ZeppOsActivityType
-                    .fromCode((byte) summaryProto.getType().getType());
+            final byte typeCode = (byte) summaryProto.getType().getType();
+            final ZeppOsActivityType activityType = ZeppOsActivityType.fromCode(typeCode);
 
-            final ActivityKind activityKind;
             if (activityType != null) {
                 activityKind = activityType.toActivityKind();
             } else {
-                LOG.warn("Unknown workout activity type code {}", String.format("0x%X", summaryProto.getType().getType()));
+                final String typeCodeHex = String.format("0x%X", summaryProto.getType().getType());
+                LOG.warn("Unknown workout activity type code {}", typeCodeHex);
                 activityKind = ActivityKind.UNKNOWN;
+                summaryData.add(ACTIVITY_TYPE_CODE, typeCodeHex, UNIT_NONE);
             }
             summary.setActivityKind(activityKind.getCode());
+        } else {
+            activityKind = ActivityKind.UNKNOWN;
         }
+        final ActivityKind.CycleUnit cycleUnit = ActivityKind.getCycleUnit(activityKind);
 
         if (summaryProto.hasTime()) {
             int totalDuration = summaryProto.getTime().getTotalDuration();
@@ -101,6 +114,7 @@ public class ZeppOsActivitySummaryParser extends HuamiActivitySummaryParser {
             summary.setBaseAltitude(summaryProto.getLocation().getBaseAltitude() / 2);
             // TODO: Min/Max Latitude/Longitude
             summaryData.add(ALTITUDE_BASE, summaryProto.getLocation().getBaseAltitude() / 2f, UNIT_METERS);
+            summaryData.setHasGps(true);
         }
 
         if (summaryProto.hasHeartRate()) {
@@ -110,8 +124,8 @@ public class ZeppOsActivitySummaryParser extends HuamiActivitySummaryParser {
         }
 
         if (summaryProto.hasSteps()) {
-            summaryData.add(CADENCE_MAX, summaryProto.getSteps().getMaxCadence() * 60, UNIT_SPM);
-            summaryData.add(CADENCE_AVG, summaryProto.getSteps().getAvgCadence() * 60, UNIT_SPM);
+            summaryData.addCadenceMax(summaryProto.getSteps().getMaxCadence() * 60, cycleUnit);
+            summaryData.addCadenceAvg(summaryProto.getSteps().getAvgCadence() * 60, cycleUnit);
             summaryData.add(STRIDE_AVG, summaryProto.getSteps().getAvgStride(), UNIT_CM);
             summaryData.add(STEPS, summaryProto.getSteps().getSteps(), UNIT_STEPS);
         }
@@ -121,8 +135,22 @@ public class ZeppOsActivitySummaryParser extends HuamiActivitySummaryParser {
         }
 
         if (summaryProto.hasPace()) {
-            summaryData.add(PACE_MAX, summaryProto.getPace().getBest(), UNIT_SECONDS_PER_M);
-            summaryData.add(PACE_AVG_SECONDS_KM, summaryProto.getPace().getAvg() * 1000, UNIT_SECONDS_PER_KM);
+            if (ActivityKind.isSwimActivity(activityKind)) {
+                summaryData.add(PACE_MAX, summaryProto.getPace().getBest() * 100, UNIT_SECONDS_PER_100_METERS);
+                summaryData.add(PACE_AVG_SECONDS_KM, summaryProto.getPace().getAvg() * 100, UNIT_SECONDS_PER_100_METERS);
+            } else {
+                summaryData.add(PACE_MAX, summaryProto.getPace().getBest(), UNIT_SECONDS_PER_M);
+                summaryData.add(PACE_AVG_SECONDS_KM, summaryProto.getPace().getAvg() * 1000, UNIT_SECONDS_PER_KM);
+            }
+        }
+
+        if (summaryProto.hasFrequency()) {
+            summaryData.addCadenceAvg(summaryProto.getFrequency().getAvgFrequency(), cycleUnit);
+            summaryData.addCadenceMax(summaryProto.getFrequency().getMaxFrequency(), cycleUnit);
+        }
+
+        if (summaryProto.hasCount()) {
+            summaryData.add(JUMPS, summaryProto.getCount().getTotalJumps(), UNIT_JUMPS);
         }
 
         if (summaryProto.hasCalories()) {
@@ -140,11 +168,11 @@ public class ZeppOsActivitySummaryParser extends HuamiActivitySummaryParser {
                 final List<String> zoneOrder = Arrays.asList(HR_ZONE_NA, HR_ZONE_WARM_UP, HR_ZONE_FAT_BURN, HR_ZONE_AEROBIC, HR_ZONE_ANAEROBIC, HR_ZONE_EXTREME);
                 final int[] zoneColors = new int[]{
                         0,
-                        context.getResources().getColor(R.color.hr_zone_warm_up_color),
-                        context.getResources().getColor(R.color.hr_zone_easy_color),
-                        context.getResources().getColor(R.color.hr_zone_aerobic_color),
-                        context.getResources().getColor(R.color.hr_zone_threshold_color),
-                        context.getResources().getColor(R.color.hr_zone_maximum_color),
+                        ContextCompat.getColor(context, R.color.hr_zone_warm_up_color),
+                        ContextCompat.getColor(context, R.color.hr_zone_easy_color),
+                        ContextCompat.getColor(context, R.color.hr_zone_aerobic_color),
+                        ContextCompat.getColor(context, R.color.hr_zone_threshold_color),
+                        ContextCompat.getColor(context, R.color.hr_zone_maximum_color),
                 };
                 for (int i = 0; i < zoneOrder.size(); i++) {
                     summaryData.add(
@@ -183,6 +211,12 @@ public class ZeppOsActivitySummaryParser extends HuamiActivitySummaryParser {
             summaryData.add(DESCENT_SECONDS, summaryProto.getElevation().getDownhillTime(), UNIT_SECONDS);
         }
 
+        if (summaryProto.hasTemperature()) {
+            summaryData.add(TEMPERATURE_MIN, summaryProto.getTemperature().getMin(), UNIT_CELSIUS);
+            summaryData.add(TEMPERATURE_MAX, summaryProto.getTemperature().getMax(), UNIT_CELSIUS);
+            summaryData.add(TEMPERATURE_AVG, summaryProto.getTemperature().getAvg(), UNIT_CELSIUS);
+        }
+
         if (summaryProto.hasSwimmingData()) {
             summaryData.add(LAPS, summaryProto.getSwimmingData().getLaps(), UNIT_LAPS);
             switch (summaryProto.getSwimmingData().getLaneLengthUnit()) {
@@ -193,20 +227,114 @@ public class ZeppOsActivitySummaryParser extends HuamiActivitySummaryParser {
                     summaryData.add(LANE_LENGTH, summaryProto.getSwimmingData().getLaneLength(), UNIT_YARD);
                     break;
             }
-            switch (summaryProto.getSwimmingData().getStyle()) {
-                // TODO i18n these
-                case 1:
-                    summaryData.add(SWIM_STYLE, "breaststroke");
-                    break;
-                case 2:
-                    summaryData.add(SWIM_STYLE, "freestyle");
-                    break;
-            }
+            summaryData.add(SWIM_STYLE, getSwimStyle(summaryProto.getSwimmingData().getStyle()));
             summaryData.add(STROKES, summaryProto.getSwimmingData().getStrokes(), UNIT_STROKES);
             summaryData.add(STROKE_RATE_AVG, summaryProto.getSwimmingData().getAvgStrokeRate(), UNIT_STROKES_PER_MINUTE);
             summaryData.add(STROKE_RATE_MAX, summaryProto.getSwimmingData().getMaxStrokeRate(), UNIT_STROKES_PER_MINUTE);
             summaryData.add(STROKE_DISTANCE_AVG, summaryProto.getSwimmingData().getAvgDps(), UNIT_CM);
             summaryData.add(SWOLF_INDEX, summaryProto.getSwimmingData().getSwolf(), UNIT_NONE);
         }
+
+        if (summaryProto.hasMovementEvaluation()) {
+            summaryData.add(MOVEMENT_CONSISTENCY, summaryProto.getMovementEvaluation().getConsistency(), UNIT_NONE);
+            summaryData.add(MOVEMENT_STABILITY, summaryProto.getMovementEvaluation().getStability(), UNIT_NONE);
+            summaryData.add(MOVEMENT_CONTINUITY, summaryProto.getMovementEvaluation().getContinuity(), UNIT_NONE);
+            summaryData.add(MOVEMENT_RHYTHM, summaryProto.getMovementEvaluation().getRhythm(), UNIT_NONE);
+            summaryData.add(MOVEMENT_SPEED_DECAY, summaryProto.getMovementEvaluation().getSpeedDecay(), UNIT_NONE);
+        }
+    }
+
+    @Override
+    protected void enrichWithDetails(final BaseActivitySummary summary, ActivityTrack activityTrack) throws IOException, GBException {
+        super.enrichWithDetails(summary, activityTrack);
+        if (!(activityTrack instanceof ZeppOsActivityTrack zeppOsActivityTrack)) {
+            LOG.error("ActivityTrack not instanceof ZeppOsActivityTrack: {}", activityTrack.getClass());
+            return;
+        }
+        List<ZeppOsActivityTrack.StrengthSet> strengthSets = zeppOsActivityTrack.getStrengthSets();
+        if (!strengthSets.isEmpty()) {
+            final ActivitySummaryTableBuilder tableBuilder = new ActivitySummaryTableBuilder(SETS, "sets_header", Arrays.asList(
+                    "set",
+                    "workout_set_reps",
+                    "menuitem_weight"
+            ));
+
+            int i = 1;
+            for (final ZeppOsActivityTrack.StrengthSet strengthSet : strengthSets) {
+                tableBuilder.addRow(
+                        "set_" + i,
+                        Arrays.asList(
+                                new ActivitySummaryValue(i, UNIT_NONE),
+                                new ActivitySummaryValue(String.valueOf(strengthSet.reps())),
+                                new ActivitySummaryValue(strengthSet.weightKg() >= 0 ? strengthSet.weightKg() : null, UNIT_KG)
+                        )
+                );
+
+                i++;
+            }
+
+            tableBuilder.addToSummaryData(summaryData);
+        }
+
+        final List<ZeppOsActivityTrack.Lap> laps = zeppOsActivityTrack.getLaps();
+        if (!laps.isEmpty()) {
+            final ActivitySummaryTableBuilder tableBuilder = new ActivitySummaryTableBuilder(LAPS, "laps_header", Arrays.asList(
+                    "workout_lap",
+                    "distanceMeters",
+                    "Speed",
+                    "lap_time"
+            ));
+
+            for (final ZeppOsActivityTrack.Lap lap : laps) {
+                tableBuilder.addRow(
+                        "lap_" + lap.number(),
+                        Arrays.asList(
+                                new ActivitySummaryValue(lap.number(), UNIT_NONE),
+                                new ActivitySummaryValue(lap.distance(), UNIT_METERS),
+                                new ActivitySummaryValue(1000f / lap.pace(), UNIT_METERS_PER_SECOND),
+                                new ActivitySummaryValue(lap.duration() / 1000, UNIT_SECONDS)
+                        )
+                );
+            }
+
+            tableBuilder.addToSummaryData(summaryData);
+        }
+
+        final List<ZeppOsActivityTrack.SwimmingInterval> swimmingIntervals = zeppOsActivityTrack.getSwimmingIntervals();
+        if (!swimmingIntervals.isEmpty()) {
+            final ActivitySummaryTableBuilder tableBuilder = new ActivitySummaryTableBuilder(GROUP_INTERVALS, "intervals_header", Arrays.asList(
+                    "#",
+                    "swimming_stroke",
+                    "heart_rate",
+                    SWOLF_INDEX,
+                    "pref_header_time"
+            ));
+
+            for (final ZeppOsActivityTrack.SwimmingInterval interval : swimmingIntervals) {
+                tableBuilder.addRow(
+                        "interval_" + interval.number(),
+                        Arrays.asList(
+                                new ActivitySummaryValue(interval.number(), UNIT_NONE),
+                                new ActivitySummaryValue(getSwimStyle(interval.style()), UNIT_NONE),
+                                new ActivitySummaryValue(interval.hr(), UNIT_NONE),
+                                new ActivitySummaryValue(interval.swolf(), UNIT_NONE),
+                                new ActivitySummaryValue(interval.durationMillis() / 1000, UNIT_SECONDS)
+                        )
+                );
+            }
+
+            tableBuilder.addToSummaryData(summaryData);
+        }
+    }
+
+    private String getSwimStyle(final int styleCode) {
+        return switch (styleCode) {
+            case 1 -> "breaststroke";
+            case 2 -> "freestyle";
+            case 3 -> "backstroke";
+            case 4 -> "swim_style_butterfly";
+            case 6 -> "medley";
+            default -> "unknown: " + styleCode;
+        };
     }
 }

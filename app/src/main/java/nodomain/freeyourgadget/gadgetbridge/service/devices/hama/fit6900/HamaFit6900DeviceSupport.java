@@ -56,15 +56,15 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.DistanceUnit;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
 
-public final class HamaFit6900DeviceSupport extends AbstractBTLEDeviceSupport {
+public final class HamaFit6900DeviceSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(HamaFit6900DeviceSupport.class);
 
     private BluetoothGattCharacteristic writeCharacteristic;
@@ -80,17 +80,17 @@ public final class HamaFit6900DeviceSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         writeCharacteristic = getCharacteristic(HamaFit6900Constants.UUID_CHARACTERISTIC_TX);
 
-        builder.notify(getCharacteristic(HamaFit6900Constants.UUID_CHARACTERISTIC_RX), true);
+        builder.notify(HamaFit6900Constants.UUID_CHARACTERISTIC_RX, true);
         builder.setCallback(this);
 
         builder.write(writeCharacteristic, Message.encodeGetBatteryStatus());
         builder.write(writeCharacteristic, Message.encodeGetFirmwareVersion());
 
-        if (GBApplication.getPrefs().getBoolean("datetime_synconconnect", true)) {
+        if (GBApplication.getPrefs().syncTime()) {
             builder.write(writeCharacteristic, makeSetDateTimeMessage());
         }
         // sync all preferences to device
@@ -103,7 +103,7 @@ public final class HamaFit6900DeviceSupport extends AbstractBTLEDeviceSupport {
         builder.write(writeCharacteristic, makeSetLiftWristMessage());
         builder.write(writeCharacteristic, Message.encodeSetAlarms(new ArrayList(DBHelper.getAlarms(gbDevice))));
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
 
         return builder;
     }
@@ -116,7 +116,7 @@ public final class HamaFit6900DeviceSupport extends AbstractBTLEDeviceSupport {
                 sendMessage("update-language+timeformat", makeSetSystemDataMessage());
                 return;
 
-            case SettingsActivity.PREF_MEASUREMENT_SYSTEM:
+            case SettingsActivity.PREF_UNIT_DISTANCE:
                 sendMessage("update-units", makeSetUnitMessage());
                 return;
 
@@ -164,16 +164,15 @@ public final class HamaFit6900DeviceSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] receivedData) {
+        if (super.onCharacteristicChanged(gatt, characteristic, receivedData)) {
             return true;
         }
 
         if (!characteristic.getUuid().equals(HamaFit6900Constants.UUID_CHARACTERISTIC_RX)) {
             return false;
         }
-
-        byte[] receivedData = characteristic.getValue();
 
         Message.CommandMessage cmdMsg = Message.decodeCommandMessage(receivedData);
         if (cmdMsg == null) {
@@ -378,7 +377,7 @@ public final class HamaFit6900DeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             TransactionBuilder builder = performInitialized(taskName);
             builder.write(writeCharacteristic, message);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException ex) {
             LOG.error(taskName, ex);
             return false;
@@ -426,10 +425,9 @@ public final class HamaFit6900DeviceSupport extends AbstractBTLEDeviceSupport {
     }
 
     private byte[] makeSetUnitMessage() {
-        final Prefs prefs = GBApplication.getPrefs();
-        String unit = prefs.getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM, "metric");
+        final DistanceUnit distanceUnit = GBApplication.getPrefs().getDistanceUnit();
 
-        return Message.encodeSetUnit(unit.equals("metric"));
+        return Message.encodeSetUnit(distanceUnit == DistanceUnit.METRIC);
     }
 
     private byte[] makeSetUserInfoMessage() {

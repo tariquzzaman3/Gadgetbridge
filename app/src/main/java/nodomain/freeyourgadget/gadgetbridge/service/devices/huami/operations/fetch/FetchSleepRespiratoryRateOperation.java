@@ -18,6 +18,8 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.huami.operations.fe
 
 import android.widget.Toast;
 
+import androidx.annotation.StringRes;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,13 +33,13 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
+import nodomain.freeyourgadget.gadgetbridge.devices.HuamiSleepRespiratoryRateSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiSleepRespiratoryRateSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuamiSleepRespiratoryRateSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.User;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiFetcher;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 /**
@@ -46,13 +48,14 @@ import nodomain.freeyourgadget.gadgetbridge.util.GB;
 public class FetchSleepRespiratoryRateOperation extends AbstractRepeatingFetchOperation {
     private static final Logger LOG = LoggerFactory.getLogger(FetchSleepRespiratoryRateOperation.class);
 
-    public FetchSleepRespiratoryRateOperation(final HuamiSupport support) {
-        super(support, HuamiFetchDataType.SLEEP_RESPIRATORY_RATE);
+    public FetchSleepRespiratoryRateOperation(final HuamiFetcher fetcher) {
+        super(fetcher, HuamiFetchDataType.SLEEP_RESPIRATORY_RATE);
     }
 
+    @StringRes
     @Override
-    protected String taskDescription() {
-        return getContext().getString(R.string.busy_task_fetch_sleep_respiratory_rate_data);
+    public int taskDescription() {
+        return R.string.busy_task_fetch_sleep_respiratory_rate_data;
     }
 
     @Override

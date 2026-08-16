@@ -18,7 +18,6 @@ import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventFindPhone;
 import nodomain.freeyourgadget.gadgetbridge.devices.casio.CasioConstants;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 
 public abstract class BasicCasio2C2DSupport extends Casio2C2DSupport {
     public BasicCasio2C2DSupport(Logger logger) {
@@ -36,7 +35,7 @@ public abstract class BasicCasio2C2DSupport extends Casio2C2DSupport {
             return builder;
         }
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         super.initializeDevice(builder);
 
@@ -63,10 +62,10 @@ public abstract class BasicCasio2C2DSupport extends Casio2C2DSupport {
         requestFeatures(builder, requests, responses -> {
             TransactionBuilder clockBuilder = createTransactionBuilder("setClocks");
             setClocks(clockBuilder, responses);
-            clockBuilder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
-            clockBuilder.queue(getQueue());
+            clockBuilder.setDeviceState(GBDevice.State.INITIALIZED);
+            clockBuilder.queue();
         });
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     private void setClocks(TransactionBuilder builder, Map<FeatureRequest, byte[]> responses) {
@@ -91,9 +90,9 @@ public abstract class BasicCasio2C2DSupport extends Casio2C2DSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] data) {
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
         if (data.length == 0)
             return true;
 
@@ -109,6 +108,6 @@ public abstract class BasicCasio2C2DSupport extends Casio2C2DSupport {
                 return true;
             }
         }
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, data);
     }
 }

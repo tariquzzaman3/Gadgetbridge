@@ -30,6 +30,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.core.content.ContextCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.slf4j.Logger;
@@ -45,6 +46,7 @@ import nodomain.freeyourgadget.gadgetbridge.activities.ControlCenterv2;
 import nodomain.freeyourgadget.gadgetbridge.activities.discovery.DiscoveryActivityV2;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceManager;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.DeviceDao;
@@ -55,6 +57,7 @@ import nodomain.freeyourgadget.gadgetbridge.util.BondingInterface;
 import nodomain.freeyourgadget.gadgetbridge.util.BondingUtil;
 import nodomain.freeyourgadget.gadgetbridge.util.DeviceHelper;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
+import nodomain.freeyourgadget.gadgetbridge.devices.pebble.PebbleHardware;
 
 
 public class PebblePairingActivity extends AbstractGBActivity implements BondingInterface {
@@ -103,7 +106,7 @@ public class PebblePairingActivity extends AbstractGBActivity implements Bonding
         message.setText(getString(R.string.pairing, btDevice.getAddress()));
 
         GBDevice device;
-        if (BondingUtil.isLePebble(btDevice)) {
+        if (PebbleHardware.isLePebbleCompanion(btDevice)) {
             if (!GBApplication.getPrefs().getBoolean("pebble_force_le", false)) {
                 GB.toast(this, "Please switch on \"Always prefer BLE\" option in Pebble settings before pairing you Pebble LE", Toast.LENGTH_LONG, GB.ERROR);
                 onBondingComplete(false);
@@ -121,11 +124,35 @@ public class PebblePairingActivity extends AbstractGBActivity implements Bonding
             return;
         }
 
+        // Pebble 2, Pebble Time 2, and Pebble 2 Duo are BLE-only and need GATT connection first.
+        // They require writing to a pairing trigger characteristic before createBond() works.
+        // PebbleGATTClient handles the pairing trigger write and initiates bonding.
+        // Note: These devices are BLE-only, so we don't need the "pebble_force_le" setting -
+        // PebbleIoThread automatically uses BLE based on isPebble2() detection.
+        // Use deviceCandidate to leverage manufacturer data for reliable device identification.
+        if (PebbleHardware.needsConnectFirstPairing(deviceCandidate)) {
+            LOG.info("BLE-only device detected - using connect-first pairing");
+
+            registerBroadcastReceivers();
+
+            // Create device and initiate connection - BLE mode will be auto-detected in PebbleIoThread
+            GBDevice gbDevice = DeviceHelper.getInstance().toSupportedDevice(deviceCandidate);
+            if (gbDevice != null) {
+                GB.toast(this, getString(R.string.discovery_trying_to_connect_to, gbDevice.getName()), Toast.LENGTH_SHORT, GB.INFO);
+                GBApplication.deviceService(gbDevice).connect(true);
+                // Don't call onBondingComplete() here - wait for bonding via broadcast receiver
+            } else {
+                LOG.error("Failed to create GBDevice for Pebble 2/Time 2/2 Duo");
+                onBondingComplete(false);
+            }
+            return;
+        }
+
         if (btDevice.getBondState() == BluetoothDevice.BOND_BONDED ||
                 btDevice.getBondState() == BluetoothDevice.BOND_BONDING) {
             BondingUtil.connectThenComplete(this, deviceCandidate);
         } else {
-            BondingUtil.tryBondThenComplete(this, deviceCandidate.getDevice(), deviceCandidate.getDevice().getAddress());
+            BondingUtil.tryBondThenComplete(this, deviceCandidate.getDevice());
         }
     }
 
@@ -168,16 +195,24 @@ public class PebblePairingActivity extends AbstractGBActivity implements Bonding
 
     @Override
     public void onBondingComplete(boolean success) {
+        LOG.debug("ONBONDINGCOMPLETE");
         unregisterBroadcastReceivers();
+
+        BluetoothDevice btDevice = deviceCandidate != null ? deviceCandidate.getDevice() : null;
+
+        if (success) {
+            LocalBroadcastManager.getInstance(this).sendBroadcast(
+                    new Intent(DeviceManager.ACTION_REFRESH_DEVICELIST));
+        }
+
         if (success) {
             startActivity(new Intent(this, ControlCenterv2.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
         } else {
             startActivity(new Intent(this, DiscoveryActivityV2.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
         }
 
-        // If it's not a LE Pebble, initiate a connection when bonding is complete
-        if (!BondingUtil.isLePebble(getCurrentTarget().getDevice()) && success) {
-            BondingUtil.attemptToFirstConnect(getCurrentTarget().getDevice());
+        if (btDevice != null && success && getAttemptToConnect() && shouldReconnectAfterBond()) {
+            BondingUtil.attemptToFirstConnect(btDevice);
         }
         finish();
     }
@@ -188,13 +223,15 @@ public class PebblePairingActivity extends AbstractGBActivity implements Bonding
     }
 
     @Override
-    public String getMacAddress() {
-        return deviceCandidate.getDevice().getAddress();
+    public boolean getAttemptToConnect() {
+        // LE companion manages its own connection via connectThenComplete
+        return deviceCandidate == null || !PebbleHardware.isLePebbleCompanion(deviceCandidate.getDevice());
     }
 
     @Override
-    public boolean getAttemptToConnect() {
-        return true;
+    public boolean shouldReconnectAfterBond() {
+        // Connect-first pairing: bonding occurred within the existing GATT connection
+        return !PebbleHardware.needsConnectFirstPairing(deviceCandidate);
     }
 
     @Override
@@ -252,14 +289,16 @@ public class PebblePairingActivity extends AbstractGBActivity implements Bonding
         super.onPause();
     }
 
+    @Override
     public void unregisterBroadcastReceivers() {
         AndroidUtils.safeUnregisterBroadcastReceiver(LocalBroadcastManager.getInstance(this), pairingReceiver);
         AndroidUtils.safeUnregisterBroadcastReceiver(this, bondingReceiver);
     }
 
+    @Override
     public void registerBroadcastReceivers() {
         LocalBroadcastManager.getInstance(this).registerReceiver(pairingReceiver, new IntentFilter(GBDevice.ACTION_DEVICE_CHANGED));
-        registerReceiver(bondingReceiver, new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED));
+        ContextCompat.registerReceiver(this, bondingReceiver, new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED), ContextCompat.RECEIVER_EXPORTED);
     }
 
     @Override

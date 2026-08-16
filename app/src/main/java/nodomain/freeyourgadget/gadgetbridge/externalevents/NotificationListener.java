@@ -22,8 +22,12 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.externalevents;
 
+import android.app.ActivityOptions;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.Person;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -31,10 +35,13 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.graphics.Color;
-import android.graphics.drawable.Drawable;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.Icon;
+import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.PowerManager;
@@ -45,25 +52,26 @@ import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.RemoteInput;
+import androidx.core.content.ContextCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-import androidx.palette.graphics.Palette;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.InputStream;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -72,7 +80,6 @@ import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
-import nodomain.freeyourgadget.gadgetbridge.devices.pebble.PebbleColor;
 import nodomain.freeyourgadget.gadgetbridge.entities.NotificationFilter;
 import nodomain.freeyourgadget.gadgetbridge.entities.NotificationFilterDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.NotificationFilterEntry;
@@ -86,12 +93,10 @@ import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationType;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceCommunicationService;
-import nodomain.freeyourgadget.gadgetbridge.util.BitmapUtil;
 import nodomain.freeyourgadget.gadgetbridge.util.GBPrefs;
 import nodomain.freeyourgadget.gadgetbridge.util.LimitedQueue;
 import nodomain.freeyourgadget.gadgetbridge.util.MediaManager;
 import nodomain.freeyourgadget.gadgetbridge.util.NotificationUtils;
-import nodomain.freeyourgadget.gadgetbridge.util.PebbleUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
 import static nodomain.freeyourgadget.gadgetbridge.activities.NotificationFilterActivity.NOTIFICATION_FILTER_MODE_BLACKLIST;
@@ -114,23 +119,38 @@ public class NotificationListener extends NotificationListenerService {
     public static final String ACTION_REPLY
             = "nodomain.freeyourgadget.gadgetbridge.notificationlistener.action.reply";
 
-    private final LimitedQueue<Integer, NotificationCompat.Action> mActionLookup = new LimitedQueue<>(32);
+    private final LimitedQueue<Integer, NotificationAction> mActionLookup = new LimitedQueue<>(128);
     private final LimitedQueue<Integer, String> mPackageLookup = new LimitedQueue<>(64);
     private final LimitedQueue<Integer, Long> mNotificationHandleLookup = new LimitedQueue<>(128);
+    private long lastPictureNotificationTime = 0;
 
     private final HashMap<String, Long> notificationBurstPrevention = new HashMap<>();
     private final HashMap<String, Long> notificationOldRepeatPrevention = new HashMap<>();
 
-    private static final Set<String> GROUP_SUMMARY_WHITELIST = new HashSet<String>() {{
+    private static final Set<String> GROUP_SUMMARY_WHITELIST = new HashSet<>() {{
         add("com.microsoft.office.lync15");
         add("com.skype.raider");
         add("mikado.bizcalpro");
     }};
 
+    private static final Set<String> PHONE_CALL_APPS = new HashSet<>() {{
+        add("com.android.dialer");
+        add("com.android.incallui");
+        add("com.asus.asusincallui");
+        add("com.google.android.dialer");
+        add("com.samsung.android.incallui");
+        add("org.fossify.phone");
+    }};
+
+    private static final Set<String> NOTI_USE_TITLE_APPS = new HashSet<>() {{
+        add("com.whatsapp");
+        add("org.thoughtcrime.securesms");
+    }};
+
     public static final ArrayList<String> notificationStack = new ArrayList<>();
     private static final ArrayList<Integer> notificationsActive = new ArrayList<>();
 
-    private static final Set<String> supportedPictureMimeTypes = new HashSet<String>() {{
+    private static final Set<String> supportedPictureMimeTypes = new HashSet<>() {{
         add("image/"); //for im.vector.app
         add("image/jpeg");
         add("image/png");
@@ -148,7 +168,28 @@ public class NotificationListener extends NotificationListenerService {
     private Runnable mSetMusicInfoRunnable = null;
     private Runnable mSetMusicStateRunnable = null;
 
+    private boolean isDreaming = false;
+
     private final GoogleMapsNotificationHandler googleMapsNotificationHandler = new GoogleMapsNotificationHandler();
+
+    private final BroadcastReceiver mExportedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(final Context context, final Intent intent) {
+            final String action = intent.getAction();
+            if (action == null) {
+                LOG.warn("Got intent without action");
+                return;
+            }
+
+            LOG.debug("Got action: {}", action);
+
+            switch (action) {
+                case Intent.ACTION_DREAMING_STARTED -> isDreaming = true;
+                case Intent.ACTION_DREAMING_STOPPED -> isDreaming = false;
+                default -> LOG.warn("Unknown action: {}", action);
+            }
+        }
+    };
 
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
 
@@ -170,7 +211,7 @@ public class NotificationListener extends NotificationListenerService {
                     StatusBarNotification[] sbns = NotificationListener.this.getActiveNotifications();
                     Long ts = mNotificationHandleLookup.lookup(handle);
                     if (ts == null) {
-                        LOG.info("could not lookup handle for open action");
+                        LOG.info("could not look up handle for open action");
                         break;
                     }
 
@@ -191,7 +232,7 @@ public class NotificationListener extends NotificationListenerService {
                 case ACTION_MUTE:
                     String packageName = mPackageLookup.lookup(handle);
                     if (packageName == null) {
-                        LOG.info("could not lookup handle for mute action");
+                        LOG.info("could not look up handle for mute action");
                         break;
                     }
                     LOG.info("going to mute {}", packageName);
@@ -205,7 +246,7 @@ public class NotificationListener extends NotificationListenerService {
                     StatusBarNotification[] sbns = NotificationListener.this.getActiveNotifications();
                     Long ts = mNotificationHandleLookup.lookup(handle);
                     if (ts == null) {
-                        LOG.info("could not lookup handle for dismiss action");
+                        LOG.info("could not look up handle for dismiss action");
                         break;
                     }
                     for (StatusBarNotification sbn : sbns) {
@@ -220,31 +261,43 @@ public class NotificationListener extends NotificationListenerService {
                     NotificationListener.this.cancelAllNotifications();
                     break;
                 case ACTION_REPLY:
-                    NotificationCompat.Action wearableAction = mActionLookup.lookup(handle);
+                    NotificationAction wearableAction = mActionLookup.lookup(handle);
                     String reply = intent.getStringExtra("reply");
                     if (wearableAction != null) {
-                        PendingIntent actionIntent = wearableAction.getActionIntent();
+                        PendingIntent actionIntent = wearableAction.getIntent();
                         if (actionIntent == null) {
                             LOG.warn("Action intent is null");
                             break;
                         }
-                        Intent localIntent = new Intent();
-                        localIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        if (wearableAction.getRemoteInputs() != null && wearableAction.getRemoteInputs().length > 0) {
-                            RemoteInput[] remoteInputs = wearableAction.getRemoteInputs();
-                            Bundle extras = new Bundle();
-                            extras.putCharSequence(remoteInputs[0].getResultKey(), reply);
-                            RemoteInput.addResultsToIntent(remoteInputs, localIntent, extras);
-                        }
+
+                        final RemoteInput remoteInput = wearableAction.getRemoteInput();
+
                         try {
-                            LOG.info("will send exec intent to remote application");
-                            actionIntent.send(context, 0, localIntent);
+                            LOG.info("Will send exec intent to remote application");
+
+                            if (remoteInput != null) {
+                                final Intent localIntent = new Intent();
+                                localIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                final Bundle extras = new Bundle();
+                                extras.putCharSequence(remoteInput.getResultKey(), reply);
+                                RemoteInput.addResultsToIntent(new RemoteInput[]{remoteInput}, localIntent, extras);
+                                actionIntent.send(context, 0, localIntent);
+                            } else {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                                    final ActivityOptions activityOptions = ActivityOptions.makeBasic();
+                                    final Bundle bundle = activityOptions.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                                            .toBundle();
+                                    actionIntent.send(bundle);
+                                } else {
+                                    actionIntent.send();
+                                }
+                            }
                             mActionLookup.remove(handle);
                         } catch (final PendingIntent.CanceledException e) {
                             LOG.warn("replyToLastNotification error", e);
                         }
                     } else {
-                        LOG.warn("Received ACTION_REPLY but cannot find the corresponding wearableAction");
+                        LOG.warn("Received ACTION_REPLY for handle {}, but cannot find the corresponding wearableAction", handle);
                     }
                     break;
             }
@@ -261,14 +314,23 @@ public class NotificationListener extends NotificationListenerService {
         filterLocal.addAction(ACTION_DISMISS_ALL);
         filterLocal.addAction(ACTION_MUTE);
         filterLocal.addAction(ACTION_REPLY);
+        //noinspection deprecation
         LocalBroadcastManager.getInstance(this).registerReceiver(mReceiver, filterLocal);
+
+        final IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_DREAMING_STARTED);
+        filter.addAction(Intent.ACTION_DREAMING_STOPPED);
+        ContextCompat.registerReceiver(this, mExportedReceiver, filter, ContextCompat.RECEIVER_EXPORTED);
+
         createNotificationPictureCacheDirectory();
         cleanUpNotificationPictureProvider();
     }
 
     @Override
     public void onDestroy() {
+        //noinspection deprecation
         LocalBroadcastManager.getInstance(this).unregisterReceiver(mReceiver);
+        unregisterReceiver(mExportedReceiver);
         notificationStack.clear();
         notificationsActive.clear();
         cleanUpNotificationPictureProvider();
@@ -321,6 +383,21 @@ public class NotificationListener extends NotificationListenerService {
             if (rankingMap.getRanking(sbn.getKey(), ranking)) {
                 if (!ranking.matchesInterruptionFilter()) dndSuppressed = 1;
             }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                // Digital Wellbeing app pause and similar restrictions can suppress notifications
+                // changing the interruption filter, but the app will be marked as suspended
+                if (ranking.isSuspended()) {
+                    LOG.debug("Ignoring notification - app is suspended");
+                    return;
+                }
+
+                // If importance is none, it should also not even show up
+                if (ranking.getImportance() == NotificationManager.IMPORTANCE_NONE) {
+                    LOG.debug("Ignoring notification - importance is NONE");
+                    return;
+                }
+            }
         }
 
         if (prefs.getBoolean("notification_filter", false) && dndSuppressed == 1) {
@@ -335,7 +412,9 @@ public class NotificationListener extends NotificationListenerService {
             return;
         }
 
-        if (shouldIgnoreNotification(sbn, false)) {
+        final boolean hasPicture = notificationHasPicture(sbn.getNotification());
+
+        if (shouldIgnoreNotification(sbn, false, hasPicture)) {
             if (!"com.sec.android.app.clockpackage".equals(sbn.getPackageName())) {  // workaround to allow phone alarm notification
                 LOG.info("Ignoring notification: {}", sbn.getPackageName());          // need to fix
                 return;
@@ -350,24 +429,38 @@ public class NotificationListener extends NotificationListenerService {
                 && notification.when <= notificationOldRepeatPreventionValue
                 && !shouldIgnoreRepeatPrevention(sbn)
         ) {
-            LOG.info("NOT processing notification, already sent newer notifications from this source.");
-            return;
-        }
-
-        // Ignore too frequent notifications, according to user preference
-        long curTime = System.nanoTime();
-        Long notificationBurstPreventionValue = notificationBurstPrevention.get(source);
-        if (notificationBurstPreventionValue != null) {
-            long diff = curTime - notificationBurstPreventionValue;
-            if (diff < TimeUnit.SECONDS.toNanos(prefs.getInt("notifications_timeout", 0))) {
-                LOG.info("Ignoring frequent notification, last one was {} ms ago", TimeUnit.NANOSECONDS.toMillis(diff));
+            if (!hasPicture || notification.when <= lastPictureNotificationTime) {
+                LOG.info("NOT processing notification, already sent newer notifications from this source.");
                 return;
+            } else {
+                LOG.info("Allowing repeat notification, it has a picture now");
             }
         }
 
-        NotificationSpec notificationSpec = new NotificationSpec();
+        // Ignore too frequent notifications, according to user preference
+        final int notificationsTimeoutSeconds = prefs.getInt("notifications_timeout", 0);
+        long curTime = System.nanoTime();
+        Long notificationBurstPreventionValue = notificationBurstPrevention.get(source);
+
+        // If this notification contains a picture, and we did not yet send a picture inside the timeout interval,
+        // we should still send it (eg. notification updates)
+        final boolean newPicture = hasPicture &&
+                notification.when - lastPictureNotificationTime > TimeUnit.SECONDS.toMillis(notificationsTimeoutSeconds);
+
+        if (notificationBurstPreventionValue != null) {
+            long diff = curTime - notificationBurstPreventionValue;
+            if (diff < TimeUnit.SECONDS.toNanos(notificationsTimeoutSeconds)) {
+                if (!newPicture) {
+                    LOG.info("Ignoring frequent notification, last one was {} ms ago", TimeUnit.NANOSECONDS.toMillis(diff));
+                    return;
+                } else {
+                    LOG.info("Allowing frequent notification, last one was {} ms ago", TimeUnit.NANOSECONDS.toMillis(diff));
+                }
+            }
+        }
+
+        NotificationSpec notificationSpec = new NotificationSpec(-1, notification.when);
         notificationSpec.key = sbn.getKey();
-        notificationSpec.when = notification.when;
 
         // determinate Source App Name ("Label")
         String name = NotificationUtils.getApplicationLabel(this, source);
@@ -378,15 +471,20 @@ public class NotificationListener extends NotificationListenerService {
         // Get the app ID that generated this notification. For now only used by pebble color, but may be more useful later.
         notificationSpec.sourceAppId = source;
 
-        // Get the icon of the notification
-        notificationSpec.iconId = notification.icon;
+        populateNotificationIcon(notification, source, notificationSpec);
 
         notificationSpec.type = AppNotificationType.getInstance().get(source);
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notificationSpec.channelId = notification.getChannelId();
+        }
+
+        notificationSpec.category = notification.category;
+
         //FIXME: some quirks lookup table would be the minor evil here
-        if (source.startsWith("com.fsck.k9")) {
+        if (source.startsWith("com.fsck.k9") || source.startsWith("net.thunderbird.android")) {
             if (NotificationCompat.isGroupSummary(notification)) {
-                LOG.info("ignore K9 group summary");
+                LOG.info("ignore K9/Thunderbird group summary");
                 return;
             }
         }
@@ -395,13 +493,10 @@ public class NotificationListener extends NotificationListenerService {
             notificationSpec.type = NotificationType.UNKNOWN;
         }
 
-        // Get color
-        notificationSpec.pebbleColor = getPebbleColorForNotification(notificationSpec);
-
         LOG.info(
                 "Processing notification {}, age: {}, source: {}, flags: {}",
                 notificationSpec.getId(),
-                (System.currentTimeMillis() - notification.when) ,
+                (System.currentTimeMillis() - notification.when),
                 source,
                 notification.flags
         );
@@ -425,13 +520,13 @@ public class NotificationListener extends NotificationListenerService {
         }
 
         NotificationCompat.WearableExtender wearableExtender = new NotificationCompat.WearableExtender(notification);
-        List<NotificationCompat.Action> actions = wearableExtender.getActions();
+        List<NotificationCompat.Action> wearableActions = wearableExtender.getActions();
 
         // Some apps such as Telegram send both a group + normal notifications, which would get sent in duplicate to the devices
         // Others only send the group summary, so they need to be whitelisted
-        if (actions.isEmpty() && NotificationCompat.isGroupSummary(notification)
+        if (wearableActions.isEmpty() && NotificationCompat.isGroupSummary(notification)
                 && !GROUP_SUMMARY_WHITELIST.contains(source)) { //this could cause #395 to come back
-            LOG.info("Not forwarding notification, FLAG_GROUP_SUMMARY is set and no wearable action present. Notification flags: " + notification.flags);
+            LOG.info("Not forwarding notification, FLAG_GROUP_SUMMARY is set and no wearable action present. Notification flags: {}", notification.flags);
             return;
         }
 
@@ -440,23 +535,55 @@ public class NotificationListener extends NotificationListenerService {
 
         // DISMISS action
         NotificationSpec.Action dismissAction = new NotificationSpec.Action();
-        dismissAction.title = "Dismiss";
+        dismissAction.title = getString(R.string.dismiss);
         dismissAction.type = NotificationSpec.Action.TYPE_SYNTECTIC_DISMISS;
         notificationSpec.attachedActions.add(dismissAction);
 
-        for (NotificationCompat.Action act : actions) {
+        boolean hasWearableActions = false;
+        for (NotificationCompat.Action act : wearableActions) {
             if (act != null) {
                 NotificationSpec.Action wearableAction = new NotificationSpec.Action();
-                wearableAction.title = act.getTitle().toString();
+                wearableAction.title = String.valueOf(act.getTitle());
+                final RemoteInput remoteInput;
                 if (act.getRemoteInputs() != null && act.getRemoteInputs().length > 0) {
                     wearableAction.type = NotificationSpec.Action.TYPE_WEARABLE_REPLY;
+                    remoteInput = act.getRemoteInputs()[0];
                 } else {
                     wearableAction.type = NotificationSpec.Action.TYPE_WEARABLE_SIMPLE;
+                    remoteInput = null;
                 }
                 notificationSpec.attachedActions.add(wearableAction);
-                wearableAction.handle = (notificationSpec.getId() << 4) + notificationSpec.attachedActions.size();
-                mActionLookup.add((int)wearableAction.handle, act);
-                LOG.info("Found wearable action: {} - {}  {}", notificationSpec.attachedActions.size(), act.getTitle(), sbn.getTag());
+                wearableAction.handle = ((long) notificationSpec.getId() << 4) + notificationSpec.attachedActions.size();
+                mActionLookup.add((int) wearableAction.handle, new NotificationAction(act.getActionIntent(), remoteInput));
+                LOG.debug("Found wearable action {}: {} - {}  {}", notificationSpec.attachedActions.size(), (int) wearableAction.handle, act.getTitle(), sbn.getTag());
+                hasWearableActions = true;
+            }
+        }
+
+        if (!hasWearableActions && notification.actions != null) {
+            // If no wearable actions are sent, fallback to normal custom actions
+            for (final Notification.Action act : notification.actions) {
+                final NotificationSpec.Action customAction = new NotificationSpec.Action();
+                customAction.title = String.valueOf(act.title);
+                final RemoteInput remoteInput;
+                if (act.getRemoteInputs() != null && act.getRemoteInputs().length > 0) {
+                    customAction.type = NotificationSpec.Action.TYPE_CUSTOM_REPLY;
+                    android.app.RemoteInput ri = act.getRemoteInputs()[0];
+                    // FIXME this is not very clean
+                    remoteInput = new RemoteInput.Builder(ri.getResultKey())
+                            .setLabel(ri.getLabel())
+                            .setChoices(ri.getChoices())
+                            .setAllowFreeFormInput(ri.getAllowFreeFormInput())
+                            .addExtras(ri.getExtras())
+                            .build();
+                } else {
+                    customAction.type = NotificationSpec.Action.TYPE_CUSTOM_SIMPLE;
+                    remoteInput = null;
+                }
+                notificationSpec.attachedActions.add(customAction);
+                customAction.handle = ((long) notificationSpec.getId() << 4) + notificationSpec.attachedActions.size();
+                mActionLookup.add((int) customAction.handle, new NotificationAction(act.actionIntent, remoteInput));
+                LOG.info("Found custom action {}: {} - {}", notificationSpec.attachedActions.size(), (int) customAction.handle, act.title);
             }
         }
 
@@ -475,6 +602,10 @@ public class NotificationListener extends NotificationListenerService {
         mNotificationHandleLookup.add(notificationSpec.getId(), sbn.getPostTime()); // for both DISMISS and OPEN
         mPackageLookup.add(notificationSpec.getId(), sbn.getPackageName()); // for MUTE
 
+        if (notificationSpec.picturePath != null) {
+            lastPictureNotificationTime = notificationSpec.when;
+        }
+
         notificationBurstPrevention.put(source, curTime);
         if (notification.when == 0) {
             LOG.info("This app might show old/duplicate notifications. notification.when is 0 for {}", source);
@@ -491,6 +622,16 @@ public class NotificationListener extends NotificationListenerService {
         GBApplication.deviceService().onNotification(notificationSpec);
     }
 
+    static boolean isOutsideNotificationTimes(final LocalTime now, final LocalTime start, final LocalTime end) {
+        if (start.isBefore(end)) {
+            // eg. 06:00 -> 22:00
+            return now.isBefore(start) || now.isAfter(end);
+        } else {
+            // goes past midnight, eg. 22:00 -> 06:00
+            return now.isBefore(start) && now.isAfter(end);
+        }
+    }
+
     private static boolean isOutsideNotificationTimes(final GBPrefs prefs) {
         if (!prefs.getNotificationTimesEnabled()) {
             return false;
@@ -499,14 +640,7 @@ public class NotificationListener extends NotificationListenerService {
         final LocalTime now = LocalTime.now();
         final LocalTime start = prefs.getNotificationTimesStart();
         final LocalTime end = prefs.getNotificationTimesEnd();
-        final boolean shouldIgnore;
-        if (start.isBefore(end)) {
-            // eg. 06:00 -> 22:00
-            shouldIgnore = now.isAfter(start) && now.isBefore(end);
-        } else {
-            // goes past midnight, eg. 22:00 -> 06:00
-            shouldIgnore = now.isAfter(start) || now.isBefore(end);
-        }
+        final boolean shouldIgnore = isOutsideNotificationTimes(now, start, end);
 
         if (shouldIgnore) {
             LOG.debug("Ignoring notification outside of notification times {}/{}", start, end);
@@ -560,17 +694,29 @@ public class NotificationListener extends NotificationListenerService {
 
     private void handleCallNotification(StatusBarNotification sbn) {
         String app = sbn.getPackageName();
-        LOG.debug("got call from: " + app);
-        if (app.equals("com.android.dialer") || app.equals("com.android.incallui") || app.equals("com.google.android.dialer") || app.equals("com.asus.asusincallui") || app.equals("com.samsung.android.incallui")) {
+        LOG.debug("got call from: {}", app);
+        if (PHONE_CALL_APPS.contains(app)) {
             LOG.debug("Ignoring non-voip call");
             return;
         }
+
+        // #5113 - Firefox incorrectly categorizes recording notifications as calls - ignore them
+        if (app.equals("org.mozilla.firefox") ||
+                app.equals("org.mozilla.firefox_beta") ||
+                app.equals("org.mozilla.fenix") ||
+                app.equals("org.mozilla.fennec_aurora") ||
+                app.equals("org.mozilla.focus") ||
+                app.equals("org.mozilla.fennec_fdroid")) {
+            LOG.debug("Ignoring firefox call");
+            return;
+        }
+
         Notification noti = sbn.getNotification();
         dumpExtras(noti.extras);
         boolean callStarted = false;
         if (noti.actions != null && noti.actions.length > 0) {
             for (Notification.Action action : noti.actions) {
-                LOG.info("Found call action: " + action.title);
+                LOG.info("Found call action: {}", action.title);
             }
             if (noti.actions.length == 1) {
                 if (mLastCallCommand == CallSpec.CALL_INCOMING) {
@@ -590,14 +736,51 @@ public class NotificationListener extends NotificationListenerService {
             }*/
         }
 
+        if (app.equals("com.microsoft.teams")) {
+            // #5525 - Microsoft Teams spams notifications with slightly increasing timestamps
+            // we use a different key for the burst prevention to prevent suppressing notifications
+            final String burstPreventionKey = "call:" + app;
+            final Long notificationBurstPreventionValue = notificationBurstPrevention.get(burstPreventionKey);
+            long curTime = System.nanoTime();
+            if (notificationBurstPreventionValue != null) {
+                long diff = curTime - notificationBurstPreventionValue;
+                if (diff < TimeUnit.SECONDS.toNanos(1)) {
+                    LOG.info("Ignoring burst call notification from Microsoft Teams, last one was {} ms ago", TimeUnit.NANOSECONDS.toMillis(diff));
+                    return;
+                }
+            }
+            notificationBurstPrevention.put(burstPreventionKey, curTime);
+        }
+
         // figure out sender
-        String number;
+        String number = null;
+        String notiTitle = null;
+        String notiText = null;
         String appName = NotificationUtils.getApplicationLabel(this, app);
         if (noti.extras.containsKey(Notification.EXTRA_PEOPLE)) {
-            number = noti.extras.getString(Notification.EXTRA_PEOPLE);
-        } else if (noti.extras.containsKey(Notification.EXTRA_TITLE)) {
-            number = noti.extras.getString(Notification.EXTRA_TITLE);
-        } else {
+            String[] people = noti.extras.getStringArray(Notification.EXTRA_PEOPLE);
+            if (people != null && people.length > 0 && people[0] != null) {
+                number = people[0];
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && noti.extras.containsKey(Notification.EXTRA_PEOPLE_LIST)) {
+            List<Person> people = noti.extras.getParcelableArrayList(Notification.EXTRA_PEOPLE_LIST);
+            if (people != null && !people.isEmpty()) {
+                Person firstPerson = people.get(0);
+                if (firstPerson != null && firstPerson.getName() != null) {
+                    number = firstPerson.getName().toString();
+                }
+            }
+        }
+        if (noti.extras.containsKey(Notification.EXTRA_TEXT)) {
+            notiText = noti.extras.getString(Notification.EXTRA_TEXT);
+        }
+        if (noti.extras.containsKey(Notification.EXTRA_TITLE)) {
+            notiTitle = noti.extras.getString(Notification.EXTRA_TITLE);
+        }
+        if (number == null) {
+            number = NOTI_USE_TITLE_APPS.contains(app) ? notiTitle : notiText;
+        }
+        if (number == null) {
             number = appName != null ? appName : app;
         }
         activeCallPostTime = sbn.getPostTime();
@@ -607,6 +790,15 @@ public class NotificationListener extends NotificationListenerService {
         if (appName != null) {
             callSpec.sourceName = appName;
         }
+
+        callSpec.isVoip = true;
+
+        callSpec.key = sbn.getKey();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            callSpec.channelId = noti.getChannelId();
+        }
+        callSpec.category = noti.category;
+
         callSpec.command = callStarted ? CallSpec.CALL_START : CallSpec.CALL_INCOMING;
         mLastCallCommand = callSpec.command;
         GBApplication.deviceService().onSetCallState(callSpec);
@@ -629,7 +821,7 @@ public class NotificationListener extends NotificationListenerService {
                     LOG.info("Every word was found, blacklist has effect, processing stops.");
                     return false;
                 } else {
-                    boolean containsAny = StringUtils.containsAny(body, wordsList.toArray(new CharSequence[0]));
+                    boolean containsAny = Strings.CS.containsAny(body, wordsList.toArray(new CharSequence[0]));
                     if (!containsAny) {
                         LOG.info("No matching word was found, blacklist has no effect, processing continues.");
                     } else {
@@ -649,7 +841,7 @@ public class NotificationListener extends NotificationListenerService {
                     LOG.info("Every word was found, whitelist has effect, processing continues.");
                     return true;
                 } else {
-                    boolean containsAny = StringUtils.containsAny(body, wordsList.toArray(new CharSequence[0]));
+                    boolean containsAny = Strings.CS.containsAny(body, wordsList.toArray(new CharSequence[0]));
                     if (containsAny) {
                         LOG.info("At least one matching word was found, whitelist has effect, processing continues.");
                     } else {
@@ -667,6 +859,25 @@ public class NotificationListener extends NotificationListenerService {
     // Keep newline and whitespace characters
     private String sanitizeUnicode(String orig) {
         return orig.replaceAll("[\\p{C}&&\\S]", "");
+    }
+
+    /// Helper method to quickly check whether a notification has a picture, without
+    /// dissecting the full thing
+    private boolean notificationHasPicture(final Notification notification) {
+        final NotificationCompat.MessagingStyle messagingStyle = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification);
+        if (messagingStyle != null) {
+            final List<NotificationCompat.MessagingStyle.Message> messages = messagingStyle.getMessages();
+            if (!messages.isEmpty()) {
+                final NotificationCompat.MessagingStyle.Message lastMessage = messages.get(messages.size() - 1);
+
+                if (supportedPictureMimeTypes.contains(lastMessage.getDataMimeType()) && lastMessage.getDataUri() != null) {
+                    return true;
+                }
+            }
+        }
+
+        final Bundle extras = NotificationCompat.getExtras(notification);
+        return extras != null && extras.containsKey(NotificationCompat.EXTRA_PICTURE);
     }
 
     private void dissectNotificationTo(Notification notification, NotificationSpec notificationSpec,
@@ -702,31 +913,56 @@ public class NotificationListener extends NotificationListenerService {
                 // Get the last message (assumed to be the most recent)
                 NotificationCompat.MessagingStyle.Message lastMessage = messages.get(messages.size() - 1);
 
-                if (supportedPictureMimeTypes.contains(lastMessage.getDataMimeType())) {
+                if (supportedPictureMimeTypes.contains(lastMessage.getDataMimeType()) && lastMessage.getDataUri() != null) {
                     ContentResolver contentResolver = getContentResolver();
+
+                    // Attempt to get the direct path
                     try (Cursor cursor = contentResolver.query(lastMessage.getDataUri(), null, null, null, null)) {
                         if (cursor != null && cursor.moveToFirst()) {
                             int dataIndex = cursor.getColumnIndex(MediaStore.Images.Media.DATA);
                             notificationSpec.picturePath = cursor.getString(dataIndex);
                         }
                     } catch (Exception e) {
-                        LOG.error(e.getMessage());
+                        LOG.error("Failed to get notification picture path", e);
+                    }
+
+                    // Fallback - attempt to open the URI and copy it to cache
+                    if (notificationSpec.picturePath == null) {
+                        Bitmap bmp = null;
+                        try (InputStream inputStream = contentResolver.openInputStream(lastMessage.getDataUri())) {
+                            bmp = BitmapFactory.decodeStream(inputStream);
+                            if (bmp != null) {
+                                final File pictureFile = new File(this.notificationPictureCacheDirectory, String.valueOf(notificationSpec.getId()));
+                                try (FileOutputStream fos = new FileOutputStream(pictureFile)) {
+                                    bmp.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                                    notificationSpec.picturePath = pictureFile.getAbsolutePath();
+                                }
+                            }
+                        } catch (Exception e) {
+                            LOG.error("Failed to load picture from data uri to cache: ", e);
+                        } finally {
+                            if (bmp != null) {
+                                bmp.recycle();
+                            }
+                        }
                     }
                 }
             }
         }
 
-        if (extras.containsKey(NotificationCompat.EXTRA_PICTURE)) {
+        if (notificationSpec.picturePath == null && extras.containsKey(NotificationCompat.EXTRA_PICTURE)) {
             final Bitmap bmp = (Bitmap) extras.get(NotificationCompat.EXTRA_PICTURE);
-            File pictureFile = new File(this.notificationPictureCacheDirectory, String.valueOf(notificationSpec.getId()));
+            if (bmp != null) {
+                File pictureFile = new File(this.notificationPictureCacheDirectory, String.valueOf(notificationSpec.getId()));
 
-            try (FileOutputStream fos = new FileOutputStream(pictureFile)) {
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, fos);
-                notificationSpec.picturePath = pictureFile.getAbsolutePath();
-            } catch (IOException e) {
-                LOG.error("Failed to save picture to notification cache: {}", e.getMessage());
-            } finally {
-                bmp.recycle();
+                try (FileOutputStream fos = new FileOutputStream(pictureFile)) {
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                    notificationSpec.picturePath = pictureFile.getAbsolutePath();
+                } catch (Exception e) {
+                    LOG.error("Failed to save picture to notification cache: {}", e.getMessage());
+                } finally {
+                    bmp.recycle();
+                }
             }
         }
 
@@ -735,6 +971,35 @@ public class NotificationListener extends NotificationListenerService {
                 && notificationSpec.title != null) {
             notificationSpec.body = notificationSpec.title;
             notificationSpec.title = null;
+        }
+    }
+
+    static void populateNotificationIcon(final Notification notification,
+                                         final String sourcePackage,
+                                         final NotificationSpec notificationSpec) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            final Icon smallIcon = notification.getSmallIcon();
+            if (smallIcon != null) {
+                try {
+                    final int resourceId = smallIcon.getResId();
+                    if (resourceId != 0) {
+                        notificationSpec.iconId = resourceId;
+                        final String resourcePackage = smallIcon.getResPackage();
+                        notificationSpec.iconPackageId = StringUtils.isBlank(resourcePackage)
+                                ? sourcePackage
+                                : resourcePackage;
+                        return;
+                    }
+                } catch (final IllegalStateException e) {
+                    LOG.debug("Notification small icon is not a resource icon");
+                }
+            }
+        }
+
+        //noinspection deprecation
+        notificationSpec.iconId = notification.icon;
+        if (notificationSpec.iconId != 0) {
+            notificationSpec.iconPackageId = sourcePackage;
         }
     }
 
@@ -752,23 +1017,20 @@ public class NotificationListener extends NotificationListenerService {
     public boolean handleMediaSessionNotification(MediaSession.Token mediaSession) {
         try {
             final MediaController c = new MediaController(getApplicationContext(), mediaSession);
-            if (c.getMetadata() == null) {
+            final PlaybackState playbackState = c.getPlaybackState();
+            final MediaMetadata metadata = c.getMetadata();
+            if (metadata == null) {
                 return false;
             }
 
-            final MusicStateSpec stateSpec = MediaManager.extractMusicStateSpec(c.getPlaybackState());
-            final MusicSpec musicSpec = MediaManager.extractMusicSpec(c.getMetadata());
+            final MusicStateSpec stateSpec = MediaManager.extractMusicStateSpec(playbackState);
+            final MusicSpec musicSpec = MediaManager.extractMusicSpec(metadata);
 
             // finally, tell the device about it
             if (mSetMusicInfoRunnable != null) {
                 mHandler.removeCallbacks(mSetMusicInfoRunnable);
             }
-            mSetMusicInfoRunnable = new Runnable() {
-                @Override
-                public void run() {
-                    GBApplication.deviceService().onSetMusicInfo(musicSpec);
-                }
-            };
+            mSetMusicInfoRunnable = () -> GBApplication.deviceService().onSetMusicInfo(musicSpec);
             mHandler.postDelayed(mSetMusicInfoRunnable, 100);
 
             if (stateSpec != null) {
@@ -832,7 +1094,7 @@ public class NotificationListener extends NotificationListenerService {
             GBApplication.deviceService().onSetCallState(callSpec);
         }
 
-        if (shouldIgnoreNotification(sbn, true)) return;
+        if (shouldIgnoreNotification(sbn, true, false)) return;
 
         // Build list of all currently active notifications
         ArrayList<Integer> activeNotificationsIds = new ArrayList<>();
@@ -893,15 +1155,18 @@ public class NotificationListener extends NotificationListenerService {
         this.notificationPictureCacheDirectory = new File(cacheDir, "notification-pictures");
         this.notificationPictureCacheDirectory.mkdir();
     }
+
     private void logNotification(StatusBarNotification sbn, boolean posted) {
         LOG.debug(
-                "Notification {} {}: packageName={}, when={}, priority={}, category={}",
+                "Notification {} {}: packageName={}, channelId={} when={}, priority={}, category={}, flags={}",
                 sbn.getId(),
                 posted ? "posted" : "removed",
                 sbn.getPackageName(),
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? sbn.getNotification().getChannelId() : "N/A",
                 sbn.getNotification().when,
                 sbn.getNotification().priority,
-                sbn.getNotification().category
+                sbn.getNotification().category,
+                sbn.getNotification().flags
         );
     }
 
@@ -930,6 +1195,16 @@ public class NotificationListener extends NotificationListenerService {
         return false;
     }
 
+    private boolean isOtherUser(StatusBarNotification sbn) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (sbn.getPackageName().equals("android")) {
+                return "OTHER_USERS".equals(sbn.getNotification().getChannelId());
+            }
+        }
+
+        return false;
+    }
+
     private boolean shouldIgnoreSource(StatusBarNotification sbn) {
         String source = sbn.getPackageName();
 
@@ -945,6 +1220,15 @@ public class NotificationListener extends NotificationListenerService {
                 source.equals("com.android.dialer") ||
                 source.equals("com.google.android.dialer") ||
                 source.equals("com.cyanogenmod.eleven")) {
+            if (isOtherUser(sbn)) {
+                final boolean ignoreOtherUsers = prefs.getBoolean("notifications_ignore_other_users", false);
+                if (ignoreOtherUsers) {
+                    LOG.info("Ignoring notification, is from another user");
+                } else {
+                    LOG.debug("Allowing notification from another user");
+                    return false;
+                }
+            }
             LOG.info("Ignoring notification, is a system event");
             return true;
         }
@@ -953,7 +1237,12 @@ public class NotificationListener extends NotificationListenerService {
                 source.equals("com.android.mms") ||
                 source.equals("com.sonyericsson.conversations") ||
                 source.equals("com.android.messaging") ||
-                source.equals("org.smssecure.smssecure")) {
+                source.equals("com.google.android.apps.messaging") ||
+                source.equals("org.smssecure.smssecure") ||
+                source.equals("org.fossify.messages") ||
+                source.equals("com.goodwy.smsmessenger") ||
+                source.equals("com.simplemobiletools.smsmessenger") ||
+                source.equals("dev.octoshrimpy.quik")) {
             if (!"never".equals(prefs.getString("notification_mode_sms", "when_screen_off"))) {
                 LOG.info("Ignoring notification, it's an sms notification");
                 return true;
@@ -985,7 +1274,7 @@ public class NotificationListener extends NotificationListenerService {
         return false;
     }
 
-    private boolean shouldIgnoreOngoing(StatusBarNotification sbn, NotificationType type) {
+    private boolean shouldSendOngoing(StatusBarNotification sbn, NotificationType type) {
         if (isFitnessApp(sbn)) {
             return true;
         }
@@ -996,18 +1285,13 @@ public class NotificationListener extends NotificationListenerService {
     }
 
     private boolean isFitnessApp(StatusBarNotification sbn) {
-        String source = sbn.getPackageName();
-        if (source.equals("de.dennisguse.opentracks")
+        final String source = sbn.getPackageName();
+        return source.equals("de.dennisguse.opentracks")
                 || source.equals("de.dennisguse.opentracks.debug")
                 || source.equals("de.dennisguse.opentracks.nightly")
                 || source.equals("de.dennisguse.opentracks.playstore")
                 || source.equals("de.tadris.fitness")
-                || source.equals("de.tadris.fitness.debug")
-        ) {
-            return true;
-        }
-
-        return false;
+                || source.equals("de.tadris.fitness.debug");
     }
 
     private boolean isWorkProfile(StatusBarNotification sbn) {
@@ -1026,13 +1310,15 @@ public class NotificationListener extends NotificationListenerService {
         return false;
     }
 
-    private boolean shouldIgnoreNotification(StatusBarNotification sbn, boolean remove) {
+    private boolean shouldIgnoreNotification(StatusBarNotification sbn,
+                                             boolean remove,
+                                             boolean hasPicture) {
         Notification notification = sbn.getNotification();
         String source = sbn.getPackageName();
 
         NotificationType type = AppNotificationType.getInstance().get(source);
         //ignore notifications marked as LocalOnly https://developer.android.com/reference/android/app/Notification.html#FLAG_LOCAL_ONLY
-        //some Apps always mark their notifcations as read-only
+        //some Apps always mark their notifications as read-only
         if (NotificationCompat.getLocalOnly(notification) &&
                 type != NotificationType.WECHAT &&
                 type != NotificationType.TELEGRAM &&
@@ -1049,65 +1335,99 @@ public class NotificationListener extends NotificationListenerService {
         // has to be on (obviously)
         if (!remove) {
             if (!prefs.getBoolean("notifications_generic_whenscreenon", false)) {
-                PowerManager powermanager = (PowerManager) getSystemService(POWER_SERVICE);
+                final PowerManager powermanager = (PowerManager) getSystemService(POWER_SERVICE);
                 if (powermanager != null && powermanager.isScreenOn()) {
-                    LOG.info("Not forwarding notification, screen seems to be on and settings do not allow this");
-                    return true;
+                    if (!isDreaming) {
+                        LOG.info("Not forwarding notification, screen seems to be on and settings do not allow this");
+                        return true;
+                    } else if (!prefs.getBoolean("notifications_generic_when_screen_saver", true)) {
+                        LOG.info("Not forwarding notification, screen saver seems to be on and settings do not allow this");
+                        return true;
+                    }
                 }
             }
         }
 
-        if (sbn.getNotification().priority < Notification.PRIORITY_DEFAULT) {
-            if (prefs.getBoolean("notifications_ignore_low_priority", true)) {
-                LOG.info("Ignoring low priority notification");
-                return true;
+        if (prefs.getBoolean("notifications_ignore_low_priority", true)) {
+            Boolean isImportant = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notification.getChannelId() != null) {
+                String channel_id = notification.getChannelId();
+                try {
+                    List<NotificationChannel> channels = getNotificationChannels(sbn.getPackageName(), Process.myUserHandle());
+                    NotificationChannel channel = null;
+                    for (NotificationChannel c : channels) {
+                        if (channel_id.equals(c.getId())) {
+                            channel = c;
+                            break;
+                        }
+                    }
+                    if (channel != null) {
+                        isImportant = channel.getImportance() >= NotificationManager.IMPORTANCE_DEFAULT;
+                    }
+                } catch (SecurityException ignored) {
+                    LOG.warn("Can't call getNotificationChannels, Gadgetbridge needs to be registered as a companion app");
+                }
+            }
+            if (isImportant == null) {
+                isImportant = notification.priority >= Notification.PRIORITY_DEFAULT;
+            }
+            if (!isImportant) {
+                // notification updates with a picture are low priority
+                if (!hasPicture) {
+                    LOG.debug("Ignoring notification, low priority");
+                    return true;
+                } else {
+                    LOG.debug("Allowing low priority notification - has picture");
+                }
             }
         }
 
-        if (shouldIgnoreOngoing(sbn, type)) {
+        if (NotificationCompat.CATEGORY_PROGRESS.equals(sbn.getNotification().category)
+                && (sbn.getPackageName().equals("com.whatsapp") || sbn.getPackageName().equals("com.whatsapp.w4b"))) {
+            // #5554 - WhatsApp progress notifications are not marked as ongoing and will spam the watch
+            LOG.debug("Ignoring WhatsApp progress notification");
+            return true;
+        }
+
+        if (shouldSendOngoing(sbn, type)) {
+            LOG.trace("Not ignoring ongoing notification");
             return false;
         }
 
-        return (notification.flags & Notification.FLAG_ONGOING_EVENT) == Notification.FLAG_ONGOING_EVENT;
-
+        return (notification.flags & (Notification.FLAG_ONGOING_EVENT | Notification.FLAG_FOREGROUND_SERVICE)) != 0;
     }
 
+    private static class NotificationAction {
+        private final PendingIntent intent;
+        @Nullable
+        private final RemoteInput remoteInput;
 
-    /**
-     * Get the notification color that should be used for this Pebble notification.
-     *
-     * Note that this method will *not* edit the NotificationSpec passed in. It will only evaluate the PebbleColor.
-     *
-     * See Issue #815 on GitHub to see how notification colors are set.
-     *
-     * @param notificationSpec The NotificationSpec to read from.
-     * @return Returns a PebbleColor that best represents this notification.
-     */
-    private byte getPebbleColorForNotification(NotificationSpec notificationSpec) {
-        String appId = notificationSpec.sourceAppId;
-        NotificationType existingType = notificationSpec.type;
-
-        // If the notification type is known, return the associated color.
-        if (existingType != NotificationType.UNKNOWN) {
-            return existingType.color;
+        private NotificationAction(final PendingIntent pendingIntent, @Nullable final RemoteInput remoteInput) {
+            this.intent = pendingIntent;
+            this.remoteInput = remoteInput;
         }
 
-        // Otherwise, we go and attempt to find the color from the app icon.
-        Drawable icon;
-        try {
-            icon = NotificationUtils.getAppIcon(getApplicationContext(), appId);
-            Objects.requireNonNull(icon);
-        } catch (Exception ex) {
-            // If we can't get the icon, we go with the default defined above.
-            LOG.warn("Could not get icon for AppID " + appId, ex);
-            return PebbleColor.IslamicGreen;
+        public PendingIntent getIntent() {
+            return intent;
         }
 
-        Bitmap bitmapIcon = BitmapUtil.convertDrawableToBitmap(icon);
-        int iconPrimaryColor = new Palette.Builder(bitmapIcon)
-                .generate()
-                .getVibrantColor(Color.parseColor("#aa0000"));
+        @Nullable
+        public RemoteInput getRemoteInput() {
+            return remoteInput;
+        }
+    }
 
-        return PebbleUtils.getPebbleColor(iconPrimaryColor);
+    @Override
+    @RequiresApi(api = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    public void onTimeout(int startId) {
+        LOG.info("onTimeout startId={}", startId);
+        super.onTimeout(startId);
+    }
+
+    @Override
+    @RequiresApi(api = Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    public void onTimeout(int startId, int fgsType) {
+        LOG.info("onTimeout startId={} fgsType={}", startId, fgsType);
+        super.onTimeout(startId, fgsType);
     }
 }

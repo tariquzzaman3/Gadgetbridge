@@ -112,12 +112,21 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
     private BatteryState currentBatteryState = BatteryState.UNKNOWN;
     private SleepState currentSleepDetectionState = SleepState.UNKNOWN;
 
+    private final XiaomiVibrationManager vibrationManager;
+
     public XiaomiSystemService(final XiaomiSupport support) {
         super(support);
+        this.vibrationManager = new XiaomiVibrationManager(support);
     }
 
     @Override
     public void initialize() {
+        fwHelper = null;
+        handler.removeCallbacksAndMessages(null);
+        currentWearingState = WearingState.UNKNOWN;
+        currentBatteryState = BatteryState.UNKNOWN;
+        currentSleepDetectionState = SleepState.UNKNOWN;
+
         // Request device info and configs
         getSupport().sendCommand("get device info", COMMAND_TYPE, CMD_DEVICE_INFO);
         getSupport().sendCommand("get device status", COMMAND_TYPE, CMD_DEVICE_STATE_GET);
@@ -132,6 +141,11 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
         getSupport().sendCommand("get workout types", COMMAND_TYPE, CMD_WORKOUT_TYPES_GET);
 
         rearmBatteryStateRequestTimer();
+    }
+
+    @Override
+    public void dispose() {
+        handler.removeCallbacksAndMessages(null);
     }
 
     @Override
@@ -212,6 +226,11 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
             case CMD_WIDGET_PARTS_GET:
                 handleWidgetParts(cmd.getSystem().getWidgetParts());
                 return;
+            case XiaomiVibrationManager.CMD_GET:
+            case XiaomiVibrationManager.CMD_ADD:
+            case XiaomiVibrationManager.CMD_REMOVE:
+                vibrationManager.handleCommand(cmd);
+                return;
             case CMD_DEVICE_STATE_GET:
                 handleBasicDeviceState(cmd.getSystem().hasBasicDeviceState()
                         ? cmd.getSystem().getBasicDeviceState()
@@ -256,6 +275,10 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
             case DeviceSettingsPreferenceConst.PREF_WIDGETS:
                 setWidgets();
                 return true;
+            case XiaomiVibrationManager.PREF_REFRESH:
+            case XiaomiVibrationManager.PREF_ADD:
+            case XiaomiVibrationManager.PREF_REMOVE:
+                return vibrationManager.onSendConfiguration(config);
         }
 
         return super.onSendConfiguration(config, prefs);
@@ -678,8 +701,7 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
         LOG.debug("Current wearing state = {}, new wearing state = {}", currentWearingState, newState);
 
         if (currentWearingState != WearingState.UNKNOWN && currentWearingState != newState) {
-            GBDeviceEventWearState event = new GBDeviceEventWearState();
-            event.wearingState = newState;
+            GBDeviceEventWearState event = new GBDeviceEventWearState(newState);
             getSupport().evaluateGBDeviceEvent(event);
         }
 
@@ -704,8 +726,7 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
         LOG.debug("Current sleep detection state = {}, new sleep detection state = {}", currentSleepDetectionState, newState);
 
         if (currentSleepDetectionState != SleepState.UNKNOWN && currentSleepDetectionState != newState) {
-            GBDeviceEventSleepStateDetection event = new GBDeviceEventSleepStateDetection();
-            event.sleepState = newState;
+            GBDeviceEventSleepStateDetection event = new GBDeviceEventSleepStateDetection(newState);
             getSupport().evaluateGBDeviceEvent(event);
         }
 
@@ -782,8 +803,7 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
 
             // send event if the previous state is known and the new state is different from cached
             if (currentSleepDetectionState != SleepState.UNKNOWN && currentSleepDetectionState != newSleepState) {
-                GBDeviceEventSleepStateDetection event = new GBDeviceEventSleepStateDetection();
-                event.sleepState = newSleepState;
+                GBDeviceEventSleepStateDetection event = new GBDeviceEventSleepStateDetection(newSleepState);
                 getSupport().evaluateGBDeviceEvent(event);
             }
 
@@ -796,8 +816,7 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
             LOG.debug("Previous wearing state: {}, new wearing state: {}", currentWearingState, newWearingState);
 
             if (currentWearingState != WearingState.UNKNOWN && currentWearingState != newWearingState) {
-                GBDeviceEventWearState event = new GBDeviceEventWearState();
-                event.wearingState = newWearingState;
+                GBDeviceEventWearState event = new GBDeviceEventWearState(newWearingState);
                 getSupport().evaluateGBDeviceEvent(event);
             }
 
@@ -946,7 +965,7 @@ public class XiaomiSystemService extends AbstractXiaomiService implements Xiaomi
 
     private void setDeviceBusy() {
         final GBDevice device = getSupport().getDevice();
-        device.setBusyTask(getSupport().getContext().getString(R.string.updating_firmware));
+        device.setBusyTask(R.string.updating_firmware, getSupport().getContext());
         device.sendDeviceUpdateIntent(getSupport().getContext());
     }
 

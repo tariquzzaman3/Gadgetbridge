@@ -23,7 +23,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.os.Build;
 
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
@@ -37,12 +36,17 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceManager;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceCommunicationService;
-import nodomain.freeyourgadget.gadgetbridge.util.PendingIntentUtils;
 
 public class AutoConnectIntervalReceiver extends BroadcastReceiver {
 
-    final DeviceCommunicationService service;
-    static int mDelay = 4;
+    private final DeviceCommunicationService service;
+    // Delay is in milliseconds
+    private static int mDelay = Integer.MAX_VALUE;
+
+    /// don't increase {@link #mDelay} while alarm is already scheduled
+    private static volatile boolean mScheduled = false;
+    private static volatile boolean mBackingOff = false;
+
     private static final Logger LOG = LoggerFactory.getLogger(AutoConnectIntervalReceiver.class);
 
     public AutoConnectIntervalReceiver(DeviceCommunicationService service) {
@@ -61,57 +65,64 @@ public class AutoConnectIntervalReceiver extends BroadcastReceiver {
         }
 
         GBDevice[] devices = service.getGBDevices();
-        if (action.equals(DeviceManager.ACTION_DEVICES_CHANGED)){
+        if (action.equals(DeviceManager.ACTION_DEVICES_CHANGED)) {
             boolean scheduleAutoConnect = false;
             boolean allDevicesInitialized = true;
-            for(GBDevice device : devices){
-                if(!device.isInitialized()) {
+            for (GBDevice device : devices) {
+                if (!device.isInitialized()) {
                     allDevicesInitialized = false;
                     if (device.getState() == GBDevice.State.WAITING_FOR_RECONNECT) {
                         scheduleAutoConnect = true;
+                        // If we are not backing off, find the device with the lowest reconnect delay
+                        // to set the value to.
+                        if (!mBackingOff) {
+                            mDelay = Math.min(mDelay, device.getDeviceCoordinator().getReconnectionDelay());
+                        }
                     }
                 }
             }
 
-            if(allDevicesInitialized){
+            if (allDevicesInitialized) {
                 LOG.info("will reset connection delay, all devices are initialized!");
-                mDelay = 4;
+                mDelay = Integer.MAX_VALUE;
+                mBackingOff = false;
                 return;
             }
-            if(scheduleAutoConnect){
+            if (scheduleAutoConnect && !mScheduled) {
                 scheduleReconnect();
             }
-        }else if (action.equals("GB_RECONNECT")){
-            for(GBDevice device : devices){
-                if(device.getState() == GBDevice.State.WAITING_FOR_RECONNECT) {
-                    LOG.info("Will re-connect to " + device.getAddress() + "(" + device.getName() + ")");
+        } else if (action.equals("GB_RECONNECT")) {
+            mScheduled = false;
+            for (GBDevice device : devices) {
+                if (device.getState() == GBDevice.State.WAITING_FOR_RECONNECT) {
+                    LOG.info("time based re-connect to {} ({})", device.getAddress(), device.getName());
                     GBApplication.deviceService(device).connect();
                 }
             }
         }
     }
 
-    public void scheduleReconnect() {
-        mDelay*=2;
-        if (mDelay > 64) {
-            mDelay = 64;
-        }
+    private void scheduleReconnect() {
         scheduleReconnect(mDelay);
+
+        // Exponential backoff with a limit of 64 seconds.
+        mBackingOff = true;
+        mDelay = Math.min(mDelay * 2, 64000);
     }
 
-    public void scheduleReconnect(int delay) {
-        LOG.info("scheduling reconnect in " + delay + " seconds");
+    private void scheduleReconnect(int delay) {
+        LOG.info("scheduling reconnect in {}ms", delay);
         AlarmManager am = (AlarmManager) (GBApplication.getContext().getSystemService(Context.ALARM_SERVICE));
         Intent intent = new Intent("GB_RECONNECT");
         intent.setPackage(BuildConfig.APPLICATION_ID);
-        PendingIntent pendingIntent = PendingIntentUtils.getBroadcast(GBApplication.getContext(), 0, intent, 0, false);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, Calendar.getInstance().
-                    getTimeInMillis() + delay * 1000, pendingIntent);
-        } else {
-            am.set(AlarmManager.RTC_WAKEUP, Calendar.getInstance().
-                    getTimeInMillis() + delay * 1000, pendingIntent);
-        }
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(GBApplication.getContext(), 0, intent, PendingIntent.FLAG_IMMUTABLE);
+        am.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                Calendar.getInstance().
+                getTimeInMillis() + delay,
+                pendingIntent
+        );
+        mScheduled = true;
     }
 
     public void destroy() {

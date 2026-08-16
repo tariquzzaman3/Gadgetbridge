@@ -1,7 +1,6 @@
 package nodomain.freeyourgadget.gadgetbridge.activities.charts;
 
-import android.graphics.Color;
-import android.os.Build;
+import android.content.Context;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -18,10 +17,10 @@ import com.github.mikephil.charting.data.BarDataSet;
 import com.github.mikephil.charting.data.BarEntry;
 import com.github.mikephil.charting.formatter.ValueFormatter;
 
-import org.apache.commons.lang3.time.DateUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -35,9 +34,10 @@ import nodomain.freeyourgadget.gadgetbridge.activities.workouts.WorkoutValueForm
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
+import nodomain.freeyourgadget.gadgetbridge.util.DateTimeUtils;
 
 public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.StepsData> {
-    protected static final Logger LOG = LoggerFactory.getLogger(BodyEnergyFragment.class);
+    protected static final Logger LOG = LoggerFactory.getLogger(StepsPeriodFragment.class);
 
     private TextView mDateView;
     private TextView stepsAvg;
@@ -46,14 +46,22 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
     private TextView distanceTotal;
     private BarChart stepsChart;
 
+    private TextView mBalanceView;
+
     protected int CHART_TEXT_COLOR;
     protected int TEXT_COLOR;
     protected int STEPS_GOAL;
+    protected boolean SHOW_BALANCE;
 
     protected int BACKGROUND_COLOR;
     protected int DESCRIPTION_COLOR;
 
-    public static StepsPeriodFragment newInstance ( int totalDays ) {
+    @Override
+    protected boolean isSingleDay() {
+        return false;
+    }
+
+    public static StepsPeriodFragment newInstance(int totalDays) {
         StepsPeriodFragment fragmentFirst = new StepsPeriodFragment();
         Bundle args = new Bundle();
         args.putInt("totalDays", totalDays);
@@ -71,11 +79,9 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View rootView = inflater.inflate(R.layout.fragment_steps_period, container, false);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            rootView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-                getChartsHost().enableSwipeRefresh(scrollY == 0);
-            });
-        }
+        rootView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+            getChartsHost().enableSwipeRefresh(scrollY == 0);
+        });
 
         mDateView = rootView.findViewById(R.id.steps_date_view);
         stepsChart = rootView.findViewById(R.id.steps_chart);
@@ -84,6 +90,16 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
         stepsTotal = rootView.findViewById(R.id.steps_total);
         distanceTotal = rootView.findViewById(R.id.distance_total);
         STEPS_GOAL = GBApplication.getPrefs().getInt(ActivityUser.PREF_USER_STEPS_GOAL, ActivityUser.defaultUserStepsGoal);
+
+        mBalanceView = rootView.findViewById(R.id.balance);
+
+        SHOW_BALANCE = GBApplication.getPrefs().getBoolean("charts_show_balance_steps", true);
+        if (SHOW_BALANCE) {
+            mBalanceView.setVisibility(View.VISIBLE);
+        } else {
+            mBalanceView.setVisibility(View.GONE);
+        }
+
         setupStepsChart();
         refresh();
 
@@ -126,7 +142,7 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
         yAxisRight.setDrawAxisLine(true);
     }
 
-        @Override
+    @Override
     public String getTitle() {
         return getString(R.string.steps);
     }
@@ -150,17 +166,12 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
 
     @Override
     protected void updateChartsnUIThread(StepsData stepsData) {
-        Date to = new Date((long) getTSEnd() * 1000);
-        Date from = DateUtils.addDays(to,-(TOTAL_DAYS - 1));
-        String toFormattedDate = new SimpleDateFormat("E, MMM dd").format(to);
-        String fromFormattedDate = new SimpleDateFormat("E, MMM dd").format(from);
-        mDateView.setText(fromFormattedDate + " - " + toFormattedDate);
-
+        mDateView.setText(DateTimeUtils.formatDaysUntil(TOTAL_DAYS, getTSEnd()));
         stepsChart.setData(null);
 
         List<BarEntry> entries = new ArrayList<>();
         int counter = 0;
-        for(StepsDay day : stepsData.days) {
+        for (StepsDay day : stepsData.days) {
             entries.add(new BarEntry(counter, day.steps));
             counter++;
         }
@@ -172,17 +183,19 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
         stepsChart.getAxisLeft().setAxisMaximum(Math.max(set.getYMax(), STEPS_GOAL) + 2000);
 
         BarData barData = new BarData(set);
-        barData.setValueTextColor(Color.GRAY); //prevent tearing other graph elements with the black text. Another approach would be to hide the values cmpletely with data.setDrawValues(false);
+        set.setValueTextColor(TEXT_COLOR);
         barData.setValueTextSize(10f);
         if (TOTAL_DAYS > 7) {
             stepsChart.setRenderer(new AngledLabelsChartRenderer(stepsChart, stepsChart.getAnimator(), stepsChart.getViewPortHandler()));
         }
         stepsChart.setData(barData);
-        stepsAvg.setText(String.format(String.valueOf(stepsData.stepsDailyAvg)));
+        stepsAvg.setText(NumberFormat.getInstance().format(stepsData.stepsDailyAvg));
         final WorkoutValueFormatter valueFormatter = new WorkoutValueFormatter();
         distanceAvg.setText(valueFormatter.formatValue(stepsData.distanceDailyAvg, "km"));
-        stepsTotal.setText(String.format(String.valueOf(stepsData.totalSteps)));
+        stepsTotal.setText(NumberFormat.getInstance().format(stepsData.totalSteps));
         distanceTotal.setText(valueFormatter.formatValue(stepsData.totalDistance, "km"));
+
+        mBalanceView.setText(stepsData.getBalanceMessage(getContext(), STEPS_GOAL));
     }
 
     ValueFormatter getStepsChartDayValueFormatter(StepsPeriodFragment.StepsData stepsData) {
@@ -202,7 +215,9 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
         stepsChart.invalidate();
     }
 
-    protected void setupLegend(Chart<?> chart) {}
+    @Override
+    protected void setupLegend(Chart<?> chart) {
+    }
 
     protected static class StepsData extends ChartsData {
         List<StepsDay> days;
@@ -211,10 +226,11 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
         long totalSteps = 0;
         double totalDistance = 0;
         StepsDay todayStepsDay;
+
         protected StepsData(List<StepsDay> days) {
             this.days = days;
             int daysCounter = 0;
-            for(StepsDay day : days) {
+            for (StepsDay day : days) {
                 this.totalSteps += day.steps;
                 this.totalDistance += day.distance;
                 if (day.steps > 0) {
@@ -226,6 +242,20 @@ public class StepsPeriodFragment extends StepsFragment<StepsPeriodFragment.Steps
                 this.distanceDailyAvg = this.totalDistance / daysCounter;
             }
             this.todayStepsDay = days.get(days.size() - 1);
+        }
+
+        protected String getBalanceMessage(final Context context, final int targetValue) {
+            if (totalSteps == 0) {
+                return context.getString(R.string.no_data);
+            }
+
+            final long totalBalance = totalSteps - ((long) targetValue * days.size());
+            if (totalBalance > 0) {
+                return context.getString(R.string.overstep, NumberFormat.getInstance().format(Math.abs(totalBalance)));
+            } else {
+                return context.getString(R.string.lack_of_step, NumberFormat.getInstance().format(Math.abs(totalBalance)));
+
+            }
         }
     }
 }

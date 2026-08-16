@@ -35,7 +35,7 @@ import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInfo;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.IntentListener;
@@ -63,7 +63,7 @@ import nodomain.freeyourgadget.gadgetbridge.util.GB;
 // - get notified: -call, -notification, -notification from, -do not disturb
 // - media control: media/find phone(tap once for play pause, tap twice for next, tap triple for previous)
 
-public class SonySWR12DeviceSupport extends AbstractBTLEDeviceSupport {
+public class SonySWR12DeviceSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(SonySWR12DeviceSupport.class);
     private SonySWR12HandlerThread processor = null;
 
@@ -109,8 +109,7 @@ public class SonySWR12DeviceSupport extends AbstractBTLEDeviceSupport {
         if (gbDevice.getState() != GBDevice.State.INITIALIZED) {
             gbDevice.setFirmwareVersion("N/A");
             gbDevice.setFirmwareVersion2("N/A");
-            gbDevice.setState(GBDevice.State.INITIALIZED);
-            gbDevice.sendDeviceUpdateIntent(getContext());
+            gbDevice.setUpdateState(GBDevice.State.INITIALIZED, getContext());
         }
     }
 
@@ -124,21 +123,19 @@ public class SonySWR12DeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             TransactionBuilder builder = performInitialized("setTime");
             setTime(builder);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (Exception e) {
-            GB.toast(getContext(), "Error setting time: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error setting time: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
     private void setTime(TransactionBuilder builder) {
-        BluetoothGattCharacteristic timeCharacteristic = getCharacteristic(SonySWR12Constants.UUID_CHARACTERISTIC_TIME);
-        builder.write(timeCharacteristic, new BandTime(Calendar.getInstance()).toByteArray());
+        builder.write(SonySWR12Constants.UUID_CHARACTERISTIC_TIME, new BandTime(Calendar.getInstance()).toByteArray());
     }
 
     @Override
     public void onSetAlarms(ArrayList<? extends Alarm> alarms) {
         try {
-            BluetoothGattCharacteristic alarmCharacteristic = getCharacteristic(SonySWR12Constants.UUID_CHARACTERISTIC_ALARM);
             TransactionBuilder builder = performInitialized("alarm");
             int prefInterval = Integer.valueOf(GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress())
                     .getString(DeviceSettingsPreferenceConst.PREF_SONYSWR12_SMART_INTERVAL, "0"));
@@ -148,26 +145,26 @@ public class SonySWR12DeviceSupport extends AbstractBTLEDeviceSupport {
                 if (bandAlarm != null)
                     bandAlarmList.add(bandAlarm);
             }
-            builder.write(alarmCharacteristic, new BandAlarms(bandAlarmList).toByteArray());
-            builder.queue(getQueue());
+            builder.write(SonySWR12Constants.UUID_CHARACTERISTIC_ALARM, new BandAlarms(bandAlarmList).toByteArray());
+            builder.queue();
         } catch (Exception e) {
-            GB.toast(getContext(), "Error setting alarms: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error setting alarms: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
     @Override
-    public boolean onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-        return super.onCharacteristicRead(gatt, characteristic, status);
+    public boolean onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+        return super.onCharacteristicRead(gatt, characteristic, value, status);
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic))
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
+        if (super.onCharacteristicChanged(gatt, characteristic, value))
             return true;
         UUID uuid = characteristic.getUuid();
         if (uuid.equals(SonySWR12Constants.UUID_CHARACTERISTIC_EVENT)) {
             try {
-                EventBase event = EventFactory.readEventFromByteArray(characteristic.getValue());
+                EventBase event = EventFactory.readEventFromByteArray(value);
                 getProcessor().process(event);
             } catch (Exception e) {
                 return false;
@@ -181,10 +178,10 @@ public class SonySWR12DeviceSupport extends AbstractBTLEDeviceSupport {
     public void onFetchRecordedData(int dataTypes) {
         try {
             TransactionBuilder builder = performInitialized("fetchActivity");
-            builder.notify(getCharacteristic(SonySWR12Constants.UUID_CHARACTERISTIC_EVENT), true);
+            builder.notify(SonySWR12Constants.UUID_CHARACTERISTIC_EVENT, true);
             ControlPointWithValue flushControl = new ControlPointWithValue(CommandCode.FLUSH_ACTIVITY, 0);
-            builder.write(getCharacteristic(SonySWR12Constants.UUID_CHARACTERISTIC_CONTROL_POINT), flushControl.toByteArray());
-            builder.queue(getQueue());
+            builder.write(SonySWR12Constants.UUID_CHARACTERISTIC_CONTROL_POINT, flushControl.toByteArray());
+            builder.queue();
         } catch (Exception e) {
             LOG.error("failed to fetch activity data", e);
         }
@@ -194,10 +191,10 @@ public class SonySWR12DeviceSupport extends AbstractBTLEDeviceSupport {
     public void onEnableRealtimeHeartRateMeasurement(boolean enable) {
         try {
             TransactionBuilder builder = performInitialized("HeartRateTest");
-            builder.notify(getCharacteristic(SonySWR12Constants.UUID_CHARACTERISTIC_EVENT), enable);
+            builder.notify(SonySWR12Constants.UUID_CHARACTERISTIC_EVENT, enable);
             ControlPointWithValue controlPointHeart = new ControlPointWithValue(CommandCode.HEARTRATE_REALTIME, enable ? 1 : 0);
-            builder.write(getCharacteristic(SonySWR12Constants.UUID_CHARACTERISTIC_CONTROL_POINT), controlPointHeart.toByteArray());
-            builder.queue(getQueue());
+            builder.write(SonySWR12Constants.UUID_CHARACTERISTIC_CONTROL_POINT, controlPointHeart.toByteArray());
+            builder.queue();
         } catch (IOException ex) {
             LOG.error("Unable to read heart rate from Sony device", ex);
         }
@@ -213,16 +210,16 @@ public class SonySWR12DeviceSupport extends AbstractBTLEDeviceSupport {
                     int status = GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress()).getBoolean(config, false) ? 1 : 0;
                     TransactionBuilder builder = performInitialized(config);
                     ControlPointWithValue vibrationControl = new ControlPointWithValue(CommandCode.STAMINA_MODE, status);
-                    builder.write(getCharacteristic(SonySWR12Constants.UUID_CHARACTERISTIC_CONTROL_POINT), vibrationControl.toByteArray());
-                    builder.queue(getQueue());
+                    builder.write(SonySWR12Constants.UUID_CHARACTERISTIC_CONTROL_POINT, vibrationControl.toByteArray());
+                    builder.queue();
                     break;
                 }
                 case DeviceSettingsPreferenceConst.PREF_SONYSWR12_LOW_VIBRATION: {
                     boolean isEnabled = GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress()).getBoolean(config, false);
                     TransactionBuilder builder = performInitialized(config);
                     ControlPointLowVibration vibrationControl = new ControlPointLowVibration(isEnabled);
-                    builder.write(getCharacteristic(SonySWR12Constants.UUID_CHARACTERISTIC_CONTROL_POINT), vibrationControl.toByteArray());
-                    builder.queue(getQueue());
+                    builder.write(SonySWR12Constants.UUID_CHARACTERISTIC_CONTROL_POINT, vibrationControl.toByteArray());
+                    builder.queue();
                     break;
                 }
                 case DeviceSettingsPreferenceConst.PREF_SONYSWR12_SMART_INTERVAL: {

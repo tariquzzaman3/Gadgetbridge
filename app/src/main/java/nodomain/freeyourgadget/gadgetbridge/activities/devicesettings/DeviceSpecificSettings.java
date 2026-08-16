@@ -24,6 +24,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.XmlRes;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +36,7 @@ import java.util.Objects;
  * <p>
  * This class contains 2 types of screens:
  * - Root screens - the ones that are displayed in the first page of the device settings activity. These can be
- * normal preference screens / preferences, or dummy root screens (see {@link DeviceSpecificSettingsScreen}.
+ * normal preference screens / preferences, or dummy root screens (see {@link DeviceSpecificSettingsScreen}).
  * - Sub-screens - a screen that is opened when one of the {@link DeviceSpecificSettingsScreen} is clicked.
  * <p>
  * There can be an arbitrary number of nested sub-screens, as long as they are all mapped by key in the
@@ -46,6 +47,9 @@ import java.util.Objects;
 public class DeviceSpecificSettings implements Parcelable {
     private final List<Integer> rootScreens = new ArrayList<>();
     private final Map<String, List<Integer>> subScreens = new LinkedHashMap<>();
+
+    /// Settings that should only be available while connected
+    private final List<String> connectedPreferences = new ArrayList<>();
 
     public DeviceSpecificSettings() {
     }
@@ -75,6 +79,12 @@ public class DeviceSpecificSettings implements Parcelable {
         for (final int subScreen : subScreens) {
             subScreenScreens.add(subScreen);
         }
+        return subScreenScreens;
+    }
+
+    public List<Integer> addRootScreen(final DeviceSpecificSettingsScreen screen, final List<Integer> subScreens) {
+        final List<Integer> subScreenScreens = addRootScreen(screen);
+        subScreenScreens.addAll(subScreens);
         return subScreenScreens;
     }
 
@@ -115,6 +125,19 @@ public class DeviceSpecificSettings implements Parcelable {
                 Objects.requireNonNull(subScreens.get(e.getKey())).add(screen);
             }
         }
+        connectedPreferences.addAll(deviceSpecificSettings.connectedPreferences);
+    }
+
+    public String getRootScreenForSubScreen(final int subScreen) {
+        for (final Map.Entry<String, List<Integer>> e : subScreens.entrySet()) {
+            for (final Integer ss : e.getValue()) {
+                if (ss == subScreen) {
+                    return e.getKey();
+                }
+            }
+        }
+
+        return null;
     }
 
     public List<Integer> getRootScreens() {
@@ -124,6 +147,14 @@ public class DeviceSpecificSettings implements Parcelable {
     @Nullable
     public List<Integer> getScreen(@NonNull final String key) {
         return subScreens.get(key);
+    }
+
+    public void addConnectedPreferences(final String... preferences) {
+        connectedPreferences.addAll(Arrays.asList(preferences));
+    }
+
+    public List<String> getConnectedPreferences() {
+        return connectedPreferences;
     }
 
     public List<Integer> getAllNonRootScreens() {
@@ -143,7 +174,7 @@ public class DeviceSpecificSettings implements Parcelable {
         return allScreens;
     }
 
-    public static final Creator<DeviceSpecificSettings> CREATOR = new Creator<DeviceSpecificSettings>() {
+    public static final Creator<DeviceSpecificSettings> CREATOR = new Creator<>() {
         @Override
         public DeviceSpecificSettings createFromParcel(final Parcel in) {
             final DeviceSpecificSettings deviceSpecificSettings = new DeviceSpecificSettings();
@@ -161,6 +192,7 @@ public class DeviceSpecificSettings implements Parcelable {
                 }
                 deviceSpecificSettings.addSubScreen(key, screens);
             }
+            in.readStringList(deviceSpecificSettings.connectedPreferences);
             return deviceSpecificSettings;
         }
 
@@ -189,5 +221,6 @@ public class DeviceSpecificSettings implements Parcelable {
                 dest.writeInt(s);
             }
         }
+        dest.writeStringList(connectedPreferences);
     }
 }

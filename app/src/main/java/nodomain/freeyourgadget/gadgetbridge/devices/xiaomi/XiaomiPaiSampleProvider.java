@@ -21,8 +21,10 @@ import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import nodomain.freeyourgadget.gadgetbridge.devices.TimeSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.devices.XiaomiDailySummarySampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.XiaomiDailySummarySample;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
@@ -100,10 +102,10 @@ public class XiaomiPaiSampleProvider implements TimeSampleProvider<PaiSample> {
 
         public XiaomiPaiSample(final XiaomiDailySummarySample sample) {
             this.timestamp = sample.getTimestamp();
-            this.paiLow = sample.getVitalityIncreaseLight();
-            this.paiModerate = sample.getVitalityIncreaseModerate();
-            this.paiHigh = sample.getVitalityIncreaseHigh();
-            this.paiTotal = sample.getVitalityCurrent();
+            this.paiLow = Objects.requireNonNullElse(sample.getVitalityIncreaseLight(), 0);
+            this.paiModerate = Objects.requireNonNullElse(sample.getVitalityIncreaseModerate(), 0);
+            this.paiHigh = Objects.requireNonNullElse(sample.getVitalityIncreaseHigh(), 0);
+            this.paiTotal = Objects.requireNonNullElse(sample.getVitalityCurrent(), 0);
         }
 
         @Override

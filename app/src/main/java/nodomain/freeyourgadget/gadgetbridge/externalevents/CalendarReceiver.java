@@ -24,12 +24,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ProviderInfo;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Handler;
 import android.provider.CalendarContract;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import org.slf4j.Logger;
@@ -37,9 +39,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Enumeration;
-import java.util.concurrent.TimeUnit;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import de.greenrobot.dao.query.QueryBuilder;
 import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
@@ -51,9 +53,9 @@ import nodomain.freeyourgadget.gadgetbridge.entities.CalendarSyncStateDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.CalendarEventSpec;
+import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.calendar.CalendarEvent;
 import nodomain.freeyourgadget.gadgetbridge.util.calendar.CalendarManager;
-import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 public class CalendarReceiver extends ContentObserver {
     private static final Logger LOG = LoggerFactory.getLogger(CalendarReceiver.class);
@@ -105,6 +107,16 @@ public class CalendarReceiver extends ContentObserver {
         mForceSyncReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(final Context context, final Intent intent) {
+                final String action = intent.getAction();
+                if (!ACTION_FORCE_SYNC.equals(action)) {
+                    LOG.warn("Got unknown action {}", action);
+                    return;
+                }
+                final GBDevice intentDevice = intent.getParcelableExtra(GBDevice.EXTRA_DEVICE);
+                if (intentDevice != null && !intentDevice.equals(mGBDevice)) {
+                    // Force sync is not for this device - ignore
+                    return;
+                }
                 LOG.info("Got force sync: {}", intent.getAction());
                 scheduleSync();
             }
@@ -123,7 +135,7 @@ public class CalendarReceiver extends ContentObserver {
     }
 
     public void scheduleSync() {
-        LOG.debug("Scheduling calendar sync");
+        LOG.debug("Scheduling calendar sync for {}", mGBDevice);
         mSyncHandler.removeCallbacksAndMessages(null);
         mSyncHandler.postDelayed(this::syncCalendar, 2500L);
     }
@@ -134,7 +146,7 @@ public class CalendarReceiver extends ContentObserver {
         syncCalendar(eventList);
     }
 
-    public void syncCalendar(List<CalendarEvent> eventList) {
+    public void syncCalendar(Iterable<CalendarEvent> eventList) {
         try (DBHandler dbHandler = GBApplication.acquireDB()) {
             DaoSession session = dbHandler.getDaoSession();
             syncCalendar(eventList, session);
@@ -143,7 +155,7 @@ public class CalendarReceiver extends ContentObserver {
         }
     }
 
-    public void syncCalendar(List<CalendarEvent> eventList, DaoSession session) {
+    public void syncCalendar(Iterable<CalendarEvent> eventList, DaoSession session) {
         LOG.info("Syncing with calendar.");
         Hashtable<Long, CalendarEvent> eventTable = new Hashtable<>();
         Long deviceId = DBHelper.getDevice(mGBDevice, session).getId();
@@ -241,7 +253,9 @@ public class CalendarReceiver extends ContentObserver {
                 calendarEventSpec.location = calendarEvent.getLocation();
                 calendarEventSpec.type = CalendarEventSpec.TYPE_UNKNOWN;
                 calendarEventSpec.calName = calendarEvent.getUniqueCalName();
+                calendarEventSpec.calendarColor = calendarEvent.getCalendarColor();
                 calendarEventSpec.color = calendarEvent.getColor();
+                calendarEventSpec.attendingStatus = calendarEvent.getAttendingStatus();
                 if (syncState == EventState.NEEDS_UPDATE) {
                     GBApplication.deviceService(mGBDevice).onDeleteCalendarEvent(CalendarEventSpec.TYPE_UNKNOWN, i);
                 }
@@ -262,20 +276,35 @@ public class CalendarReceiver extends ContentObserver {
     }
 
     public void registerBroadcastReceivers() {
-        mContext.getContentResolver().registerContentObserver(CalendarContract.Events.CONTENT_URI, true, this);
+        try {
+            final ProviderInfo providerInfo = mContext.getPackageManager().resolveContentProvider(CalendarContract.AUTHORITY, 0);
+            if (providerInfo != null) {
+                mContext.getContentResolver().registerContentObserver(CalendarContract.Events.CONTENT_URI, true, this);
+            }
+        } catch (final Exception e) {
+            LOG.error("Failed to register calendar content observer", e);
+        }
+
         // Add a receiver to allow us to quickly force as calendar sync (without having to provide data)
         ContextCompat.registerReceiver(mContext, mForceSyncReceiver, new IntentFilter(ACTION_FORCE_SYNC), RECEIVER_NOT_EXPORTED);
     }
 
     public void dispose() {
-        mContext.getContentResolver().unregisterContentObserver(this);
+        try {
+            mContext.getContentResolver().unregisterContentObserver(this);
+        } catch (final Exception e) {
+            LOG.error("Failed to unregister calendar content observer", e);
+        }
         mContext.unregisterReceiver(mForceSyncReceiver);
         mSyncHandler.removeCallbacksAndMessages(null);
     }
 
-    public static void forceSync() {
+    public static void forceSync(@Nullable final GBDevice device) {
         final Intent intent = new Intent(ACTION_FORCE_SYNC);
         intent.setPackage(BuildConfig.APPLICATION_ID);
+        if (device != null) {
+            intent.putExtra(GBDevice.EXTRA_DEVICE, device);
+        }
         GBApplication.getContext().sendBroadcast(intent);
     }
 }

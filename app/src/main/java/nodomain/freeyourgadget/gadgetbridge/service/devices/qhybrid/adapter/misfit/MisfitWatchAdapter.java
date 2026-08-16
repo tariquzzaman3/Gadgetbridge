@@ -18,8 +18,6 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.adapter.mis
 
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport.ITEM_ACTIVITY_POINT;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport.ITEM_STEP_COUNT;
-import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport.ITEM_STEP_GOAL;
-import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport.ITEM_VIBRATION_STRENGTH;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport.QHYBRID_EVENT_BUTTON_PRESS;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport.QHYBRID_EVENT_FILE_UPLOADED;
 
@@ -27,9 +25,11 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Bundle;
 import android.util.SparseArray;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.slf4j.Logger;
@@ -54,7 +54,6 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryState;
 import nodomain.freeyourgadget.gadgetbridge.model.GenericItem;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.adapter.WatchAdapter;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.requests.Request;
@@ -114,8 +113,7 @@ public class MisfitWatchAdapter extends WatchAdapter {
 
         queueWrite(new GetCurrentStepCountRequest());
 
-        getDeviceSupport().getDevice().setState(GBDevice.State.INITIALIZED);
-        getDeviceSupport().getDevice().sendDeviceUpdateIntent(getContext());
+        getDeviceSupport().getDevice().setUpdateState(GBDevice.State.INITIALIZED, getContext());
     }
 
 
@@ -150,46 +148,46 @@ public class MisfitWatchAdapter extends WatchAdapter {
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, final byte[] value) {
         GBDevice gbDevice = getDeviceSupport().getDevice();
         switch (characteristic.getUuid().toString()) {
             case "3dda0004-957f-7d4a-34a6-74696673696d":
             case "3dda0003-957f-7d4a-34a6-74696673696d": {
-                return handleFileDownloadCharacteristic(characteristic);
+                return handleFileDownloadCharacteristic(characteristic, value);
             }
             case "3dda0007-957f-7d4a-34a6-74696673696d": {
-                return handleFileUploadCharacteristic(characteristic);
+                return handleFileUploadCharacteristic(characteristic, value);
             }
             case "3dda0002-957f-7d4a-34a6-74696673696d": {
-                return handleBasicCharacteristic(characteristic);
+                return handleBasicCharacteristic(characteristic, value);
             }
             case "3dda0006-957f-7d4a-34a6-74696673696d": {
-                return handleButtonCharacteristic(characteristic);
+                return handleButtonCharacteristic(characteristic, value);
             }
             case "00002a19-0000-1000-8000-00805f9b34fb": {
-                short level = characteristic.getValue()[0];
-                gbDevice.setBatteryLevel(level);
+                short level = value[0];
+                gbDevice.setBatteryLevel(level, 0);
 
                 GBDeviceEventBatteryInfo batteryInfo = new GBDeviceEventBatteryInfo();
-                batteryInfo.level = gbDevice.getBatteryLevel();
+                batteryInfo.level = gbDevice.getBatteryLevel(0);
                 batteryInfo.state = BatteryState.BATTERY_NORMAL;
                 getDeviceSupport().handleGBDeviceEvent(batteryInfo);
                 break;
             }
             default: {
-                log("unknown shit on " + characteristic.getUuid().toString() + ":  " + arrayToString(characteristic.getValue()));
+                log("unknown shit on " + characteristic.getUuid().toString() + ":  " + arrayToString(value));
                 try {
                     File charLog = FileUtils.getExternalFile("qFiles/charLog.txt");
                     try (FileOutputStream fos = new FileOutputStream(charLog, true)) {
-                        fos.write((new Date().toString() + ": " + characteristic.getUuid().toString() + ": " + arrayToString(characteristic.getValue())).getBytes());
+                        fos.write((new Date().toString() + ": " + characteristic.getUuid().toString() + ": " + arrayToString(value)).getBytes());
                     }
                 } catch (IOException e) {
-                    GB.log("error", GB.ERROR, e);
+                    logger.error("error", e);
                 }
                 break;
             }
         }
-        return getDeviceSupport().onCharacteristicChanged(gatt, characteristic);
+        return getDeviceSupport().onCharacteristicChanged(gatt, characteristic, value);
     }
 
     private void fillResponseList() {
@@ -218,27 +216,26 @@ public class MisfitWatchAdapter extends WatchAdapter {
         }
     }
 
-    private boolean handleBasicCharacteristic(BluetoothGattCharacteristic characteristic) {
-        byte[] values = characteristic.getValue();
-        Request request = resolveAnswer(characteristic);
+    private boolean handleBasicCharacteristic(BluetoothGattCharacteristic characteristic, byte[] values) {
+        Request request = resolveAnswer(characteristic, values);
         GBDevice gbDevice = getDeviceSupport().getDevice();
 
         if (request == null) {
             StringBuilder valueString = new StringBuilder(String.valueOf(values[0]));
-            for (int i = 1; i < characteristic.getValue().length; i++) {
+            for (int i = 1; i < values.length; i++) {
                 valueString.append(", ").append(values[i]);
             }
             log("unable to resolve " + characteristic.getUuid().toString() + ": " + valueString);
             return true;
         }
         log("response: " + request.getClass().getSimpleName());
-        request.handleResponse(characteristic);
+        request.handleResponse(characteristic, values);
 
         if (request instanceof GetStepGoalRequest) {
-            gbDevice.addDeviceInfo(new GenericItem(ITEM_STEP_GOAL, String.valueOf(((GetStepGoalRequest) request).stepGoal)));
+//            gbDevice.addDeviceInfo(new GenericItem(ITEM_STEP_GOAL, String.valueOf(((GetStepGoalRequest) request).stepGoal)));
         } else if (request instanceof GetVibrationStrengthRequest) {
             int strength = ((GetVibrationStrengthRequest) request).strength;
-            gbDevice.addDeviceInfo(new GenericItem(ITEM_VIBRATION_STRENGTH, String.valueOf(strength)));
+//            gbDevice.addDeviceInfo(new GenericItem(ITEM_VIBRATION_STRENGTH, String.valueOf(strength)));
         } else if (request instanceof GetCurrentStepCountRequest) {
             int steps = ((GetCurrentStepCountRequest) request).steps;
             logger.debug("get current steps: " + steps);
@@ -250,7 +247,7 @@ public class MisfitWatchAdapter extends WatchAdapter {
                 }
                 logger.debug("file written.");
             } catch (Exception e) {
-                GB.log("error", GB.ERROR, e);
+                logger.error("error", e);
             }
             gbDevice.addDeviceInfo(new GenericItem(ITEM_STEP_COUNT, String.valueOf(((GetCurrentStepCountRequest) request).steps)));
         } else if (request instanceof OTAEnterRequest) {
@@ -270,16 +267,15 @@ public class MisfitWatchAdapter extends WatchAdapter {
     }
 
 
-    private Request resolveAnswer(BluetoothGattCharacteristic characteristic) {
-        byte[] values = characteristic.getValue();
+    private Request resolveAnswer(BluetoothGattCharacteristic characteristic, byte[] values) {
         if (values[0] != 3) return null;
         return responseFilters.get(values[1]);
     }
 
-    private boolean handleFileDownloadCharacteristic(BluetoothGattCharacteristic characteristic) {
+    private boolean handleFileDownloadCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
         Request request;
         request = fileRequest;
-        request.handleResponse(characteristic);
+        request.handleResponse(characteristic, value);
         if (request instanceof ListFilesRequest) {
             if (((ListFilesRequest) request).completed) {
                 logger.debug("File count: " + ((ListFilesRequest) request).fileCount + "  size: " + ((ListFilesRequest) request).size);
@@ -300,13 +296,13 @@ public class MisfitWatchAdapter extends WatchAdapter {
     }
 
 
-    private boolean handleFileUploadCharacteristic(BluetoothGattCharacteristic characteristic) {
+    private boolean handleFileUploadCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
         if (uploadFileRequest == null) {
             logger.debug("no uploadFileRequest to handle response");
             return true;
         }
 
-        uploadFileRequest.handleResponse(characteristic);
+        uploadFileRequest.handleResponse(characteristic, value);
 
         switch (uploadFileRequest.state) {
             case ERROR:
@@ -317,7 +313,7 @@ public class MisfitWatchAdapter extends WatchAdapter {
                 break;
             case UPLOAD:
                 for (byte[] packet : this.uploadFileRequest.packets) {
-                    new TransactionBuilder("File upload").write(characteristic, packet).queue(getDeviceSupport().getQueue());
+                    getDeviceSupport().createTransactionBuilder("File upload").write(characteristic, packet).queue();
                 }
                 break;
             case UPLOADED:
@@ -329,8 +325,7 @@ public class MisfitWatchAdapter extends WatchAdapter {
         return true;
     }
 
-    private boolean handleButtonCharacteristic(BluetoothGattCharacteristic characteristic) {
-        byte[] value = characteristic.getValue();
+    private boolean handleButtonCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
         if (value.length != 11) {
             logger.debug("wrong button message");
             return true;
@@ -365,15 +360,16 @@ public class MisfitWatchAdapter extends WatchAdapter {
         logger.debug(message);
     }
 
+    @Override
     public void setActivityHand(double progress) {
         queueWrite(new SetCurrentStepCountRequest(Math.min((int) (1000000 * progress), 999999)));
     }
 
+    @Override
     public void vibrate(PlayNotificationRequest.VibrationType vibration) {
         queueWrite(new PlayNotificationRequest(vibration, -1, -1));
     }
 
-    @Override
     public void vibrateFindMyDevicePattern() {
         queueWrite(new VibrateRequest(false, (short) 4, (short) 1));
     }
@@ -390,7 +386,7 @@ public class MisfitWatchAdapter extends WatchAdapter {
 
     @Override
     public void setHands(MoveHandsRequest.MovementConfiguration movement) {
-        queueWrite(new MoveHandsRequest(movement));
+        queueWrite(new MoveHandsRequest(movement, false));
     }
 
     @Override
@@ -414,7 +410,7 @@ public class MisfitWatchAdapter extends WatchAdapter {
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
 
     }
 
@@ -426,11 +422,6 @@ public class MisfitWatchAdapter extends WatchAdapter {
     @Override
     public void onInstallApp(Uri uri) {
 
-    }
-
-    @Override
-    public boolean supportsFindDevice() {
-        return supportsExtendedVibration();
     }
 
     @Override
@@ -497,7 +488,7 @@ public class MisfitWatchAdapter extends WatchAdapter {
     }
 
     private void queueWrite(Request request) {
-        new TransactionBuilder(request.getClass().getSimpleName()).write(getDeviceSupport().getCharacteristic(request.getRequestUUID()), request.getRequestData()).queue(getDeviceSupport().getQueue());
+        getDeviceSupport().createTransactionBuilder(request.getClass().getSimpleName()).write(request.getRequestUUID(), request.getRequestData()).queue();
         // if (request instanceof FileRequest) this.fileRequest = request;
 
         if (!request.expectsResponse()) {

@@ -17,17 +17,21 @@
 package nodomain.freeyourgadget.gadgetbridge.util;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.NotificationManager;
+import android.companion.CompanionDeviceManager;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.widget.Toast;
 
@@ -46,17 +50,22 @@ import java.util.List;
 import java.util.Set;
 
 import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
+import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.externalevents.NotificationListener;
 
 public class PermissionsUtils {
     private static final Logger LOG = LoggerFactory.getLogger(PermissionsUtils.class);
 
+    public static final String CUSTOM_PERM_IGNORE_BATT_OPTIM = "custom_perm_ignore_battery_optimization";
     public static final String CUSTOM_PERM_NOTIFICATION_LISTENER = "custom_perm_notifications_listener";
     public static final String CUSTOM_PERM_NOTIFICATION_SERVICE = "custom_perm_notifications_service";
     public static final String CUSTOM_PERM_DISPLAY_OVER = "custom_perm_display_over";
+    public static final String CUSTOM_PERM_INTERNET_HELPER = "nodomain.freeyourgadget.internethelper.INTERNET";
+    public static final String PACKAGE_INTERNET_HELPER = "nodomain.freeyourgadget.internethelper";
 
-    public static final List<String> specialPermissions = new ArrayList<String>() {{
+    public static final List<String> specialPermissions = new ArrayList<>() {{
+        add(CUSTOM_PERM_IGNORE_BATT_OPTIM);
         add(CUSTOM_PERM_NOTIFICATION_LISTENER);
         add(CUSTOM_PERM_NOTIFICATION_SERVICE);
         add(CUSTOM_PERM_DISPLAY_OVER);
@@ -68,20 +77,32 @@ public class PermissionsUtils {
 
     public static ArrayList<PermissionDetails> getRequiredPermissionsList(Activity activity) {
         ArrayList<PermissionDetails> permissionsList = new ArrayList<>();
+        int companionDevicesCount = 0;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            final CompanionDeviceManager manager = (CompanionDeviceManager) GBApplication.getContext().getSystemService(Context.COMPANION_DEVICE_SERVICE);
+            companionDevicesCount = manager.getAssociations().size();
+        }
+        if (companionDevicesCount == 0) {
+            permissionsList.add(new PermissionDetails(
+                    CUSTOM_PERM_IGNORE_BATT_OPTIM,
+                    activity.getString(R.string.permission_disable_doze_title),
+                    activity.getString(R.string.permission_disable_doze_summary)
+            ));
+        } else {
+            LOG.info("Not requesting explicit battery optimization exemption due to paired Companion devices");
+        }
         permissionsList.add(new PermissionDetails(
                 CUSTOM_PERM_NOTIFICATION_LISTENER,
                 activity.getString(R.string.menuitem_notifications),
                 activity.getString(R.string.permission_notifications_summary)));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            permissionsList.add(new PermissionDetails(
-                    CUSTOM_PERM_NOTIFICATION_SERVICE,
-                    activity.getString(R.string.permission_manage_dnd_title),
-                    activity.getString(R.string.permission_manage_dnd_summary)));
-            permissionsList.add(new PermissionDetails(
-                    CUSTOM_PERM_DISPLAY_OVER,
-                    activity.getString(R.string.permission_displayover_title),
-                    activity.getString(R.string.permission_displayover_summary)));
-        }
+        permissionsList.add(new PermissionDetails(
+                CUSTOM_PERM_NOTIFICATION_SERVICE,
+                activity.getString(R.string.permission_manage_dnd_title),
+                activity.getString(R.string.permission_manage_dnd_summary)));
+        permissionsList.add(new PermissionDetails(
+                CUSTOM_PERM_DISPLAY_OVER,
+                activity.getString(R.string.permission_displayover_title),
+                activity.getString(R.string.permission_displayover_summary)));
         permissionsList.add(new PermissionDetails(
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 activity.getString(R.string.permission_fine_location_title),
@@ -118,11 +139,18 @@ public class PermissionsUtils {
                     activity.getString(R.string.permission_post_notification_title),
                     activity.getString(R.string.permission_post_notification_summary)));
         }
-        if (BuildConfig.INTERNET_ACCESS) {
+        if (isPermissionDeclared(activity, Manifest.permission.INTERNET)) {
             permissionsList.add(new PermissionDetails(
                     Manifest.permission.INTERNET,
                     activity.getString(R.string.permission_internet_access_title),
                     activity.getString(R.string.permission_internet_access_summary)));
+        }
+        if (!GBApplication.hasDirectInternetAccess() && AndroidUtils.isPackageInstalled(PACKAGE_INTERNET_HELPER)) {
+            permissionsList.add(new PermissionDetails(
+                    CUSTOM_PERM_INTERNET_HELPER,
+                    activity.getString(R.string.internet_helper_permission_title),
+                    activity.getString(R.string.internet_helper_permission_summary)
+            ));
         }
 //        permissionsList.add(new PermissionDetails(  // NOTE: can't request this, it's only allowed for system apps
 //                Manifest.permission.MEDIA_CONTENT_CONTROL,
@@ -182,22 +210,31 @@ public class PermissionsUtils {
     }
 
     public static boolean checkPermission(Context context, String permission) {
-        if (permission.equals(CUSTOM_PERM_NOTIFICATION_LISTENER)) {
-            Set<String> set = NotificationManagerCompat.getEnabledListenerPackages(context);
-            return set.contains(context.getPackageName());
-        } else if (permission.equals(CUSTOM_PERM_NOTIFICATION_SERVICE) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            return ((NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE)).isNotificationPolicyAccessGranted();
-        } else if (permission.equals(CUSTOM_PERM_DISPLAY_OVER) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            return Settings.canDrawOverlays(context);
-        } else {
-            return ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_DENIED;
+        switch (permission) {
+            case CUSTOM_PERM_NOTIFICATION_LISTENER -> {
+                Set<String> set = NotificationManagerCompat.getEnabledListenerPackages(context);
+                return set.contains(context.getPackageName());
+            }
+            case CUSTOM_PERM_NOTIFICATION_SERVICE -> {
+                return ((NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE)).isNotificationPolicyAccessGranted();
+            }
+            case CUSTOM_PERM_DISPLAY_OVER -> {
+                return Settings.canDrawOverlays(context);
+            }
+            case CUSTOM_PERM_IGNORE_BATT_OPTIM -> {
+                PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                return pm.isIgnoringBatteryOptimizations(context.getApplicationContext().getPackageName());
+            }
+            default -> {
+                return ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_DENIED;
+            }
         }
     }
 
     public static boolean checkAllPermissions(Activity activity) {
         boolean result = true;
         for (PermissionDetails permission : getRequiredPermissionsList(activity)) {
-            if (!checkPermission(activity, permission.getPermission())) {
+            if (!checkPermission(activity, permission.permission())) {
                 result = false;
             }
         }
@@ -205,9 +242,11 @@ public class PermissionsUtils {
     }
 
     public static void requestPermission(Activity activity, String permission) {
-        if (permission.equals(CUSTOM_PERM_NOTIFICATION_LISTENER)) {
+        if (permission.equals(CUSTOM_PERM_IGNORE_BATT_OPTIM)) {
+            showRequestIgnoreBatteryOptimizationDialog(activity);
+        } else if (permission.equals(CUSTOM_PERM_NOTIFICATION_LISTENER)) {
             showNotifyListenerPermissionsDialog(activity);
-        } else if (permission.equals(CUSTOM_PERM_NOTIFICATION_SERVICE) && (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)) {
+        } else if (permission.equals(CUSTOM_PERM_NOTIFICATION_SERVICE)) {
             showNotifyPolicyPermissionsDialog(activity);
         } else if (permission.equals(CUSTOM_PERM_DISPLAY_OVER)) {
             showDisplayOverOthersPermissionsDialog(activity);
@@ -218,28 +257,41 @@ public class PermissionsUtils {
         }
     }
 
-    public static class PermissionDetails {
-        private String permission;
-        private String title;
-        private String summary;
+    public record PermissionDetails(String permission,
+                                    String title,
+                                    String summary) {
+    }
 
-        public PermissionDetails(String permission, String title, String summary) {
-            this.permission = permission;
-            this.title = title;
-            this.summary = summary;
-        }
+    public static boolean isPermissionDeclared(Context context, String permission) {
+        // Checks whether a permission has been declared in the (merged) manifest file.
+        // This also includes permissions declared by dependencies.
+        try {
+            PackageManager pm = context.getPackageManager();
+            PackageInfo info = pm.getPackageInfo(
+                    context.getPackageName(),
+                    PackageManager.GET_PERMISSIONS
+            );
 
-        public String getPermission() {
-            return permission;
+            String[] requestedPermissions = info.requestedPermissions;
+            if (requestedPermissions != null) {
+                for (String p : requestedPermissions) {
+                    if (p.equals(permission)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            // Do nothing
         }
+        return false;
+    }
 
-        public String getTitle() {
-            return title;
-        }
-
-        public String getSummary() {
-            return summary;
-        }
+    @SuppressLint("BatteryLife")
+    private static void showRequestIgnoreBatteryOptimizationDialog(Activity activity) {
+        Intent intent = new Intent();
+        intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+        intent.setData(Uri.parse("package:" + activity.getApplicationContext().getPackageName()));
+        activity.startActivity(intent);
     }
 
     private static void showNotifyListenerPermissionsDialog(Activity activity) {
@@ -248,7 +300,7 @@ public class PermissionsUtils {
                         activity.getString(R.string.app_name),
                         activity.getString(R.string.ok)))
                 .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
-                    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP_MR1)
+                    @Override
                     public void onClick(DialogInterface dialog, int id) {
                         try {
                             Intent intent;
@@ -265,7 +317,7 @@ public class PermissionsUtils {
                             intent.putExtra(":settings:show_fragment_args", bundle);
                             activity.startActivity(intent);
                         } catch (ActivityNotFoundException e) {
-                            GB.toast(activity, "'Notification Listener Settings' activity not found", Toast.LENGTH_LONG, GB.ERROR);
+                            GB.toast(activity, "'Notification Listener Settings' activity not found", Toast.LENGTH_LONG, GB.ERROR, e);
                             LOG.error("'Notification Listener Settings' activity not found");
                         }
                     }
@@ -278,15 +330,12 @@ public class PermissionsUtils {
                 .setMessage(activity.getString(R.string.permission_notification_policy_access,
                         activity.getString(R.string.app_name),
                         activity.getString(R.string.ok)))
-                .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
-                    @RequiresApi(api = Build.VERSION_CODES.M)
-                    public void onClick(DialogInterface dialog, int id) {
-                        try {
-                            activity.startActivity(new Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS));
-                        } catch (ActivityNotFoundException e) {
-                            GB.toast(activity, "'Notification Policy' activity not found", Toast.LENGTH_LONG, GB.ERROR);
-                            LOG.error("'Notification Policy' activity not found");
-                        }
+                .setPositiveButton(R.string.ok, (dialog, id) -> {
+                    try {
+                        activity.startActivity(new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS));
+                    } catch (ActivityNotFoundException e) {
+                        GB.toast(activity, "'Notification Policy' activity not found", Toast.LENGTH_LONG, GB.ERROR, e);
+                        LOG.error("'Notification Policy' activity not found");
                     }
                 })
                 .show();
@@ -297,19 +346,14 @@ public class PermissionsUtils {
                 .setMessage(activity.getString(R.string.permission_display_over_other_apps,
                         activity.getString(R.string.app_name),
                         activity.getString(R.string.ok)))
-                .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
-                    @RequiresApi(api = Build.VERSION_CODES.M)
-                    public void onClick(DialogInterface dialog, int id) {
-                        Intent enableIntent = new Intent(
-                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:" + BuildConfig.APPLICATION_ID)
-                        );
-                        activity.startActivity(enableIntent);
-                    }
+                .setPositiveButton(R.string.ok, (dialog, id) -> {
+                    Intent enableIntent = new Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + BuildConfig.APPLICATION_ID)
+                    );
+                    activity.startActivity(enableIntent);
                 })
-                .setNegativeButton(R.string.dismiss, new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface dialog, int id) {
-                    }
+                .setNegativeButton(R.string.dismiss, (dialog, id) -> {
                 })
                 .show();
     }

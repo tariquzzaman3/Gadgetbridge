@@ -1,4 +1,4 @@
-/*  Copyright (C) 2015-2024 Andreas Shimokawa, Arjan Schrijver, Carsten
+/*  Copyright (C) 2015-2026 Andreas Shimokawa, Arjan Schrijver, Carsten
     Pfeiffer, Daniele Gobbetti, Kasha, Sebastian Kranz, Steffen Liebergeld,
     Taavi Eomäe
 
@@ -20,8 +20,11 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.pebble;
 
 import android.content.IntentFilter;
 import android.net.Uri;
+import android.os.Bundle;
 import android.util.Pair;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONArray;
@@ -36,27 +39,28 @@ import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.SettingsActivity;
-import nodomain.freeyourgadget.gadgetbridge.externalevents.AlarmReceiver;
+import nodomain.freeyourgadget.gadgetbridge.externalevents.SunriseSunsetAlarmReceiver;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.CalendarEventSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.DistanceUnit;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
 import nodomain.freeyourgadget.gadgetbridge.service.serial.AbstractSerialDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.serial.GBDeviceIoThread;
 import nodomain.freeyourgadget.gadgetbridge.service.serial.GBDeviceProtocol;
 
 public class PebbleSupport extends AbstractSerialDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(PebbleSupport.class);
-    private AlarmReceiver mAlarmReceiver = null;
+    private SunriseSunsetAlarmReceiver mAlarmReceiver = null;
 
     @Override
     public void dispose() {
-        super.dispose();
-        unregisterSunriseSunsetAlarmReceiver();
+        synchronized (ConnectionMonitor) {
+            super.dispose();
+            unregisterSunriseSunsetAlarmReceiver();
+        }
     }
 
     private void registerSunriseSunsetAlarmReceiver() {
@@ -66,7 +70,7 @@ public class PebbleSupport extends AbstractSerialDeviceSupport {
         }
         unregisterSunriseSunsetAlarmReceiver();
         LOG.info("registering sunrise and sunset receiver");
-        this.mAlarmReceiver = new AlarmReceiver();
+        this.mAlarmReceiver = new SunriseSunsetAlarmReceiver();
         ContextCompat.registerReceiver(GBApplication.getContext(), mAlarmReceiver, new IntentFilter("DAILY_ALARM"), ContextCompat.RECEIVER_EXPORTED);
     }
 
@@ -79,8 +83,13 @@ public class PebbleSupport extends AbstractSerialDeviceSupport {
 
     @Override
     public boolean connect() {
-        getDeviceIOThread().start();
-        registerSunriseSunsetAlarmReceiver();
+        synchronized (ConnectionMonitor) {
+            final PebbleIoThread deviceIOThread = getDeviceIOThread();
+            if (!deviceIOThread.isAlive()) {
+                deviceIOThread.start();
+            }
+            registerSunriseSunsetAlarmReceiver();
+        }
         return true;
     }
 
@@ -100,14 +109,14 @@ public class PebbleSupport extends AbstractSerialDeviceSupport {
     }
 
     @Override
-    public void onInstallApp(Uri uri) {
+    public void onInstallApp(Uri uri, @NonNull final Bundle options) {
         PebbleProtocol pebbleProtocol = (PebbleProtocol) getDeviceProtocol();
         PebbleIoThread pebbleIoThread = getDeviceIOThread();
         // Catch fake URLs first
         if (uri.equals(Uri.parse("fake://health"))) {
             getDeviceIOThread().write(pebbleProtocol.encodeActivateHealth(true));
-            String units = GBApplication.getPrefs().getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM, getContext().getString(R.string.p_unit_metric));
-            if (units.equals(getContext().getString(R.string.p_unit_metric))) {
+            final DistanceUnit distanceUnit = GBApplication.getPrefs().getDistanceUnit();
+            if (distanceUnit == DistanceUnit.METRIC) {
                 pebbleIoThread.write(pebbleProtocol.encodeSetSaneDistanceUnit(true));
             } else {
                 pebbleIoThread.write(pebbleProtocol.encodeSetSaneDistanceUnit(false));
@@ -137,8 +146,7 @@ public class PebbleSupport extends AbstractSerialDeviceSupport {
             while (keysIterator.hasNext()) {
                 String keyStr = keysIterator.next();
                 Object object = json.get(keyStr);
-                if (object instanceof JSONArray) {
-                    JSONArray jsonArray = (JSONArray) object;
+                if (object instanceof JSONArray jsonArray) {
                     byte[] byteArray = new byte[jsonArray.length()];
                     for (int i = 0; i < jsonArray.length(); i++) {
                         byteArray[i] = ((Integer) jsonArray.get(i)).byteValue();
@@ -248,16 +256,22 @@ public class PebbleSupport extends AbstractSerialDeviceSupport {
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
         if (reconnect()) {
-            super.onTestNewFunction();
+            super.onTestNewFunction(options);
         }
     }
 
     @Override
-    public void onSendWeather(ArrayList<WeatherSpec> weatherSpecs) {
+    public void onFetchRecordedData(int dataTypes) {
+        super.onFetchRecordedData(dataTypes);
+        getDeviceIOThread().readBatteryCharacteristic();
+    }
+
+    @Override
+    public void onSendWeather() {
         if (reconnect()) {
-            super.onSendWeather(weatherSpecs);
+            super.onSendWeather();
         }
     }
 }

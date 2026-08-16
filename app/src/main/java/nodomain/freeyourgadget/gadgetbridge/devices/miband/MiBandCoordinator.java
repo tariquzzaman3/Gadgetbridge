@@ -23,6 +23,7 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.le.ScanFilter;
 import android.content.Context;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.ParcelUuid;
 
 import androidx.annotation.DrawableRes;
@@ -35,22 +36,24 @@ import org.slf4j.LoggerFactory;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
-import de.greenrobot.dao.query.QueryBuilder;
+import de.greenrobot.dao.AbstractDao;
+import de.greenrobot.dao.Property;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
-import nodomain.freeyourgadget.gadgetbridge.GBException;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettings;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettingsCustomizer;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettingsScreen;
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLEDeviceCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.devices.SampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.AbstractActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.MiBandActivitySampleDao;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
@@ -103,10 +106,10 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    protected void deleteDevice(@NonNull GBDevice gbDevice, @NonNull Device device, @NonNull DaoSession session) throws GBException {
-        Long deviceId = device.getId();
-        QueryBuilder<?> qb = session.getMiBandActivitySampleDao().queryBuilder();
-        qb.where(MiBandActivitySampleDao.Properties.DeviceId.eq(deviceId)).buildDelete().executeDeleteWithoutDetachingEntities();
+    public Map<AbstractDao<?, ?>, Property> getAllDeviceDao(@NonNull final DaoSession session) {
+        Map<AbstractDao<?, ?>, Property> map = new HashMap<>(1);
+        map.put(session.getMiBandActivitySampleDao(), MiBandActivitySampleDao.Properties.DeviceId);
+        return map;
     }
 
     @Override
@@ -120,13 +123,13 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public InstallHandler findInstallHandler(Uri uri, Context context) {
+    public InstallHandler findInstallHandler(Uri uri, Bundle options, Context context) {
         MiBandFWInstallHandler handler = new MiBandFWInstallHandler(uri, context);
         return handler.isValid() ? handler : null;
     }
 
     @Override
-    public boolean supportsActivityDataFetching() {
+    public boolean supportsDataFetching(@NonNull final GBDevice device) {
         return true;
     }
 
@@ -141,7 +144,7 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsActivityTracking() {
+    public boolean supportsActivityTracking(@NonNull GBDevice device) {
         return true;
     }
 
@@ -151,19 +154,20 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsRealtimeData() {
+    public boolean supportsRealtimeData(@NonNull GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsFindDevice() {
+    public boolean supportsFindDevice(@NonNull GBDevice device) {
         return true;
     }
 
+    /** @noinspection BooleanMethodIsAlwaysInverted*/
     public static boolean hasValidUserInfo() {
         String dummyMacAddress = MiBandService.MAC_ADDRESS_FILTER_1_1A + ":00:00:00";
         try {
-            UserInfo userInfo = getConfiguredUserInfo(dummyMacAddress);
+            getConfiguredUserInfo(dummyMacAddress);
             return true;
         } catch (IllegalArgumentException ex) {
             return false;
@@ -174,13 +178,12 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
      * Returns the configured user info, or, if that is not available or invalid,
      * a default user info.
      *
-     * @param miBandAddress
      */
     public static UserInfo getAnyUserInfo(String miBandAddress) {
         try {
             return getConfiguredUserInfo(miBandAddress);
         } catch (Exception ex) {
-            LOG.error("Error creating user info from settings, using default user instead: " + ex);
+            LOG.error("Error creating user info from settings, using default user instead", ex);
             return UserInfo.getDefault(miBandAddress);
         }
     }
@@ -188,14 +191,13 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
     /**
      * Returns the user info from the user configured data in the preferences.
      *
-     * @param miBandAddress
      * @throws IllegalArgumentException when the user info can not be created
      */
     public static UserInfo getConfiguredUserInfo(String miBandAddress) throws IllegalArgumentException {
         ActivityUser activityUser = new ActivityUser();
         Prefs prefs = GBApplication.getPrefs();
 
-        UserInfo info = UserInfo.create(
+        return UserInfo.create(
                 miBandAddress,
                 prefs.getString(PREF_USER_NAME, null),
                 activityUser.getGender(),
@@ -204,7 +206,6 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
                 activityUser.getWeightKg(),
                 0
         );
-        return info;
     }
 
     public static int getWearLocation(String deviceAddress) throws IllegalArgumentException {
@@ -263,7 +264,7 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return MiBandSupport.class;
     }
 
@@ -302,8 +303,7 @@ public class MiBandCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    @DrawableRes
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_miband_disabled;
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceCoordinator.DeviceKind.FITNESS_BAND;
     }
 }

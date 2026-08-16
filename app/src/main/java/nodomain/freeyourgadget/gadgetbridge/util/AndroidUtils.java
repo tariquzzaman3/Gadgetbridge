@@ -24,6 +24,7 @@ import android.content.BroadcastReceiver;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.database.Cursor;
@@ -40,6 +41,7 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
@@ -66,6 +68,7 @@ public class AndroidUtils {
      * @param uuids an array of {@link ParcelUuid} elements
      * @return a {@link ParcelUuid} array instance with the same contents
      */
+    @Nullable
     public static ParcelUuid[] toParcelUuids(Parcelable[] uuids) {
         if (uuids == null) {
             return null;
@@ -134,9 +137,9 @@ public class AndroidUtils {
             color = ta.getColor(0, 0);
             ta.recycle();
         } else if (GBApplication.isDarkThemeEnabled()) {
-            color = context.getResources().getColor(R.color.primarytext_dark);
+            color = ContextCompat.getColor(context, R.color.primarytext_dark);
         } else {
-            color = context.getResources().getColor(R.color.primarytext_light);
+            color = ContextCompat.getColor(context, R.color.primarytext_light);
         }
         return colorToHex(color);
     }
@@ -160,9 +163,9 @@ public class AndroidUtils {
             color = ta.getColor(0, 0);
             ta.recycle();
         } else if (GBApplication.isDarkThemeEnabled()) {
-            color = context.getResources().getColor(androidx.cardview.R.color.cardview_dark_background);
+            color = ContextCompat.getColor(context, androidx.cardview.R.color.cardview_dark_background);
         } else {
-            color = context.getResources().getColor(androidx.cardview.R.color.cardview_light_background);
+            color = ContextCompat.getColor(context, androidx.cardview.R.color.cardview_light_background);
         }
         return colorToHex(color);
     }
@@ -170,9 +173,9 @@ public class AndroidUtils {
     public static int getBackgroundColor(Context context) {
         int color;
         if (GBApplication.isDarkThemeEnabled()) {
-            color = context.getResources().getColor(androidx.cardview.R.color.cardview_dark_background);
+            color = ContextCompat.getColor(context, androidx.cardview.R.color.cardview_dark_background);
         } else {
-            color = context.getResources().getColor(androidx.cardview.R.color.cardview_light_background);
+            color = ContextCompat.getColor(context, androidx.cardview.R.color.cardview_light_background);
         }
         return color;
     }
@@ -255,11 +258,12 @@ public class AndroidUtils {
             String[] projection = {
                     MediaStore.Images.Media.DATA
             };
-            Cursor cursor = context.getContentResolver()
-                    .query(uri, projection, selection, selectionArgs, null);
-            int column_index = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
-            if (cursor.moveToFirst()) {
-                return cursor.getString(column_index);
+            try (Cursor cursor = context.getContentResolver()
+                    .query(uri, projection, selection, selectionArgs, null)) {
+                int column_index = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+                if (cursor.moveToFirst()) {
+                    return cursor.getString(column_index);
+                }
             }
         } else if ("file".equalsIgnoreCase(uri.getScheme())) {
             return uri.getPath();
@@ -282,7 +286,10 @@ public class AndroidUtils {
         }
     }
 
-    public static void shareBytesAsFile(final Context context, final String name, final byte[] bytes) throws IOException {
+    public static void shareBytesAsFile(final Context context,
+                                        final String name,
+                                        final byte[] bytes,
+                                        final String type) throws IOException {
         final File cacheDir = context.getCacheDir();
         final File rawCacheDir = new File(cacheDir, "raw");
         rawCacheDir.mkdir();
@@ -295,19 +302,15 @@ public class AndroidUtils {
             return;
         }
 
-        shareFile(context, file);
+        shareFile(context, file, type);
     }
 
-    public static void shareFile(final Context context, final File file) throws IOException {
+    public static void shareFile(final Context context, final File file, final String type) throws IOException {
         if (!file.exists()) {
             LOG.warn("File {} does not exist", file.getPath());
             return;
         }
 
-        shareFile(context, file, "*/*");
-    }
-
-    public static void shareFile(final Context context, final File file, final String type) throws IOException {
         final Uri contentUri = FileProvider.getUriForFile(
                 context,
                 context.getApplicationContext().getPackageName() + ".screenshot_provider",
@@ -341,6 +344,7 @@ public class AndroidUtils {
         GBApplication.getContext().startActivity(launchIntent);
     }
 
+    @Nullable
     public static PowerManager.WakeLock acquirePartialWakeLock(Context context, String tag, long timeout) {
         try {
             PowerManager powermanager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
@@ -350,6 +354,14 @@ public class AndroidUtils {
         } catch (final Exception e) {
             LOG.error("Failed to take partial wake lock {}: ", tag, e);
             return null;
+        }
+    }
+
+    public static boolean isPackageInstalled(final String packageName) {
+        try {
+            return GBApplication.getContext().getPackageManager().getApplicationInfo(packageName, 0).enabled;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
         }
     }
 }

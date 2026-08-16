@@ -1,6 +1,6 @@
-/*  Copyright (C) 2019-2024 Andreas Shimokawa, Damien Gaignon, Daniel Dakhno,
+/*  Copyright (C) 2019-2025 Andreas Shimokawa, Damien Gaignon, Daniel Dakhno,
     Gabriele Monaco, Ganblejs, glemco, Gordon Williams, José Rebelo, LukasEdl,
-    Petr Vaněk
+    Petr Vaněk, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -21,7 +21,6 @@ package nodomain.freeyourgadget.gadgetbridge.devices.banglejs;
 import android.app.Activity;
 import android.bluetooth.le.ScanFilter;
 import android.content.Context;
-import android.net.Uri;
 import android.os.ParcelUuid;
 
 import androidx.annotation.NonNull;
@@ -33,22 +32,28 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
+import de.greenrobot.dao.AbstractDao;
+import de.greenrobot.dao.Property;
+import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettingsCustomizer;
+import nodomain.freeyourgadget.gadgetbridge.capabilities.loyaltycards.BarcodeFormat;
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLEDeviceCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.devices.SampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.SleepAsAndroidFeature;
+import nodomain.freeyourgadget.gadgetbridge.entities.BangleJSActivitySampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummaryDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryParser;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivityTrackProvider;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryConfig;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.banglejs.BangleJSDeviceSupport;
@@ -82,7 +87,7 @@ public class BangleJSCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsCalendarEvents() {
+    public boolean supportsCalendarEvents(final GBDevice device) {
         return true;
     }
 
@@ -92,48 +97,59 @@ public class BangleJSCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsSleepAsAndroid() {
+    public boolean supportsSleepAsAndroid(@NonNull GBDevice device) {
         return true;
     }
 
     @Override
-    public Set<SleepAsAndroidFeature> getSleepAsAndroidFeatures() {
-        return EnumSet.of(SleepAsAndroidFeature.ACCELEROMETER, SleepAsAndroidFeature.HEART_RATE, SleepAsAndroidFeature.NOTIFICATIONS, SleepAsAndroidFeature.ALARMS);
+    public Set<SleepAsAndroidFeature> getSleepAsAndroidFeatures(@NonNull final GBDevice device) {
+        return EnumSet.of(
+                SleepAsAndroidFeature.ACCELEROMETER,
+                SleepAsAndroidFeature.HEART_RATE,
+                SleepAsAndroidFeature.NOTIFICATIONS,
+                SleepAsAndroidFeature.ALARMS
+        );
     }
 
     @Nullable
     @Override
     public ActivitySummaryParser getActivitySummaryParser(final GBDevice device, final Context context) {
-        return new BangleJSWorkoutParser(context);
+        return new BangleJSWorkoutParser();
+    }
+
+    @Nullable
+    @Override
+    public ActivityTrackProvider getActivityTrackProvider(@NonNull final GBDevice device, @NonNull final Context context) {
+        return new BangleJSWorkoutParser();
     }
 
     @Override
-    public boolean supportsRealtimeData()  {
+    public boolean supportsRealtimeData(@NonNull GBDevice device)  {
         return true;
     }
 
     @Override
-    public boolean supportsWeather() {
+    public boolean supportsWeather(final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsFindDevice() {
+    public boolean supportsFindDevice(@NonNull GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsActivityDataFetching() {
+    public boolean supportsDataFetching(@NonNull final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsActivityTracking() {
+    public boolean supportsActivityTracking(@NonNull GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsActivityTracks() {
+    public boolean supportsRecordedActivities(final GBDevice device) {
         return true;
     }
 
@@ -165,21 +181,17 @@ public class BangleJSCoordinator extends AbstractBLEDeviceCoordinator {
 
     @Override
     public boolean supportsAppsManagement(final GBDevice device) {
-        return BuildConfig.INTERNET_ACCESS;
+        return GBApplication.hasInternetAccess();
     }
 
     @Override
-    public Class<? extends Activity> getAppsManagementActivity() {
-        return BuildConfig.INTERNET_ACCESS ? AppsManagementActivity.class : null;
+    public Class<? extends Activity> getAppsManagementActivity(final GBDevice device) {
+        return supportsAppsManagement(device) ? AppsManagementActivity.class : null;
     }
 
     @Override
     public boolean suggestUnbindBeforePair() {
         return false;
-    }
-
-    @Override
-    protected void deleteDevice(@NonNull GBDevice gbDevice, @NonNull Device device, @NonNull DaoSession session) {
     }
 
     @Override
@@ -193,12 +205,7 @@ public class BangleJSCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public InstallHandler findInstallHandler(Uri uri, Context context) {
-        return null;
-    }
-
-    @Override
-    public boolean supportsUnicodeEmojis() {
+    public boolean supportsUnicodeEmojis(@NonNull GBDevice device) {
         /* we say yes here (because we can't get a handle to our device's prefs to check)
         and then in 'renderUnicodeAsImage' we call EmojiConverter.convertUnicodeEmojiToAscii
         just like DeviceCommunicationService.sanitizeNotifText would have done if we'd
@@ -231,13 +238,14 @@ public class BangleJSCoordinator extends AbstractBLEDeviceCoordinator {
         settings.add(R.xml.devicesettings_text_bitmaps);
         settings.add(R.xml.devicesettings_transliteration);
         settings.add(R.xml.devicesettings_canned_reply_16);
+        settings.add(R.xml.devicesettings_banglejs_notifications);
 
         settings.add(R.xml.devicesettings_header_calendar);
         settings.add(R.xml.devicesettings_sync_calendar);
 
         settings.add(R.xml.devicesettings_header_connection);
         settings.add(R.xml.devicesettings_high_mtu);
-        if (BuildConfig.INTERNET_ACCESS)
+        if (GBApplication.hasInternetAccess())
             settings.add(R.xml.devicesettings_device_internet_access);
 
         settings.add(R.xml.devicesettings_banglejs_activity);
@@ -258,22 +266,25 @@ public class BangleJSCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsNavigation() {
+    public boolean supportsNavigation(final GBDevice device) {
+        return true;
+    }
+
+    @Override
+    public boolean supportsMusicInfo(@NonNull GBDevice device) {
         return true;
     }
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return BangleJSDeviceSupport.class;
     }
-
 
     @Override
     public int getDeviceNameResource() {
         return R.string.devicetype_banglejs;
     }
-
 
     @Override
     public int getDefaultIconResource() {
@@ -281,7 +292,28 @@ public class BangleJSCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_banglejs_disabled;
+    public Map<AbstractDao<?, ?>, Property> getAllDeviceDao(@NonNull final DaoSession session) {
+        Map<AbstractDao<?, ?>, Property> map = new HashMap<>(2);
+        map.put(session.getBangleJSActivitySampleDao(), BangleJSActivitySampleDao.Properties.DeviceId);
+        map.put(session.getBaseActivitySummaryDao(), BaseActivitySummaryDao.Properties.DeviceId);
+        return map;
+    }
+
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.WATCH;
+    }
+
+    @Override
+    public Set<BarcodeFormat> getSupportedBarcodeFormats(@NonNull final GBDevice device) {
+        return Set.of(
+            BarcodeFormat.CODE_39,
+            BarcodeFormat.CODABAR,
+            BarcodeFormat.EAN_8,
+            BarcodeFormat.EAN_13,
+            BarcodeFormat.UPC_A,
+            BarcodeFormat.UPC_E,
+            BarcodeFormat.QR_CODE
+        );
     }
 }

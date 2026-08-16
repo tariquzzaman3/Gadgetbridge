@@ -44,7 +44,6 @@ import lineageos.providers.WeatherContract;
 /**
  * Provides access to the weather services in the device.
  */
-@RequiresApi(api = Build.VERSION_CODES.M)
 public class LineageWeatherManager {
 
     private static ILineageWeatherManager sWeatherManagerService;
@@ -89,14 +88,15 @@ public class LineageWeatherManager {
         public static final int NO_MATCH_FOUND = -4;
     }
 
-    private LineageWeatherManager(Context context) {
+    private LineageWeatherManager(Context context) throws Exception {
         Context appContext = context.getApplicationContext();
         mContext = (appContext != null) ? appContext : context;
         sWeatherManagerService = getService();
 
         if (context.getPackageManager().hasSystemFeature(
                 LineageContextConstants.Features.WEATHER_SERVICES) && (sWeatherManagerService == null)) {
-            Log.wtf(TAG, "Unable to bind the LineageWeatherManagerService");
+            // We replaced Log.wtf here, since it would crash some ROMs
+            throw new Exception("Unable to bind the LineageWeatherManagerService");
         }
         mHandler = new Handler(appContext.getMainLooper());
     }
@@ -108,7 +108,11 @@ public class LineageWeatherManager {
      */
     public static LineageWeatherManager getInstance(Context context) {
         if (sInstance == null) {
-            sInstance = new LineageWeatherManager(context);
+            try {
+                sInstance = new LineageWeatherManager(context);
+            } catch (final Exception e) {
+                Log.e(TAG, "Unable to bind the LineageWeatherManagerService", e);
+            }
         }
         return sInstance;
     }
@@ -125,20 +129,14 @@ public class LineageWeatherManager {
         // This is a Gadgetbridge hack
         IBinder binder = null;
         try {
-            Class localClass = Class.forName("android.os.ServiceManager");
+            Class<?> localClass = Class.forName("android.os.ServiceManager");
             Method getService = localClass.getMethod("getService", String.class);
             Object result = getService.invoke(localClass, LineageContextConstants.LINEAGE_WEATHER_SERVICE);
             if (result != null) {
                 binder = (IBinder) result;
             }
-        } catch (NoSuchMethodException e) {
-            e.printStackTrace();
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
-        } catch (InvocationTargetException e) {
-            e.printStackTrace();
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException | ClassNotFoundException e) {
+            Log.d(TAG, "Failed to get lineageos weather service", e);
         }
         if (binder != null) {
             sWeatherManagerService = ILineageWeatherManager.Stub.asInterface(binder);

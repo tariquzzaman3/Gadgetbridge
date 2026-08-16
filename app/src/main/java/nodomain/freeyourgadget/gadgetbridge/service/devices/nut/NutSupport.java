@@ -36,9 +36,8 @@ import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInf
 import nodomain.freeyourgadget.gadgetbridge.devices.nut.NutConstants;
 import nodomain.freeyourgadget.gadgetbridge.devices.nut.NutKey;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.IntentListener;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfo;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfoProfile;
@@ -46,7 +45,7 @@ import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.Dev
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.DeviceInfoProfile;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-public class NutSupport extends AbstractBTLEDeviceSupport {
+public class NutSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(NutSupport.class);
 
     private final GBDeviceEventBatteryInfo batteryCmd = new GBDeviceEventBatteryInfo();
@@ -126,8 +125,8 @@ public class NutSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
 
         // Init prefs
         prefs = GBApplication.getDeviceSpecificSharedPrefs(getDevice().getAddress());
@@ -146,20 +145,20 @@ public class NutSupport extends AbstractBTLEDeviceSupport {
              * Part of {@link NutConstants.SERVICE_PROPRIETARY_NUT}
              * Enables proprietary notification
              */
-            builder.notify(getCharacteristic(NutConstants.CHARAC_AUTH_STATUS), true);
+            builder.notify(NutConstants.CHARAC_AUTH_STATUS, true);
             LOG.info("Enabled authentication status notify");
 
             /**
              * Part of {@link NutConstants.SERVICE_UNKNOWN_2}
              * Enables button-press notify
              */
-            builder.notify(getCharacteristic(NutConstants.CHARAC_UNKNOWN_2), true);
+            builder.notify(NutConstants.CHARAC_UNKNOWN_2, true);
         } else {
             /**
              * Part of {@link NutConstants.SERVICE_UNKNOWN_1_WEIRDNESS}
              * Enables button-press notify
              */
-            builder.notify(getCharacteristic(NutConstants.CHARAC_CHANGE_POWER), true);
+            builder.notify(NutConstants.CHARAC_CHANGE_POWER, true);
         }
 
         readDeviceInfo();
@@ -178,14 +177,15 @@ public class NutSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] value) {
+        if (super.onCharacteristicChanged(gatt, characteristic, value)) {
             return true;
         }
 
         UUID characteristicUUID = characteristic.getUuid();
         if (characteristicUUID.equals(NutConstants.CHARAC_AUTH_STATUS)) {
-            handleAuthResult(characteristic.getValue());
+            handleAuthResult(value);
             return true;
         }
         LOG.info("Unhandled characteristic changed: " + characteristicUUID);
@@ -194,9 +194,9 @@ public class NutSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic,
+                                        BluetoothGattCharacteristic characteristic, byte[] value,
                                         int status) {
-        if (super.onCharacteristicRead(gatt, characteristic, status)) {
+        if (super.onCharacteristicRead(gatt, characteristic, value, status)) {
             return true;
         }
         UUID characteristicUUID = characteristic.getUuid();
@@ -455,11 +455,9 @@ public class NutSupport extends AbstractBTLEDeviceSupport {
      * @param data     the data to write
      */
     private void writeCharacteristic(String taskName, UUID charac, byte[] data) {
-        BluetoothGattCharacteristic characteristic = getCharacteristic(charac);
-
-        TransactionBuilder builder = new TransactionBuilder(taskName);
-        builder.write(characteristic, data);
-        builder.queue(getQueue());
+        TransactionBuilder builder = createTransactionBuilder(taskName);
+        builder.write(charac, data);
+        builder.queue();
     }
 
     /**
@@ -469,11 +467,9 @@ public class NutSupport extends AbstractBTLEDeviceSupport {
      * @param charac   the characteristic to read
      */
     private void readCharacteristic(String taskName, UUID charac) {
-        BluetoothGattCharacteristic characteristic = getCharacteristic(charac);
-
-        TransactionBuilder builder = new TransactionBuilder(taskName);
-        builder.read(characteristic);
-        builder.queue(getQueue());
+        TransactionBuilder builder = createTransactionBuilder(taskName);
+        builder.read(charac);
+        builder.queue();
     }
 
     @Override

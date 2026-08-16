@@ -35,10 +35,8 @@ import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEOperation;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.casio.Casio2C2DSupport;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.casio.gbx100.CasioGBX100DeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.miband.operations.OperationStatus;
 import nodomain.freeyourgadget.gadgetbridge.util.BcdUtil;
-import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
 import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_AUTOLIGHT;
 import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_KEY_VIBRATION;
@@ -46,12 +44,12 @@ import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.Dev
 import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_WEARLOCATION;
 import static nodomain.freeyourgadget.gadgetbridge.model.ActivityUser.GENDER_MALE;
 
-public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX100DeviceSupport> {
-    private static final Logger LOG = LoggerFactory.getLogger(GetConfigurationOperation.class);
-    private final CasioGBX100DeviceSupport support;
+public class SetConfigurationOperation extends AbstractBTLEOperation<Casio2C2DSupport> {
+    private static final Logger LOG = LoggerFactory.getLogger(SetConfigurationOperation.class);
+    private final Casio2C2DSupport support;
     private final CasioConstants.ConfigurationOption option;
 
-    public SetConfigurationOperation(CasioGBX100DeviceSupport support, CasioConstants.ConfigurationOption option) {
+    public SetConfigurationOperation(Casio2C2DSupport support, CasioConstants.ConfigurationOption option) {
         super(support);
         this.support = support;
         this.option = option;
@@ -60,24 +58,24 @@ public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX10
     @Override
     protected void prePerform() throws IOException {
         super.prePerform();
-        getDevice().setBusyTask("SetConfigurationOperation starting..."); // mark as busy quickly to avoid interruptions from the outside
+        getDevice().setBusyTask(R.string.busy_task_configuring, getContext()); // mark as busy quickly to avoid interruptions from the outside
     }
 
     @Override
     protected void doPerform() throws IOException {
         byte[] command = new byte[1];
         command[0] = Casio2C2DSupport.FEATURE_SETTING_FOR_USER_PROFILE;
-        TransactionBuilder builder = performInitialized("getConfiguration");
+        TransactionBuilder builder = performInitialized("getConfiguration-Set1");
         builder.setCallback(this);
         support.writeAllFeaturesRequest(builder, command);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           final byte[] data) {
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
 
         if (data.length == 0)
             return true;
@@ -150,10 +148,10 @@ public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX10
                 } else {
                     // Target settings will be requested in write callback
                     try {
-                        TransactionBuilder builder = performInitialized("setConfiguration");
+                        TransactionBuilder builder = performInitialized("setConfiguration-Set1");
                         builder.setCallback(this);
                         support.writeAllFeatures(builder, data);
-                        builder.queue(getQueue());
+                        builder.queue();
                     } catch (IOException e) {
                         LOG.info("Error writing configuration to Casio watch");
                     }
@@ -191,10 +189,10 @@ public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX10
                 } else {
                     // Basic settings will be requested in Gatt callback
                     try {
-                        TransactionBuilder builder = performInitialized("setConfiguration");
+                        TransactionBuilder builder = performInitialized("setConfiguration-Set2");
                         builder.setCallback(this);
                         support.writeAllFeatures(builder, data);
-                        builder.queue(getQueue());
+                        builder.queue();
                     } catch (IOException e) {
                         LOG.info("Error writing configuration to Casio watch");
                     }
@@ -238,10 +236,10 @@ public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX10
                 } else {
                     // Operation will be finished in Gatt callback
                     try {
-                        TransactionBuilder builder = performInitialized("setConfiguration");
+                        TransactionBuilder builder = performInitialized("setConfiguration-Set3");
                         builder.setCallback(this);
                         support.writeAllFeatures(builder, data);
-                        builder.queue(getQueue());
+                        builder.queue();
                     } catch (IOException e) {
                         LOG.info("Error writing configuration to Casio watch");
                     }
@@ -251,7 +249,7 @@ public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX10
 
         }
         LOG.info("Unhandled characteristic changed: " + characteristicUUID);
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, data);
     }
 
     @Override
@@ -264,8 +262,8 @@ public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX10
             try {
                 TransactionBuilder builder = performInitialized("finished operation");
                 builder.setCallback(null); // unset ourselves from being the queue's gatt callback
-                builder.wait(0);
-                builder.queue(getQueue());
+                builder.sleep(0);
+                builder.queue();
             } catch (IOException ex) {
                 LOG.info("Error resetting Gatt callback: " + ex.getMessage());
             }
@@ -276,10 +274,10 @@ public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX10
         byte[] command = new byte[1];
         command[0] = Casio2C2DSupport.FEATURE_SETTING_FOR_BASIC;
         try {
-            TransactionBuilder builder = performInitialized("getConfiguration");
+            TransactionBuilder builder = performInitialized("getConfiguration-Set2");
             builder.setCallback(this);
             support.writeAllFeaturesRequest(builder, command);
-            builder.queue(getQueue());
+            builder.queue();
         } catch(IOException e) {
             LOG.info("Error requesting Casio configuration");
         }
@@ -289,10 +287,10 @@ public class SetConfigurationOperation  extends AbstractBTLEOperation<CasioGBX10
         byte[] command = new byte[1];
         command[0] = Casio2C2DSupport.FEATURE_SETTING_FOR_TARGET_VALUE;
         try {
-            TransactionBuilder builder = performInitialized("getConfiguration");
+            TransactionBuilder builder = performInitialized("getConfiguration-Set3");
             builder.setCallback(this);
             support.writeAllFeaturesRequest(builder, command);
-            builder.queue(getQueue());
+            builder.queue();
         } catch(IOException e) {
             LOG.info("Error requesting Casio configuration");
         }

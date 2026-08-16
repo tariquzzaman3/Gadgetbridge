@@ -1,4 +1,4 @@
-/*  Copyright (C) 2015-2024 Andreas Shimokawa, Carsten Pfeiffer, José Rebelo,
+/*  Copyright (C) 2015-2026 Andreas Shimokawa, Carsten Pfeiffer, José Rebelo,
     Julien Pivotto, Steffen Liebergeld
 
     This file is part of Gadgetbridge.
@@ -20,6 +20,11 @@ package nodomain.freeyourgadget.gadgetbridge.service.serial;
 import android.location.Location;
 import android.os.Bundle;
 
+import androidx.annotation.Nullable;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.UUID;
 
@@ -34,13 +39,12 @@ import nodomain.freeyourgadget.gadgetbridge.model.MusicSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.Reminder;
-import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.WorldClock;
 import nodomain.freeyourgadget.gadgetbridge.service.AbstractDeviceSupport;
 
 /**
  * An abstract base class for devices speaking a serial protocol, like via
- * an rfcomm bluetooth socket or a TCP socket.
+ * a rfcomm bluetooth socket or a TCP socket.
  * <p/>
  * This class uses two helper classes to deal with that:
  * - GBDeviceIoThread, which creates and maintains the actual socket connection and implements the transport layer
@@ -50,8 +54,15 @@ import nodomain.freeyourgadget.gadgetbridge.service.AbstractDeviceSupport;
  * <p/>
  * This implementation implements all methods of {@link EventHandler}, calls the {@link GBDeviceProtocol device protocol}
  * to create the device specific message for the respective events and sends them to the device via {@link #sendToDevice(byte[])}.
+ * @deprecated Use {@link nodomain.freeyourgadget.gadgetbridge.service.btbr.AbstractBTBRDeviceSupport}
  */
+@Deprecated
 public abstract class AbstractSerialDeviceSupport extends AbstractDeviceSupport {
+    private static final Logger LOG = LoggerFactory.getLogger(AbstractSerialDeviceSupport.class);
+
+    /// used to guard {@link #connect()} and {@link #dispose()}
+    protected final Object ConnectionMonitor = new Object();
+
     private GBDeviceProtocol gbDeviceProtocol;
     protected GBDeviceIoThread gbDeviceIOThread;
 
@@ -66,12 +77,25 @@ public abstract class AbstractSerialDeviceSupport extends AbstractDeviceSupport 
     protected abstract GBDeviceIoThread createDeviceIOThread();
 
     @Override
+    public boolean connect() {
+        synchronized (ConnectionMonitor) {
+            final GBDeviceIoThread deviceIOThread = getDeviceIOThread();
+            if (!deviceIOThread.isAlive()) {
+                deviceIOThread.start();
+            }
+            return true;
+        }
+    }
+
+    @Override
     public void dispose() {
-        // currently only one thread allowed
-        if (gbDeviceIOThread != null) {
-            gbDeviceIOThread.quit();
-            gbDeviceIOThread.interrupt();
-            gbDeviceIOThread = null;
+        synchronized (ConnectionMonitor) {
+            // currently only one thread allowed
+            if (gbDeviceIOThread != null) {
+                gbDeviceIOThread.quit();
+                gbDeviceIOThread.interrupt();
+                gbDeviceIOThread = null;
+            }
         }
     }
 
@@ -89,8 +113,10 @@ public abstract class AbstractSerialDeviceSupport extends AbstractDeviceSupport 
      * Lazily creates and returns the GBDeviceIoThread instance to be used.
      */
     public synchronized GBDeviceIoThread getDeviceIOThread() {
-        if (gbDeviceIOThread == null) {
-            gbDeviceIOThread = createDeviceIOThread();
+        if (gbDeviceIOThread == null || !gbDeviceIOThread.isAlive()) {
+            LOG.debug("Creating new IO thread for {}", gbDevice.getAddress());
+            final Thread thread = (gbDeviceIOThread = createDeviceIOThread());
+            LOG.debug("New IO thread: {}", thread.getName());
         }
         return gbDeviceIOThread;
     }
@@ -194,7 +220,7 @@ public abstract class AbstractSerialDeviceSupport extends AbstractDeviceSupport 
 
     @Override
     public void onFetchRecordedData(int dataTypes) {
-        byte[] bytes = gbDeviceProtocol.encodeSynchronizeActivityData();
+        byte[] bytes = gbDeviceProtocol.encodeFetchRecordedData(dataTypes);
         sendToDevice(bytes);
     }
 
@@ -259,15 +285,14 @@ public abstract class AbstractSerialDeviceSupport extends AbstractDeviceSupport 
     }
 
     @Override
-    public void onTestNewFunction() {
-        byte[] bytes = gbDeviceProtocol.encodeTestNewFunction();
+    public void onTestNewFunction(@Nullable Bundle options) {
+        byte[] bytes = gbDeviceProtocol.encodeTestNewFunction(options);
         sendToDevice(bytes);
     }
 
     @Override
-    public void onSendWeather(ArrayList<WeatherSpec> weatherSpecs) {
-        WeatherSpec weatherSpec = weatherSpecs.get(0);
-        byte[] bytes = gbDeviceProtocol.encodeSendWeather(weatherSpec);
+    public void onSendWeather() {
+        byte[] bytes = gbDeviceProtocol.encodeSendWeather();
         sendToDevice(bytes);
     }
 

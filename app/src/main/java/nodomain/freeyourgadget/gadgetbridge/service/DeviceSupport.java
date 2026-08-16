@@ -19,6 +19,9 @@ package nodomain.freeyourgadget.gadgetbridge.service;
 import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 
+import androidx.annotation.CallSuper;
+import androidx.annotation.NonNull;
+
 import nodomain.freeyourgadget.gadgetbridge.devices.EventHandler;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
@@ -43,7 +46,9 @@ public interface DeviceSupport extends EventHandler {
      * @param btAdapter the bluetooth adapter to use
      * @param context   the android context, e.g. to look up resources
      */
-    void setContext(GBDevice gbDevice, BluetoothAdapter btAdapter, Context context);
+    void setContext(@NonNull GBDevice gbDevice,
+                    @NonNull BluetoothAdapter btAdapter,
+                    @NonNull Context context);
 
     /**
      * Returns whether a transport-level connection is established with the device
@@ -51,6 +56,13 @@ public interface DeviceSupport extends EventHandler {
      * @return whether the device is connected with the system running this software
      */
     boolean isConnected();
+
+    /**
+     * Returns whether a transport-level connection is being established with the device
+     *
+     * @return whether the device is connecting with the system running this software
+     */
+    boolean isConnecting();
 
     /**
      * Attempts an initial connection to the device, typically after the user "discovered"
@@ -92,11 +104,12 @@ public interface DeviceSupport extends EventHandler {
      * Disposes of this instance, closing all connections and freeing all resources.
      * Instances will not be reused after having been disposed.
      */
+    @CallSuper
     void dispose();
 
     /**
      * Returns true if a connection attempt shall be made automatically whenever
-     * needed (e.g. when a notification shall be sent to the device while not connected.
+     * needed (e.g. when a notification shall be sent to the device while not connected).
      */
     boolean useAutoConnect();
 
@@ -139,4 +152,18 @@ public interface DeviceSupport extends EventHandler {
      * converts String in a device specific way, e.g. re-map characters for a custom font
      */
     String customStringFilter(String inputString);
+
+    /**
+     * can this DeviceSupport instance's {@link #connect} be used to re-establish a
+     * lost connection or must {@link DeviceCommunicationService#connectToDevice} call
+     * {@link #dispose}, {@link DeviceSupportFactory#createDeviceSupport} and only
+     * then {@link #connect}
+     */
+    boolean canReconnect();
+
+    /**
+     * Returns the sender used to forward data to Sleep as Android, or null if this device
+     * does not support it.
+     */
+    SleepAsAndroidSender getSleepAsAndroidSender();
 }

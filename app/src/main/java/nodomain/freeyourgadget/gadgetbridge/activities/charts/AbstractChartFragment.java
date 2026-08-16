@@ -1,5 +1,6 @@
-/*  Copyright (C) 2015-2024 Andreas Shimokawa, Carsten Pfeiffer, Daniele
-    Gobbetti, Dikay900, José Rebelo, Pavel Elagin, Petr Vaněk, walkjivefly
+/*  Copyright (C) 2015-2026 Andreas Shimokawa, Carsten Pfeiffer, Daniele
+    Gobbetti, Dikay900, José Rebelo, Pavel Elagin, Petr Vaněk, walkjivefly,
+    Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -24,6 +25,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
 import android.text.format.DateUtils;
 import android.view.View;
 
@@ -41,13 +43,17 @@ import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.AbstractGBFragment;
 import nodomain.freeyourgadget.gadgetbridge.database.DBAccess;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
+import nodomain.freeyourgadget.gadgetbridge.devices.GenericMetricSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.model.MetricSample;
 import nodomain.freeyourgadget.gadgetbridge.util.DateTimeUtils;
 
 /**
@@ -72,6 +78,7 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
     protected final int ANIM_TIME = 250;
 
     private static final Logger LOG = LoggerFactory.getLogger(AbstractChartFragment.class);
+    private static final Map<ChartsHost, AbstractChartFragment<?>> LOADING_OWNERS = new WeakHashMap<>();
     @SuppressLint("SimpleDateFormat")
     protected final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
 
@@ -82,6 +89,8 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
             AbstractChartFragment.this.onReceive(context, intent);
         }
     };
+
+    private final Handler loadingHandler = new Handler();
 
     private boolean mChartDirty = true;
     private AsyncTask refreshTask;
@@ -140,24 +149,39 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
 
     @Override
     public void onDestroy() {
+        loadingHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
         LocalBroadcastManager.getInstance(requireActivity()).unregisterReceiver(mReceiver);
+    }
+
+    @Override
+    public void onDestroyView() {
+        loadingHandler.removeCallbacksAndMessages(null);
+        final FragmentActivity activity = getActivity();
+        if (activity instanceof ChartsHost) {
+            hideLoading((ChartsHost) activity);
+        }
+        if (refreshTask != null) {
+            refreshTask.cancel(true);
+            refreshTask = null;
+        }
+        super.onDestroyView();
     }
 
     /**
      * Called when this fragment has been fully scrolled into the activity.
      *
-     * @see #isVisibleInActivity()
-     * @see #onMadeInvisibleInActivity()
      */
     @Override
-    protected void onMadeVisibleInActivity() {
-        super.onMadeVisibleInActivity();
-        showDateBar(true);
-        updateDateInfo(getStartDate(), getEndDate());
-        if (mChartDirty) {
-            refresh();
+    public void onResume() {
+        if ((requireActivity() instanceof ChartsHost)) {
+            showDateBar(true);
+            updateDateInfo(getStartDate(), getEndDate());
+            if (mChartDirty) {
+                refresh();
+            }
         }
+        super.onResume();
     }
 
     protected ChartsHost getChartsHost() {
@@ -205,6 +229,12 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
     }
 
     protected void onReceive(Context context, Intent intent) {
+        final FragmentActivity fragmentActivity = requireActivity();
+        if (!(fragmentActivity instanceof ChartsHost)) {
+            LOG.error("{} is not an instance of ChartsHost, preventing crash", fragmentActivity.getClass());
+            return;
+        }
+
         String action = intent.getAction();
         if (ChartsHost.REFRESH.equals(action)) {
             updateDateInfo(getStartDate(), getEndDate());
@@ -242,7 +272,7 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
      * @param offset    the offset, in days
      */
     private void handleDate(Date startDate, Date endDate, Integer offset) {
-        if (isVisibleInActivity()) {
+        if (isResumed()) {
             if (!shiftDates(startDate, endDate, offset)) {
                 return;
             }
@@ -253,7 +283,7 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
     }
 
     private void refreshIfVisible() {
-        if (isVisibleInActivity()) {
+        if (isResumed()) {
             refresh();
         } else {
             mChartDirty = true;
@@ -327,11 +357,13 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
         ChartsHost chartsHost = getChartsHost();
         if (chartsHost != null) {
             if (chartsHost.getDevice() != null) {
+                // Delay the loading slightly to prevent quick flashes on fast loading
+                loadingHandler.postDelayed(() -> showLoading(chartsHost), 300L);
                 mChartDirty = false;
                 if (refreshTask != null && refreshTask.getStatus() != AsyncTask.Status.FINISHED) {
                     refreshTask.cancel(true);
                 }
-                refreshTask = createRefreshTask("Visualizing data", getActivity()).execute();
+                refreshTask = createRefreshTask("Visualizing data", getActivity()).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
             }
         }
     }
@@ -345,7 +377,7 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
         private D chartsData;
 
         public RefreshTask(final String task, final Context context) {
-            super(task, context);
+            super(task, context, false);
         }
 
         @Override
@@ -362,13 +394,36 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
         protected void onPostExecute(final Object o) {
             super.onPostExecute(o);
             final FragmentActivity activity = getActivity();
-            if (activity != null && !activity.isFinishing() && !activity.isDestroyed()) {
-                updateChartsnUIThread(chartsData);
-                renderCharts();
-            } else {
+            if (activity == null || activity.isFinishing() || activity.isDestroyed() || getView() == null) {
                 LOG.info("Not rendering charts because activity is not available anymore");
+                return;
             }
+
+            loadingHandler.removeCallbacksAndMessages(null);
+            hideLoading(getChartsHost());
+
+            if (getTaskError() != null) {
+                // Async task failed - we will have no data, so avoid NPE crashes
+                // a log + toast were already displayed by the DBAccess class
+                return;
+            }
+
+            updateChartsnUIThread(chartsData);
+            renderCharts();
         }
+    }
+
+    private void showLoading(final ChartsHost chartsHost) {
+        LOADING_OWNERS.put(chartsHost, this);
+        chartsHost.setLoading(true);
+    }
+
+    private void hideLoading(final ChartsHost chartsHost) {
+        if (LOADING_OWNERS.get(chartsHost) != this) {
+            return;
+        }
+        LOADING_OWNERS.remove(chartsHost);
+        chartsHost.setLoading(false);
     }
 
     /**
@@ -399,5 +454,10 @@ public abstract class AbstractChartFragment<D extends ChartsData> extends Abstra
         } else {
             getChartsHost().setDateInfo(DateTimeUtils.formatDateRange(from, to, dateFlags));
         }
+    }
+
+    public boolean supportsMetrics(MetricSample.Metric metric) {
+        final GBDevice device = getChartsHost().getDevice();
+        return GenericMetricSampleProvider.supportsMetrics(device, metric);
     }
 }

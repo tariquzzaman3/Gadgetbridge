@@ -1,5 +1,5 @@
-/*  Copyright (C) 2019-2024 Andreas Shimokawa, Damien Gaignon, Daniel Dakhno,
-    José Rebelo, mamucho, mkusnierz, Petr Vaněk
+/*  Copyright (C) 2019-2025 Andreas Shimokawa, Damien Gaignon, Daniel Dakhno,
+    José Rebelo, mamucho, mkusnierz, Petr Vaněk, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -17,11 +17,12 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.lenovo.watchxplus;
 
+import static nodomain.freeyourgadget.gadgetbridge.GBApplication.getContext;
+
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.bluetooth.le.ScanFilter;
-import android.content.Context;
 import android.content.SharedPreferences;
-import android.net.Uri;
 import android.os.ParcelUuid;
 
 import androidx.annotation.NonNull;
@@ -36,36 +37,33 @@ import java.util.Calendar;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.Map;
 
+import de.greenrobot.dao.AbstractDao;
+import de.greenrobot.dao.Property;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLEDeviceCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.devices.SampleProvider;
-import nodomain.freeyourgadget.gadgetbridge.devices.lenovo.LenovoWatchCalibrationActivity;
-import nodomain.freeyourgadget.gadgetbridge.devices.lenovo.LenovoWatchPairingActivity;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
+import nodomain.freeyourgadget.gadgetbridge.entities.WatchXPlusActivitySampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.WatchXPlusHealthActivityOverlayDao;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySample;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.ServiceDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.lenovo.watchxplus.WatchXPlusDeviceSupport;
-import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
-
-import static nodomain.freeyourgadget.gadgetbridge.GBApplication.getContext;
 
 
 public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
-    private static final Logger LOG = LoggerFactory.getLogger(WatchXPlusDeviceSupport.class);
+    private static final Logger LOG = LoggerFactory.getLogger(WatchXPlusDeviceCoordinator.class);
+
     private static final int FindPhone_ON = -1;
     public static final int FindPhone_OFF = 0;
     public static boolean isBPCalibrated = false;
-
-    private static final Prefs prefs  = GBApplication.getPrefs();
 
     @NonNull
     @Override
@@ -76,16 +74,11 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    protected void deleteDevice(@NonNull GBDevice gbDevice, @NonNull Device device, @NonNull DaoSession session) {
-
-    }
-
-    @Override
     public int getBondingStyle() {
         return BONDING_STYLE_NONE;
     }
 
-    @NonNull
+    /** @noinspection RedundantIfStatement*/
     @Override
     public boolean supports(GBDeviceCandidate candidate) {
         String macAddress = candidate.getMacAddress().toUpperCase();
@@ -111,12 +104,20 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsActivityDataFetching() {
+    public String[] getSupportedLanguageSettings(final GBDevice device) {
+        return new String[]{
+                "zh_CN",
+                "en_US",
+        };
+    }
+
+    @Override
+    public boolean supportsDataFetching(@NonNull final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsActivityTracking() {
+    public boolean supportsActivityTracking(@NonNull GBDevice device) {
         return true;
     }
 
@@ -126,22 +127,12 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public InstallHandler findInstallHandler(Uri uri, Context context) {
-        return null;
-    }
-
-    @Override
-    public boolean supportsScreenshots(final GBDevice device) {
-        return false;
-    }
-
-    @Override
     public int getAlarmSlotCount(GBDevice device) {
         return 3;
     }
 
     @Override
-    public boolean supportsHeartRateMeasurement(GBDevice device) {
+    public boolean supportsHeartRateMeasurement(@NonNull GBDevice device) {
         return true;
     }
 
@@ -151,29 +142,9 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public boolean supportsAppsManagement(final GBDevice device) {
-        return false;
-    }
-
-    @Override
-    public Class<? extends Activity> getAppsManagementActivity() {
-        return null;
-    }
-
-    @Override
-    public boolean supportsCalendarEvents() {
-        return false;
-    }
-
-    @Override
-    public boolean supportsRealtimeData() { return false; }
-    @Override
-    public boolean supportsWeather() {
+    public boolean supportsWeather(@NonNull final GBDevice device) {
         return true;
     }
-
-    @Override
-    public boolean supportsFindDevice() { return false; }
 
     @Override
     public int[] getSupportedDeviceSpecificSettings(GBDevice device) {
@@ -192,7 +163,7 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return WatchXPlusDeviceSupport.class;
     }
 
@@ -208,7 +179,6 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
     public static int getFindPhone(SharedPreferences sharedPrefs) {
         String findPhone = sharedPrefs.getString(DeviceSettingsPreferenceConst.PREF_FIND_PHONE, getContext().getString(R.string.p_off));
 
-        assert findPhone != null;
         if (findPhone.equals(getContext().getString(R.string.p_off))) {
             return FindPhone_OFF;
         } else if (findPhone.equals(getContext().getString(R.string.p_on))) {
@@ -220,30 +190,29 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
                 int iDuration;
 
                 try {
-                    assert duration != null;
-                    iDuration = Integer.valueOf(duration);
+                    iDuration = Integer.parseInt(duration);
                 } catch (Exception ex) {
                     iDuration = 60;
                 }
 
                 return iDuration;
             } catch (Exception e) {
+                LOG.error("Failed to parse find phone time", e);
                 return FindPhone_ON;
             }
         }
     }
 
-
     /**
      * @param startOut out Only hour/minute are used.
      * @param endOut   out Only hour/minute are used.
      * @return True if DND hours are enabled.
+     * @noinspection DataFlowIssue
      */
     public static boolean getDNDHours(String deviceAddress, Calendar startOut, Calendar endOut) {
         SharedPreferences prefs = GBApplication.getDeviceSpecificSharedPrefs(deviceAddress);
         String doNotDisturb = prefs.getString(DeviceSettingsPreferenceConst.PREF_DO_NOT_DISTURB_NOAUTO, getContext().getString(R.string.p_off));
 
-        assert doNotDisturb != null;
         if (doNotDisturb.equals(getContext().getString(R.string.p_off))) {
             LOG.info(" DND is disabled ");
             return false;
@@ -252,7 +221,7 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
             String start = prefs.getString(DeviceSettingsPreferenceConst.PREF_DO_NOT_DISTURB_NOAUTO_START, "01:00");
             String end = prefs.getString(DeviceSettingsPreferenceConst.PREF_DO_NOT_DISTURB_NOAUTO_END, "06:00");
 
-            DateFormat df = new SimpleDateFormat("HH:mm");
+            @SuppressLint("SimpleDateFormat") DateFormat df = new SimpleDateFormat("HH:mm");
 
             try {
                 startOut.setTime(df.parse(start));
@@ -260,6 +229,7 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
 
                 return true;
             } catch (Exception e) {
+                LOG.error("Failed to parse dnd hours", e);
                 return false;
             }
         }
@@ -269,6 +239,7 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
      * @param startOut out Only hour/minute are used.
      * @param endOut   out Only hour/minute are used.
      * @return True if DND hours are enabled.
+     * @noinspection DataFlowIssue
      */
     public static boolean getLongSitHours(String deviceAddress, Calendar startOut, Calendar endOut) {
         SharedPreferences prefs = GBApplication.getDeviceSpecificSharedPrefs(deviceAddress);
@@ -281,7 +252,7 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
             String start = prefs.getString(DeviceSettingsPreferenceConst.PREF_INACTIVITY_START, "06:00");
             String end = prefs.getString(DeviceSettingsPreferenceConst.PREF_INACTIVITY_END, "23:00");
 
-            DateFormat df = new SimpleDateFormat("HH:mm");
+            @SuppressLint("SimpleDateFormat") DateFormat df = new SimpleDateFormat("HH:mm");
 
             try {
                 startOut.setTime(df.parse(start));
@@ -289,6 +260,7 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
 
                 return true;
             } catch (Exception e) {
+                LOG.error("Failed to parse long sit hours", e);
                 return false;
             }
         }
@@ -300,12 +272,10 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
         return LenovoWatchCalibrationActivity.class;
     }
 
-
     @Override
     public int getDeviceNameResource() {
         return R.string.devicetype_watchxplus;
     }
-
 
     @Override
     public int getDefaultIconResource() {
@@ -313,7 +283,15 @@ public class WatchXPlusDeviceCoordinator extends AbstractBLEDeviceCoordinator {
     }
 
     @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_watchxplus_disabled;
+    public Map<AbstractDao<?, ?>, Property> getAllDeviceDao(@NonNull final DaoSession session) {
+        Map<AbstractDao<?, ?>, Property> map = new HashMap<>(2);
+        map.put(session.getWatchXPlusActivitySampleDao(), WatchXPlusActivitySampleDao.Properties.DeviceId);
+        map.put(session.getWatchXPlusHealthActivityOverlayDao(), WatchXPlusHealthActivityOverlayDao.Properties.DeviceId);
+        return map;
+    }
+
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.WATCH;
     }
 }

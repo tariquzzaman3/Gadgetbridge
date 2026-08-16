@@ -1,6 +1,6 @@
-/*  Copyright (C) 2015-2024 Andreas Böhler, Andreas Shimokawa, Carsten
+/*  Copyright (C) 2015-2025 Andreas Böhler, Andreas Shimokawa, Carsten
     Pfeiffer, Cre3per, Daniel Dakhno, Daniele Gobbetti, Gordon Williams, José
-    Rebelo, Sergey Trofimov, Taavi Eomäe, Uwe Hermann, Yoran Vulker
+    Rebelo, Sergey Trofimov, Taavi Eomäe, Uwe Hermann, Yoran Vulker, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -31,76 +31,91 @@ import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
-import nodomain.freeyourgadget.gadgetbridge.Logging;
+import nodomain.freeyourgadget.gadgetbridge.GBExceptionHandler;
+import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice.State;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.WriteAction;
+import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 /**
  * One queue/thread per connectable device.
  */
 @SuppressLint("MissingPermission") // if we're using this, we have bluetooth permissions
-public final class BtLEQueue {
-    private static final Logger LOG = LoggerFactory.getLogger(BtLEQueue.class);
+public final class BtLEQueue implements Thread.UncaughtExceptionHandler {
+    private final Logger LOG;
+    private static final byte[] EMPTY = new byte[0];
+    private static final AtomicLong QUEUE_COUNTER = new AtomicLong(0L);
+    private static final AtomicLong THREAD_COUNTER = new AtomicLong(0L);
+    private static final long SERVER_ACTION_RESULT_TIMEOUT_SECONDS = 30L;
 
-    private final Object mGattMonitor = new Object();
+    private final Object mGattMonitor;
     private final GBDevice mGbDevice;
     private final BluetoothAdapter mBluetoothAdapter;
     private BluetoothGatt mBluetoothGatt;
     private BluetoothGattServer mBluetoothGattServer;
-    private final Set<BluetoothGattService> mSupportedServerServices;
+    private final Set<? extends BluetoothGattService> mSupportedServerServices;
 
-    private final BlockingQueue<AbstractTransaction> mTransactions = new LinkedBlockingQueue<>();
-    private volatile boolean mDisposed;
-    private volatile boolean mCrashed;
+    private final BlockingDeque<AbstractTransaction> mTransactions;
+    private final AtomicBoolean mDisposed;
     private volatile boolean mAbortTransaction;
     private volatile boolean mAbortServerTransaction;
-    private volatile boolean mPauseTransaction = false;
+    private volatile boolean mPauseTransaction;
 
     private final Context mContext;
     private CountDownLatch mWaitForActionResultLatch;
     private CountDownLatch mWaitForServerActionResultLatch;
     private CountDownLatch mConnectionLatch;
     private BluetoothGattCharacteristic mWaitCharacteristic;
-    private final InternalGattCallback internalGattCallback;
+    private final NoThrowBluetoothGattCallback<InternalGattCallback> internalGattCallback;
     private final InternalGattServerCallback internalGattServerCallback;
-    private boolean mAutoReconnect;
-    private boolean scanReconnect;
-    private boolean mImplicitGattCallbackModify = true;
-    private boolean mSendWriteRequestResponse = false;
+    private final AbstractBTLEDeviceSupport mDeviceSupport;
+    private final boolean mImplicitGattCallbackModify;
+    private final boolean mSendWriteRequestResponse;
 
-    private Thread dispatchThread = new Thread("Gadgetbridge GATT Dispatcher") {
+    private final boolean connectionForceLegacyGatt;
+    private final Thread mDispatchThread;
+    private final HandlerThread mReceiverThread;
+    private final Handler mReceiverHandler;
+    private final Handler mGattConnectTimeoutHandler;
 
+    private class DispatchRunnable implements Runnable {
         @Override
         public void run() {
-            LOG.debug("Queue Dispatch Thread started.");
+            LOG.debug("started thread {} for {}", Thread.currentThread().getName(), mGbDevice.getAddress());
+            boolean crashed = false;
 
-            while (!mDisposed && !mCrashed) {
+            while (!mDisposed.get() && !crashed) {
                 try {
-                    AbstractTransaction qTransaction = mTransactions.take();
+                    AbstractTransaction qTransaction = mTransactions.takeFirst();
 
                     if (!isConnected()) {
                         LOG.debug("not connected, waiting for connection...");
                         // TODO: request connection and initialization from the outside and wait until finished
-                        internalGattCallback.reset();
+                        internalGattCallback.Delegate.reset();
 
                         // wait until the connection succeeds before running the actions
                         // Note that no automatic connection is performed. This has to be triggered
@@ -112,24 +127,31 @@ public final class BtLEQueue {
                         mConnectionLatch = null;
                     }
 
-                    if(qTransaction instanceof ServerTransaction) {
-                        ServerTransaction serverTransaction = (ServerTransaction)qTransaction;
+                    if (qTransaction instanceof final ServerTransaction serverTransaction) {
                         internalGattServerCallback.setTransactionGattCallback(serverTransaction.getGattCallback());
                         mAbortServerTransaction = false;
 
-                        for (BtLEServerAction action : serverTransaction.getActions()) {
+                        for (final BtLEServerAction action : serverTransaction.getActions()) {
                             if (mAbortServerTransaction) { // got disconnected
                                 LOG.info("Aborting running server transaction");
                                 break;
                             }
                             if (LOG.isDebugEnabled()) {
-                                LOG.debug("About to run server action: " + action);
+                                LOG.debug("execute server: {}", action);
                             }
+                            // Create latch BEFORE running the action, because the
+                            // callback (e.g. onNotificationSent) may fire immediately
+                            // on the same thread or a different one.
+                            mWaitForServerActionResultLatch = new CountDownLatch(1);
                             if (action.run(mBluetoothGattServer)) {
                                 // check again, maybe due to some condition, action did not need to write, so we can't wait
                                 boolean waitForResult = action.expectsResult();
                                 if (waitForResult) {
-                                    mWaitForServerActionResultLatch.await();
+                                    if (!mWaitForServerActionResultLatch.await(SERVER_ACTION_RESULT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                                        LOG.error("Timed out waiting for server action result: {}", action);
+                                        mAbortServerTransaction = true;
+                                        handleDisconnected(0x93 /* BluetoothGatt.GATT_CONNECTION_TIMEOUT */);
+                                    }
                                     mWaitForServerActionResultLatch = null;
                                     if (mAbortServerTransaction) {
                                         break;
@@ -137,20 +159,20 @@ public final class BtLEQueue {
                                 }
                             } else {
                                 LOG.error("Server action returned false: {}", action);
+                                mWaitForServerActionResultLatch = null;
                                 break; // abort the transaction
                             }
                         }
                     }
 
-                    if(qTransaction instanceof Transaction) {
-                        Transaction transaction = (Transaction)qTransaction;
+                    if (qTransaction instanceof final Transaction transaction) {
                         LOG.trace("Changing gatt callback for {}? {}", transaction.getTaskName(), transaction.isModifyGattCallback());
                         if (mImplicitGattCallbackModify || transaction.isModifyGattCallback()) {
-                            internalGattCallback.setTransactionGattCallback(transaction.getGattCallback());
+                            internalGattCallback.Delegate.setTransactionGattCallback(transaction.getGattCallback());
                         }
                         mAbortTransaction = false;
                         // Run all actions of the transaction until one doesn't succeed
-                        for (BtLEAction action : transaction.getActions()) {
+                        for (final BtLEAction action : transaction.getActions()) {
                             if (mAbortTransaction) { // got disconnected
                                 LOG.info("Aborting running transaction");
                                 break;
@@ -158,21 +180,21 @@ public final class BtLEQueue {
                             while ((action instanceof WriteAction) && mPauseTransaction && !mAbortTransaction) {
                               LOG.info("Pausing WriteAction");
                               try {
-                                  Thread.sleep(100);
+                                  Thread.sleep(100L);
                               } catch (Exception e) {
-                                  LOG.info("Exception during pause: {}", e);
+                                  LOG.info("Exception during pause", e);
                                   break;
                               }
                             }
                             mWaitCharacteristic = action.getCharacteristic();
                             mWaitForActionResultLatch = new CountDownLatch(1);
                             if (LOG.isDebugEnabled()) {
-                                LOG.debug("About to run action: " + action);
+                                LOG.debug("execute: {}", action);
                             }
-                            if (action instanceof GattListenerAction) {
+                            if (action instanceof final GattListenerAction listenerAction) {
                                 // this special action overwrites the transaction gatt listener (if any), it must
                                 // always be the last action in the transaction
-                                internalGattCallback.setTransactionGattCallback(((GattListenerAction) action).getGattCallback());
+                                internalGattCallback.Delegate.setTransactionGattCallback(listenerAction.getGattCallback());
                             }
                             if (action.run(mBluetoothGatt)) {
                                 // check again, maybe due to some condition, action did not need to write, so we can't wait
@@ -192,53 +214,82 @@ public final class BtLEQueue {
                     }
                 } catch (InterruptedException ignored) {
                     mConnectionLatch = null;
-                    LOG.debug("Thread interrupted");
+                    LOG.debug("Queue Dispatch Thread interrupted");
                 } catch (Throwable ex) {
                     LOG.error("Queue Dispatch Thread died", ex);
-                    mCrashed = true;
+                    crashed = true;
                     mConnectionLatch = null;
                 } finally {
                     mWaitForActionResultLatch = null;
                     mWaitCharacteristic = null;
                 }
             }
-            LOG.info("Queue Dispatch Thread terminated.");
+            LOG.debug("finished thread {}", Thread.currentThread().getName());
         }
-    };
+    }
 
-    public BtLEQueue(BluetoothAdapter bluetoothAdapter, GBDevice gbDevice, GattCallback externalGattCallback, GattServerCallback externalGattServerCallback, Context context, Set<BluetoothGattService> supportedServerServices) {
-        mBluetoothAdapter = bluetoothAdapter;
+    BtLEQueue(GBDevice gbDevice, Set<? extends BluetoothGattService> supportedServerServices, AbstractBTLEDeviceSupport deviceSupport) {
+        final long threadIdx = THREAD_COUNTER.getAndIncrement();
+
+        LOG = LoggerFactory.getLogger(BtLEQueue.class.getName() + "(" + QUEUE_COUNTER.getAndIncrement() + ")");
+
+        LOG.debug("Initializing queue for {} with threadIdx={}", gbDevice.getAddress(), threadIdx);
+
+        // 1) apply all settings
+        mBluetoothAdapter = deviceSupport.getBluetoothAdapter();
+        mContext = deviceSupport.getContext();
+        mDeviceSupport = deviceSupport;
         mGbDevice = gbDevice;
-        internalGattCallback = new InternalGattCallback(externalGattCallback);
-        internalGattServerCallback = new InternalGattServerCallback(externalGattServerCallback);
-        mContext = context;
+        mImplicitGattCallbackModify = deviceSupport.getImplicitCallbackModify();
+        mPauseTransaction = false;
+        mSendWriteRequestResponse = deviceSupport.getSendWriteRequestResponse();
         mSupportedServerServices = supportedServerServices;
+        // #5414 - some older android versions misbehave with the new constructor
+        connectionForceLegacyGatt = deviceSupport.getDevicePrefs().getConnectionForceLegacyGatt();
+        mGattConnectTimeoutHandler = new Handler(Looper.getMainLooper());
 
-        dispatchThread.start();
+        // 2) create new objects
+        mDisposed = new AtomicBoolean(false);
+        mGattMonitor = new Object();
+        mTransactions = new LinkedBlockingDeque<>();
+        internalGattCallback = new NoThrowBluetoothGattCallback<>(new InternalGattCallback(deviceSupport));
+        internalGattServerCallback = new InternalGattServerCallback(deviceSupport);
+        mDispatchThread = new Thread(new DispatchRunnable(), "BtLEQueue_" + threadIdx + "_out");
+        mDispatchThread.setUncaughtExceptionHandler(this);
+
+        // 3) start the thread
+        mDispatchThread.start();
+
+        // 4) handler thread ensure serial processing and informative thread name in the log
+        if (GBApplication.isRunningOreoOrLater() && !connectionForceLegacyGatt) {
+            mReceiverThread = new HandlerThread("BtLEQueue_" + threadIdx + "_in");
+            mReceiverThread.setUncaughtExceptionHandler(this);
+            mReceiverThread.start();
+            mReceiverHandler = new Handler(mReceiverThread.getLooper());
+            mReceiverHandler.post(() -> LOG.debug("started thread {} for {}", Thread.currentThread().getName(), gbDevice.getAddress()));
+        } else {
+            mReceiverThread = null;
+            mReceiverHandler = null;
+        }
     }
 
-    public void setAutoReconnect(boolean enable) {
-        mAutoReconnect = enable;
+    @Override
+    public void uncaughtException(@NonNull Thread t, @NonNull Throwable e) {
+        LOG.error("exception in {}", t.getName(), e);
+
+        // TODO implement actual exception handling for mDispatchThread and mReceiverThread
+        new GBExceptionHandler(null, true).uncaughtException(t, e);
     }
 
-    public void setScanReconnect(boolean enable){
-        this.scanReconnect = enable;
-    }
-
-    public void setImplicitGattCallbackModify(final boolean enable) {
-        mImplicitGattCallbackModify = enable;
-    }
-
-    public void setSendWriteRequestResponse(final boolean enable) {
-        mSendWriteRequestResponse = enable;
-    }
-
-    private boolean isConnected() {
-        if (mGbDevice.isConnected()) {
+    boolean isConnected() {
+        State state = mGbDevice.getState();
+        boolean gatt = (mBluetoothGatt != null);
+        boolean dispatch = mDispatchThread.isAlive();
+        boolean receiver = (mReceiverThread == null || mReceiverThread.isAlive());
+        if (state.equalsOrHigherThan(State.CONNECTED) && gatt && dispatch && receiver) {
             return true;
         }
-
-        LOG.debug("isConnected(): current state = {}", mGbDevice.getState());
+        LOG.debug("not connected: state={} gatt={} dispatch={} receiver={}", state, gatt, dispatch, receiver);
         return false;
     }
 
@@ -249,21 +300,52 @@ public final class BtLEQueue {
      *
      * @return <code>true</code> whether the connection attempt was successfully triggered and <code>false</code> if that failed or if there is already a connection
      */
-    public boolean connect() {
-        mPauseTransaction = false;
-        if (isConnected()) {
-            LOG.warn("Ingoring connect() because already connected.");
-            return false;
-        }
+    boolean connect() {
         synchronized (mGattMonitor) {
-            if (mBluetoothGatt != null) {
-                // Tribal knowledge says you're better off not reusing existing BluetoothGatt connections,
-                // so create a new one.
-                LOG.info("connect() requested -- disconnecting previous connection: " + mGbDevice.getName());
-                disconnect();
+            State state = mGbDevice.getState();
+            if (state.equalsOrHigherThan(State.CONNECTING)) {
+                LOG.warn("connect - ignored, state is {}", state);
+                return false;
+            } else if (mBluetoothGatt != null) {
+                LOG.warn("connect - ignored, mBluetoothGatt isn't null");
+                return false;
+            } else if (mDisposed.get()) {
+                LOG.error("connect - queue has already been disposed");
+                String message = mContext.getString(R.string.error_queue_is_dead);
+                throw new IllegalStateException(message);
+            } else if (!mDispatchThread.isAlive()) {
+                LOG.error("connect - mDispatchThread {} is dead", mDispatchThread.getName());
+                String message = mContext.getString(R.string.error_sender_is_dead);
+                throw new IllegalStateException(message);
+            } else if (mReceiverThread != null && !mReceiverThread.isAlive()) {
+                LOG.error("connect - mReceiverThread {} is dead", mReceiverThread.getName());
+                String message = mContext.getString(R.string.error_receiver_is_dead);
+                throw new IllegalStateException(message);
+            }
+
+            if (connectImp()) {
+                setDeviceConnectionState(State.CONNECTING);
+                return true;
+            } else {
+                return false;
             }
         }
+    }
+
+    private boolean connectImp() {
+        mPauseTransaction = false;
+
         LOG.info("Attempting to connect to {}", mGbDevice.getName());
+
+        final boolean lowPower = GBApplication.getDevicePrefs(mGbDevice).getConnectionPriorityLowPower();
+        // 30 seconds: the longest allowed ATT transaction timeout
+        // 32 seconds: the longest allowed BLE connection timeout for an established  connection (supervision timeout)
+        // => wait a few more seconds for establishing a new connection
+        mGattConnectTimeoutHandler.postDelayed(() -> {
+            LOG.warn("Timed out connecting to GATT for {}", mGbDevice.getName());
+            handleDisconnected(0x93 /* BluetoothGatt.GATT_CONNECTION_TIMEOUT */);
+        }, lowPower ? 45000L : 5000L);
+
         mBluetoothAdapter.cancelDiscovery();
         BluetoothDevice remoteDevice = mBluetoothAdapter.getRemoteDevice(mGbDevice.getAddress());
         if(!mSupportedServerServices.isEmpty()) {
@@ -282,131 +364,169 @@ public final class BtLEQueue {
             }
         }
 
-        synchronized (mGattMonitor) {
-            // connectGatt with true doesn't really work ;( too often connection problems
-            if (GBApplication.isRunningMarshmallowOrLater()) {
-                mBluetoothGatt = remoteDevice.connectGatt(mContext, false, internalGattCallback, BluetoothDevice.TRANSPORT_LE);
-            } else {
-                mBluetoothGatt = remoteDevice.connectGatt(mContext, false, internalGattCallback);
-            }
+
+        // connectGatt with true doesn't really work ;( too often connection problems
+        if (GBApplication.isRunningOreoOrLater() && !connectionForceLegacyGatt) {
+            mBluetoothGatt = remoteDevice.connectGatt(mContext, false,
+                    internalGattCallback, BluetoothDevice.TRANSPORT_LE,
+                    mGbDevice.getDeviceCoordinator().getBlePhyMask(), mReceiverHandler);
+        } else {
+            mBluetoothGatt = remoteDevice.connectGatt(mContext, false,
+                    internalGattCallback, BluetoothDevice.TRANSPORT_LE);
         }
-        boolean result = mBluetoothGatt != null;
-        if (result) {
-            setDeviceConnectionState(State.CONNECTING);
-        }
-        return result;
+
+        return mBluetoothGatt != null;
     }
 
     private void setDeviceConnectionState(final State newState) {
-        new Handler(Looper.getMainLooper()).post(() -> {
-            LOG.debug("new device connection state: {}", newState);
-            mGbDevice.setState(newState);
-            mGbDevice.sendDeviceUpdateIntent(mContext, GBDevice.DeviceUpdateSubject.CONNECTION_STATE);
-        });
+        LOG.debug("new device connection state: {}", newState);
+        mGbDevice.setState(newState);
+        mGbDevice.sendDeviceUpdateIntent(mContext, GBDevice.DeviceUpdateSubject.CONNECTION_STATE);
     }
 
-    public void disconnect() {
+    void disconnect() {
+        LOG.debug("disconnecting");
         synchronized (mGattMonitor) {
-            LOG.debug("disconnect()");
+            mGattConnectTimeoutHandler.removeCallbacksAndMessages(null);
             BluetoothGatt gatt = mBluetoothGatt;
             if (gatt != null) {
                 mBluetoothGatt = null;
-                LOG.info("Disconnecting BtLEQueue from GATT device");
+                LOG.info("disconnecting BluetoothGatt");
                 gatt.disconnect();
                 gatt.close();
-                setDeviceConnectionState(State.NOT_CONNECTED);
             }
             mPauseTransaction = false;
             BluetoothGattServer gattServer = mBluetoothGattServer;
             if (gattServer != null) {
                 mBluetoothGattServer = null;
+                LOG.info("disconnecting BluetoothGattServer");
                 gattServer.clearServices();
                 gattServer.close();
+            }
+
+            if (mGbDevice.getState() != State.NOT_CONNECTED) {
+                setDeviceConnectionState(State.NOT_CONNECTED);
             }
         }
     }
 
     private void handleDisconnected(int status) {
-        LOG.debug("handleDisconnected: {}", status);
-        internalGattCallback.reset();
+        LOG.debug("handleDisconnected: {}", BleNamesResolver.getStatusString(status));
+        internalGattCallback.Delegate.reset();
         mTransactions.clear();
         mPauseTransaction = false;
         mAbortTransaction = true;
         mAbortServerTransaction = true;
-        if (mWaitForActionResultLatch != null) {
-            mWaitForActionResultLatch.countDown();
+        mGattConnectTimeoutHandler.removeCallbacksAndMessages(null);
+        final CountDownLatch clientLatch = mWaitForActionResultLatch;
+        if (clientLatch != null) {
+            clientLatch.countDown();
         }
-        if (mWaitForServerActionResultLatch != null) {
-            mWaitForServerActionResultLatch.countDown();
+        final CountDownLatch serverLatch = mWaitForServerActionResultLatch;
+        if (serverLatch != null) {
+            serverLatch.countDown();
         }
 
-        setDeviceConnectionState(State.NOT_CONNECTED);
+        boolean forceDisconnect;
+        //noinspection EnhancedSwitchMigration
+        switch(status) {
+            case 0x81: // 0x81 129 GATT_INTERNAL_ERROR
+            case 0x85: // 0x85 133 GATT_ERROR
+                // Bluetooth stack has a fundamental problem:
+            case 0x8: // BluetoothGatt.GATT_INSUFFICIENT_AUTHORIZATION only on API 35
+            case BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION:
+            case BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION:
+                // a Bluetooth bonding / pairing issue
+                // some devices report AUTHORIZATION instead of TIMEOUT during connection setup
+            case 0x93: // BluetoothGatt.GATT_CONNECTION_TIMEOUT only on API 35
+                forceDisconnect = true;
+                break;
+            default:
+                forceDisconnect = false;
+        }
 
-        // either we've been disconnected because the device is out of range
-        // or because of an explicit @{link #disconnect())
-        // To support automatic reconnection, we keep the mBluetoothGatt instance
-        // alive (we do not close() it). Unfortunately we sometimes have problems
-        // reconnecting automatically, so we try to fix this by re-creating mBluetoothGatt.
-        // Not sure if this actually works without re-initializing the device...
-        if (mBluetoothGatt != null) {
-            if (!maybeReconnect()) {
-                disconnect(); // ensure that we start over cleanly next time
+        if (forceDisconnect) {
+            // TODO: There is likely a race condition, the device and the gatt object should not be
+            // null at this point. For multi queue objects, this seems to break, don't remove this
+            // check.
+            BluetoothDevice device = null;
+            if (mBluetoothGatt != null) {
+                device = mBluetoothGatt.getDevice();
+            }
+            LOG.warn("unhealthy disconnect {} {}", device == null ?  "<UNKNOWN>" : device.getAddress(),
+                    BleNamesResolver.getStatusString(status));
+        } else if (mBluetoothGatt != null) {
+            // try to reconnect immediately
+            if (mDeviceSupport.getAutoReconnect()) {
+                if (mDeviceSupport.getScanReconnect()) {
+                    // connect() would first disconnect() anyway
+                    forceDisconnect = true;
+                } else {
+                    LOG.info("enabling automatic immediate BLE reconnection");
+                    mPauseTransaction = false;
+                    if (mBluetoothGatt.connect()) {
+                        setDeviceConnectionState(State.CONNECTING);
+                    } else {
+                        forceDisconnect = true;
+                    }
+                }
+            } else {
+                forceDisconnect = true;
             }
         }
-    }
 
-    /**
-     * Depending on certain criteria, connects to the BluetoothGatt.
-     *
-     * @return true if a reconnection attempt was made, or false otherwise
-     */
-    private boolean maybeReconnect() {
-        if (mAutoReconnect && mBluetoothGatt != null) {
-            if(scanReconnect){
-                LOG.info("Waiting for BLE scan before attempting reconnection...");
-                setDeviceConnectionState(State.WAITING_FOR_SCAN);
-                return true;
-            }
-
-            LOG.info("Enabling automatic ble reconnect...");
-            boolean result = mBluetoothGatt.connect();
-            mPauseTransaction = false;
-            if (result) {
-                setDeviceConnectionState(State.WAITING_FOR_RECONNECT);
-            }
-            return result;
+        if (forceDisconnect) {
+            disconnect();
         }
-        return false;
+
+        if (mBluetoothGatt == null) {
+            if (mDeviceSupport.getAutoReconnect()) {
+                // don't reconnect immediately to give the Bluetooth stack some time to settle down
+                // use BluetoothConnectReceiver or AutoConnectIntervalReceiver instead
+                if (mDeviceSupport.getScanReconnect()) {
+                    LOG.info("waiting for BLE scan before attempting reconnection");
+                    setDeviceConnectionState(State.WAITING_FOR_SCAN);
+                } else {
+                    LOG.info("enabling automatic delayed BLE reconnection");
+                    setDeviceConnectionState(State.WAITING_FOR_RECONNECT);
+                }
+            } else if (!forceDisconnect) {
+                setDeviceConnectionState(State.NOT_CONNECTED);
+            }
+        }
     }
 
     public void setPaused(boolean paused) {
       mPauseTransaction = paused;
     }
 
-    public void dispose() {
-        if (mDisposed) {
+    void dispose() {
+        if (mDisposed.getAndSet(true)) {
+            LOG.warn("dispose() was called repeatedly");
             return;
         }
-        mDisposed = true;
-//        try {
+
         disconnect();
-        dispatchThread.interrupt();
-        dispatchThread = null;
-//            dispatchThread.join();
-//        } catch (InterruptedException ex) {
-//            LOG.error("Exception while disposing BtLEQueue", ex);
-//        }
+
+        if (mReceiverThread != null && mReceiverThread.isAlive()) {
+            mReceiverHandler.post(() -> {
+                LOG.debug("finish thread {}", Thread.currentThread().getName());
+                mReceiverThread.quitSafely();
+            });
+        }
+
+        if (mDispatchThread != null) {
+            mDispatchThread.interrupt();
+        }
     }
 
     /**
      * Adds a transaction to the end of the queue.
-     *
-     * @param transaction
      */
-    public void add(Transaction transaction) {
-        LOG.debug("about to add: {}", transaction);
+    void add(Transaction transaction) {
+        LOG.debug("add: {}", transaction);
         if (!transaction.isEmpty()) {
-            mTransactions.add(transaction);
+            mTransactions.addLast(transaction);
         }
     }
 
@@ -415,20 +535,19 @@ public final class BtLEQueue {
      */
     public void abortCurrentTransaction() {
         mAbortTransaction = true;
-        if (mWaitForActionResultLatch != null) {
-            mWaitForActionResultLatch.countDown();
+        final CountDownLatch latch = mWaitForActionResultLatch;
+        if (latch != null) {
+            latch.countDown();
         }
     }
 
     /**
      * Adds a serverTransaction to the end of the queue
-     *
-     * @param transaction
      */
-    public void add(ServerTransaction transaction) {
-        LOG.debug("about to add: {}", transaction);
+    void add(ServerTransaction transaction) {
+        LOG.debug("add server: {}", transaction);
         if(!transaction.isEmpty()) {
-            mTransactions.add(transaction);
+            mTransactions.addLast(transaction);
         }
     }
 
@@ -437,34 +556,15 @@ public final class BtLEQueue {
      * Note that actions of the *currently executing* transaction
      * will still be executed before the given transaction.
      */
-    public void insert(Transaction transaction) {
+    void insert(Transaction transaction) {
         LOG.debug("about to insert: {}", transaction);
         if (!transaction.isEmpty()) {
-            List<AbstractTransaction> tail = new ArrayList<>(mTransactions.size() + 2);
-            //mTransactions.drainTo(tail);
-            tail.addAll(mTransactions);
-            mTransactions.clear();
-            mTransactions.add(transaction);
-            mTransactions.addAll(tail);
+            mTransactions.addFirst(transaction);
         }
     }
 
     public void clear() {
         mTransactions.clear();
-    }
-
-    /**
-     * Retrieves a list of supported GATT services on the connected device. This should be
-     * invoked only after {@code BluetoothGatt#discoverServices()} completes successfully.
-     *
-     * @return A {@code List} of supported services.
-     */
-    public List<BluetoothGattService> getSupportedGattServices() {
-        if (mBluetoothGatt == null) {
-            LOG.warn("BluetoothGatt is null => no services available.");
-            return Collections.emptyList();
-        }
-        return mBluetoothGatt.getServices();
     }
 
     /** @noinspection BooleanMethodIsAlwaysInverted*/
@@ -495,24 +595,32 @@ public final class BtLEQueue {
         GattCallback mTransactionGattCallback;
         private final GattCallback mExternalGattCallback;
 
-        public InternalGattCallback(GattCallback externalGattCallback) {
+        InternalGattCallback(GattCallback externalGattCallback) {
             mExternalGattCallback = externalGattCallback;
         }
 
-        public void setTransactionGattCallback(@Nullable GattCallback callback) {
+        void setTransactionGattCallback(@Nullable GattCallback callback) {
             mTransactionGattCallback = callback;
         }
 
         private GattCallback getCallbackToUse() {
-            if (mTransactionGattCallback != null) {
-                return mTransactionGattCallback;
+            final GattCallback callback = mTransactionGattCallback;
+            if (callback != null) {
+                return callback;
             }
             return mExternalGattCallback;
         }
 
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-            LOG.debug("connection state change, newState: {}{}", newState, getStatusString(status));
+            final int bondState = gatt.getDevice().getBondState();
+            LOG.debug("connection state changed: {} {} {}",
+                    BleNamesResolver.getStateString(newState), BleNamesResolver.getStatusString(status),
+                    BleNamesResolver.getBondStateString(bondState));
+
+            if (!checkCorrectGattInstance(gatt, "onConnectionStateChange")) {
+                return;
+            }
 
             synchronized (mGattMonitor) {
                 if (mBluetoothGatt == null) {
@@ -525,34 +633,49 @@ public final class BtLEQueue {
             }
 
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                LOG.warn("connection state event with error status {}", status);
+                LOG.warn("connection state event with error status {}", BleNamesResolver.getStatusString(status));
+            }
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onConnectionStateChange(gatt, status, newState);
+                } catch (Exception ex) {
+                    LOG.error("onConnectionStateChange failed", ex);
+                }
             }
 
             switch (newState) {
                 case BluetoothProfile.STATE_CONNECTED:
                     LOG.info("Connected to GATT server.");
+                    mGattConnectTimeoutHandler.removeCallbacksAndMessages(null);
                     setDeviceConnectionState(State.CONNECTED);
-                    // Attempts to discover services after successful connection.
-                    List<BluetoothGattService> cachedServices = gatt.getServices();
-                    if (cachedServices != null && !cachedServices.isEmpty()) {
-                        LOG.info("Using cached services, skipping discovery");
-                        onServicesDiscovered(gatt, BluetoothGatt.GATT_SUCCESS);
-                    } else {
-                        LOG.info("Attempting to start service discovery");
-                        // discover services in the main thread (appears to fix Samsung connection problems)
-                        new Handler(Looper.getMainLooper()).post(new Runnable() {
-                            @Override
-                            public void run() {
-                                if (mBluetoothGatt != null) {
-                                    mBluetoothGatt.discoverServices();
-                                }
+
+                    // discover services in the main thread (appears to fix Samsung connection problems)
+                    final long delayMillis = mDeviceSupport.getServiceDiscoveryDelay(bondState != BluetoothDevice.BOND_NONE);
+                    new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            BluetoothGatt bluetoothGatt = mBluetoothGatt;
+                            if (bluetoothGatt == null) {
+                                return;
                             }
-                        });
-                    }
+                            List<BluetoothGattService> services = bluetoothGatt.getServices();
+                            if (services != null && !services.isEmpty()) {
+                                LOG.info("Using cached services, skipping discovery");
+                                onServicesDiscovered(bluetoothGatt, BluetoothGatt.GATT_SUCCESS);
+                            } else {
+                                LOG.debug("discoverServices");
+                                bluetoothGatt.discoverServices();
+                            }
+                        }
+                    }, delayMillis);
                     break;
                 case BluetoothProfile.STATE_DISCONNECTED:
                     LOG.info("Disconnected from GATT server.");
-                    handleDisconnected(status);
+                    synchronized (mGattMonitor) {
+                        handleDisconnected(status);
+                    }
                     break;
                 case BluetoothProfile.STATE_CONNECTING:
                     LOG.info("Connecting to GATT server...");
@@ -563,49 +686,69 @@ public final class BtLEQueue {
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-            if (!checkCorrectGattInstance(gatt, "services discovered: " + getStatusString(status))) {
+            LOG.debug("services discovered: {}", BleNamesResolver.getStatusString(status));
+
+            if (!checkCorrectGattInstance(gatt, "onServicesDiscovered")) {
                 return;
             }
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                if (getCallbackToUse() != null) {
+                final GattCallback callback = getCallbackToUse();
+                if (callback != null) {
                     // only propagate the successful event
-                    getCallbackToUse().onServicesDiscovered(gatt);
+                    try {
+                        callback.onServicesDiscovered(gatt);
+                    } catch (Exception ex) {
+                        LOG.error("onServicesDiscovered failed", ex);
+                    }
                 }
-                if (mConnectionLatch != null) {
-                    mConnectionLatch.countDown();
+                final CountDownLatch latch = mConnectionLatch;
+                if (latch != null) {
+                    latch.countDown();
                 }
             } else {
-                LOG.warn("onServicesDiscovered received: {}", status);
+                LOG.warn("onServicesDiscovered received: {}", BleNamesResolver.getStatusString(status));
             }
         }
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-            LOG.debug("characteristic write: {}{}", characteristic.getUuid(), getStatusString(status));
+            LOG.debug("characteristic written: {} {}", characteristic.getUuid(), BleNamesResolver.getStatusString(status));
             if (!checkCorrectGattInstance(gatt, "characteristic write")) {
                 return;
             }
-            if (getCallbackToUse() != null) {
-                getCallbackToUse().onCharacteristicWrite(gatt, characteristic, status);
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onCharacteristicWrite(gatt, characteristic, status);
+                } catch (Exception ex) {
+                    LOG.error("onCharacteristicWrite failed", ex);
+                }
             }
             checkWaitingCharacteristic(characteristic, status);
         }
 
-
-
         @Override
         public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
-            super.onMtuChanged(gatt, mtu, status);
+            LOG.debug("mtu changed to {} {}", mtu, BleNamesResolver.getStatusString(status));
 
-            LOG.debug("mtu changed to {}{}", mtu, getStatusString(status));
-
-            if(getCallbackToUse() != null){
-                getCallbackToUse().onMtuChanged(gatt, mtu, status);
+            if (!checkCorrectGattInstance(gatt, "onMtuChanged")) {
+                return;
             }
 
-            if (mWaitForActionResultLatch != null) {
-                mWaitForActionResultLatch.countDown();
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onMtuChanged(gatt, mtu, status);
+                } catch (Exception ex) {
+                    LOG.error("onMtuChanged failed", ex);
+                }
+            }
+
+            final CountDownLatch latch = mWaitForActionResultLatch;
+            if (latch != null) {
+                latch.countDown();
             }
         }
 
@@ -613,20 +756,32 @@ public final class BtLEQueue {
         public void onCharacteristicRead(BluetoothGatt gatt,
                                          BluetoothGattCharacteristic characteristic,
                                          int status) {
-            LOG.debug(
-                    "characteristic read: {}{}{}",
-                    characteristic.getUuid(),
-                    getStatusString(status),
-                    status == BluetoothGatt.GATT_SUCCESS ? ": " + Logging.formatBytes(characteristic.getValue()) : ""
-            );
-            if (!checkCorrectGattInstance(gatt, "characteristic read")) {
+            byte[] value = emulateMemorySafeValue(characteristic, status);
+            onCharacteristicRead(gatt, characteristic, value, status);
+        }
+
+        @Override
+        public void onCharacteristicRead(@NonNull BluetoothGatt gatt,
+                                         @NonNull BluetoothGattCharacteristic characteristic,
+                                         @NonNull byte[] value, int status) {
+            if (LOG.isDebugEnabled()) {
+                String content = GB.hexdump(value);
+                LOG.debug(
+                        "characteristic read: {} {} - {}", characteristic.getUuid(),
+                        BleNamesResolver.getStatusString(status), content
+                );
+            }
+
+            if (!checkCorrectGattInstance(gatt, "onCharacteristicRead")) {
                 return;
             }
-            if (getCallbackToUse() != null) {
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
                 try {
-                    getCallbackToUse().onCharacteristicRead(gatt, characteristic, status);
-                } catch (Throwable ex) {
-                    LOG.error("onCharacteristicRead: {}", ex.getMessage(), ex);
+                    callback.onCharacteristicRead(gatt, characteristic, value, status);
+                } catch (Exception ex) {
+                    LOG.error("onCharacteristicRead failed", ex);
                 }
             }
             checkWaitingCharacteristic(characteristic, status);
@@ -634,14 +789,27 @@ public final class BtLEQueue {
 
         @Override
         public void onDescriptorRead(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
-            LOG.debug("descriptor read: {}{}", descriptor.getUuid(), getStatusString(status));
-            if (!checkCorrectGattInstance(gatt, "descriptor read")) {
+            byte[] value = emulateMemorySafeValue(descriptor, status);
+            onDescriptorRead(gatt, descriptor, status, value);
+        }
+
+        @Override
+        public void onDescriptorRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattDescriptor descriptor, int status, @NonNull byte[] value) {
+            if (LOG.isDebugEnabled()) {
+                String content = GB.hexdump(value);
+                LOG.debug("descriptor read: {} {} - {}", descriptor.getUuid(),
+                        BleNamesResolver.getStatusString(status), content);
+            }
+
+            if (!checkCorrectGattInstance(gatt, "onDescriptorRead")) {
                 return;
             }
-            if (getCallbackToUse() != null) {
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
                 try {
-                    getCallbackToUse().onDescriptorRead(gatt, descriptor, status);
-                } catch (Throwable ex) {
+                    callback.onDescriptorRead(gatt, descriptor, status, value);
+                } catch (Exception ex) {
                     LOG.error("onDescriptorRead failed", ex);
                 }
             }
@@ -650,14 +818,16 @@ public final class BtLEQueue {
 
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
-            LOG.debug("descriptor write: {}{}", descriptor.getUuid(), getStatusString(status));
+            LOG.debug("descriptor written: {} {}", descriptor.getUuid(), BleNamesResolver.getStatusString(status));
             if (!checkCorrectGattInstance(gatt, "descriptor write")) {
                 return;
             }
-            if (getCallbackToUse() != null) {
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
                 try {
-                    getCallbackToUse().onDescriptorWrite(gatt, descriptor, status);
-                } catch (Throwable ex) {
+                    callback.onDescriptorWrite(gatt, descriptor, status);
+                } catch (Exception ex) {
                     LOG.error("onDescriptorWrite failed", ex);
                 }
             }
@@ -667,17 +837,27 @@ public final class BtLEQueue {
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt,
                                             BluetoothGattCharacteristic characteristic) {
+            byte[] value = emulateMemorySafeValue(characteristic, BluetoothGatt.GATT_SUCCESS);
+            onCharacteristicChanged(gatt, characteristic, value);
+        }
+
+        @Override
+        public void onCharacteristicChanged(@NonNull BluetoothGatt gatt,
+                                            @NonNull BluetoothGattCharacteristic characteristic,
+                                            @NonNull byte[] value) {
             if (LOG.isDebugEnabled()) {
-                String content = Logging.formatBytes(characteristic.getValue());
-                LOG.debug("characteristic changed: {} value: {}", characteristic.getUuid(), content);
+                String content = GB.hexdump(value);
+                LOG.debug("characteristic changed: {} - {}", characteristic.getUuid(), content);
             }
             if (!checkCorrectGattInstance(gatt, "characteristic changed")) {
                 return;
             }
-            if (getCallbackToUse() != null) {
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
                 try {
-                    getCallbackToUse().onCharacteristicChanged(gatt, characteristic);
-                } catch (Throwable ex) {
+                    callback.onCharacteristicChanged(gatt, characteristic, value);
+                } catch (Exception ex) {
                     LOG.error("onCharacteristicChanged failed", ex);
                 }
             } else {
@@ -687,15 +867,107 @@ public final class BtLEQueue {
 
         @Override
         public void onReadRemoteRssi(BluetoothGatt gatt, int rssi, int status) {
-            LOG.debug("remote rssi: {}{}", rssi, getStatusString(status));
+            LOG.debug("read remote rssi: {} {}", rssi, BleNamesResolver.getStatusString(status));
             if (!checkCorrectGattInstance(gatt, "remote rssi")) {
                 return;
             }
-            if (getCallbackToUse() != null) {
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
                 try {
-                    getCallbackToUse().onReadRemoteRssi(gatt, rssi, status);
-                } catch (Throwable ex) {
+                    callback.onReadRemoteRssi(gatt, rssi, status);
+                } catch (Exception ex) {
                     LOG.error("onReadRemoteRssi failed", ex);
+                }
+            }
+        }
+
+        @Override
+        public void onReliableWriteCompleted(BluetoothGatt gatt, int status) {
+            LOG.debug("reliable write completed: {}", BleNamesResolver.getStatusString(status));
+
+            if (!checkCorrectGattInstance(gatt, "onReliableWriteCompleted")) {
+                return;
+            }
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onReliableWriteCompleted(gatt, status);
+                } catch (Exception ex) {
+                    LOG.error("onReliableWriteCompleted failed", ex);
+                }
+            }
+
+            final CountDownLatch latch = mWaitForActionResultLatch;
+            if (latch != null) {
+                latch.countDown();
+            }
+        }
+
+        @Override
+        @RequiresApi(Build.VERSION_CODES.O)
+        public void onPhyRead(BluetoothGatt gatt, int txPhy, int rxPhy, int status) {
+            LOG.debug("phy read: tx={} rx={} {}", txPhy, rxPhy,
+                    BleNamesResolver.getStatusString(status));
+
+            if (!checkCorrectGattInstance(gatt, "onPhyRead")) {
+                return;
+            }
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onPhyRead(gatt, txPhy, rxPhy, status);
+                } catch (Exception ex) {
+                    LOG.error("onPhyRead failed", ex);
+                }
+            }
+
+            final CountDownLatch latch = mWaitForActionResultLatch;
+            if (latch != null) {
+                latch.countDown();
+            }
+        }
+
+        @Override
+        @RequiresApi(Build.VERSION_CODES.O)
+        public void onPhyUpdate(BluetoothGatt gatt, int txPhy, int rxPhy, int status) {
+            LOG.debug("phy updated: tx={} rx={} {}", txPhy, rxPhy,
+                    BleNamesResolver.getStatusString(status));
+
+            if (!checkCorrectGattInstance(gatt, "onPhyUpdate")) {
+                return;
+            }
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onPhyUpdate(gatt, txPhy, rxPhy, status);
+                } catch (Exception ex) {
+                    LOG.error("onPhyUpdate failed", ex);
+                }
+            }
+
+            // not all updates are triggered by GB:
+            // can't use mWaitForActionResultLatch here
+        }
+
+        @Override
+        @RequiresApi(Build.VERSION_CODES.S)
+        public void onServiceChanged(@NonNull BluetoothGatt gatt) {
+            LOG.debug("service changed");
+
+            if (!checkCorrectGattInstance(gatt, "onServiceChanged")) {
+                return;
+            }
+
+            final GattCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onServiceChanged(gatt);
+                } catch (Exception ex) {
+                    LOG.error("onServiceChanged failed", ex);
                 }
             }
         }
@@ -703,16 +975,18 @@ public final class BtLEQueue {
         private void checkWaitingCharacteristic(BluetoothGattCharacteristic characteristic, int status) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 if (characteristic != null) {
-                    LOG.debug("failed btle action, aborting transaction: {}{}", characteristic.getUuid(), getStatusString(status));
+                    LOG.warn("failed btle action, aborting transaction: {} {}", characteristic.getUuid(), BleNamesResolver.getStatusString(status));
                 }
                 mAbortTransaction = true;
             }
-            if (characteristic != null && BtLEQueue.this.mWaitCharacteristic != null && characteristic.getUuid().equals(BtLEQueue.this.mWaitCharacteristic.getUuid())) {
-                if (mWaitForActionResultLatch != null) {
-                    mWaitForActionResultLatch.countDown();
+            final BluetoothGattCharacteristic waitCharacteristic = mWaitCharacteristic;
+            if (characteristic != null && waitCharacteristic != null && characteristic.getUuid().equals(waitCharacteristic.getUuid())) {
+                final CountDownLatch resultLatch = mWaitForActionResultLatch;
+                if (resultLatch != null) {
+                    resultLatch.countDown();
                 }
             } else {
-                if (BtLEQueue.this.mWaitCharacteristic != null) {
+                if (waitCharacteristic != null) {
                     LOG.error(
                             "checkWaitingCharacteristic: mismatched characteristic received: {}",
                             (characteristic != null && characteristic.getUuid() != null) ? characteristic.getUuid().toString() : "(null)"
@@ -721,15 +995,35 @@ public final class BtLEQueue {
             }
         }
 
-        private String getStatusString(int status) {
-            return status == BluetoothGatt.GATT_SUCCESS ? " (success)" : " (failed: " + status + ")";
-        }
-
-        public void reset() {
+        void reset() {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("internal gatt callback set to null");
             }
             mTransactionGattCallback = null;
+        }
+
+        /// helper to emulate Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU on older APIs
+        private static byte[] emulateMemorySafeValue(BluetoothGattCharacteristic characteristic,
+                                              int status){
+            if(status == BluetoothGatt.GATT_SUCCESS) {
+                byte[] value = characteristic.getValue();
+                if (value != null) {
+                    return value.clone();
+                }
+            }
+            return EMPTY;
+        }
+
+        /// helper to emulate Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU on older APIs
+        private static byte[] emulateMemorySafeValue(BluetoothGattDescriptor descriptor,
+                                              int status){
+            if(status == BluetoothGatt.GATT_SUCCESS) {
+                byte[] value = descriptor.getValue();
+                if (value != null) {
+                    return value.clone();
+                }
+            }
+            return EMPTY;
         }
     }
 
@@ -741,36 +1035,33 @@ public final class BtLEQueue {
         GattServerCallback mTransactionGattCallback;
         private final GattServerCallback mExternalGattServerCallback;
 
-        public InternalGattServerCallback(GattServerCallback externalGattServerCallback) {
+        InternalGattServerCallback(GattServerCallback externalGattServerCallback) {
             mExternalGattServerCallback = externalGattServerCallback;
         }
 
-        public void setTransactionGattCallback(@Nullable GattServerCallback callback) {
+        void setTransactionGattCallback(@Nullable GattServerCallback callback) {
             mTransactionGattCallback = callback;
         }
 
         private GattServerCallback getCallbackToUse() {
-            if (mTransactionGattCallback != null) {
-                return mTransactionGattCallback;
+            final GattServerCallback callback = mTransactionGattCallback;
+            if (callback != null) {
+                return callback;
             }
             return mExternalGattServerCallback;
         }
 
         @Override
         public void onConnectionStateChange(BluetoothDevice device, int status, int newState) {
-            LOG.debug("gatt server connection state change, newState: {}{}", newState, getStatusString(status));
+            LOG.debug("gatt server connection state change, newState: {} {}", newState, BleNamesResolver.getStatusString(status));
 
             if(!checkCorrectBluetoothDevice(device)) {
                 return;
             }
 
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                LOG.warn("gatt server connection state event with error status {}", status);
+                LOG.warn("gatt server connection state event with error status {}", BleNamesResolver.getStatusString(status));
             }
-        }
-
-        private String getStatusString(int status) {
-            return status == BluetoothGatt.GATT_SUCCESS ? " (success)" : " (failed: " + status + ")";
         }
 
         @Override
@@ -779,8 +1070,13 @@ public final class BtLEQueue {
                 return;
             }
             LOG.debug("characteristic read request: {} characteristic: {}", device.getAddress(), characteristic.getUuid());
-            if (getCallbackToUse() != null) {
-                getCallbackToUse().onCharacteristicReadRequest(device, requestId, offset, characteristic);
+            final GattServerCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onCharacteristicReadRequest(device, requestId, offset, characteristic);
+                } catch (Exception ex) {
+                    LOG.error("onCharacteristicReadRequest failed", ex);
+                }
             }
         }
 
@@ -791,11 +1087,16 @@ public final class BtLEQueue {
             }
             LOG.debug("characteristic write request: {} characteristic: {}", device.getAddress(), characteristic.getUuid());
             boolean success = false;
-            if (getCallbackToUse() != null) {
-                success = getCallbackToUse().onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value);
+            final GattServerCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    success = callback.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value);
+                } catch (Exception ex) {
+                    LOG.error("onCharacteristicWriteRequest failed", ex);
+                }
             }
             if (responseNeeded && mSendWriteRequestResponse) {
-                mBluetoothGattServer.sendResponse(device, requestId, success ? BluetoothGatt.GATT_SUCCESS : BluetoothGatt.GATT_FAILURE, 0, new byte[0]);
+                mBluetoothGattServer.sendResponse(device, requestId, success ? BluetoothGatt.GATT_SUCCESS : BluetoothGatt.GATT_FAILURE, 0, EMPTY);
             }
         }
 
@@ -805,8 +1106,13 @@ public final class BtLEQueue {
                 return;
             }
             LOG.debug("onDescriptorReadRequest: {}", device.getAddress());
-            if(getCallbackToUse() != null) {
-                getCallbackToUse().onDescriptorReadRequest(device, requestId, offset, descriptor);
+            final GattServerCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    callback.onDescriptorReadRequest(device, requestId, offset, descriptor);
+                } catch (Exception ex) {
+                    LOG.error("onDescriptorReadRequest failed", ex);
+                }
             }
         }
 
@@ -817,12 +1123,54 @@ public final class BtLEQueue {
             }
             LOG.debug("onDescriptorWriteRequest: {}", device.getAddress());
             boolean success = false;
-            if(getCallbackToUse() != null) {
-                success = getCallbackToUse().onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value);
+            final GattServerCallback callback = getCallbackToUse();
+            if (callback != null) {
+                try {
+                    success = callback.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value);
+                } catch (Exception ex) {
+                    LOG.error("onDescriptorWriteRequest failed", ex);
+                }
             }
             if (responseNeeded && mSendWriteRequestResponse) {
-                mBluetoothGattServer.sendResponse(device, requestId, success ? BluetoothGatt.GATT_SUCCESS : BluetoothGatt.GATT_FAILURE, 0, new byte[0]);
+                mBluetoothGattServer.sendResponse(device, requestId, success ? BluetoothGatt.GATT_SUCCESS : BluetoothGatt.GATT_FAILURE, 0, EMPTY);
             }
+        }
+
+        @Override
+        public void onServiceAdded(int status, BluetoothGattService service) {
+            LOG.debug("server.onServiceAdded {} {}", service.getUuid(), service.getInstanceId());
+        }
+
+        @Override
+        public void onExecuteWrite(BluetoothDevice device, int requestId, boolean execute) {
+            LOG.debug("server.onExecuteWrite {} {}", requestId, execute);
+        }
+
+        @Override
+        public void onNotificationSent(BluetoothDevice device, int status) {
+            LOG.debug("server.onNotificationSent {}",
+                    BleNamesResolver.getStatusString(status));
+            final CountDownLatch latch = mWaitForServerActionResultLatch;
+            if (latch != null) {
+                latch.countDown();
+            }
+        }
+
+        @Override
+        public void onMtuChanged(BluetoothDevice device, int mtu) {
+            LOG.debug("server.onMtuChanged mtu={}", mtu);
+        }
+
+        @Override
+        public void onPhyUpdate(BluetoothDevice device, int txPhy, int rxPhy, int status) {
+            LOG.debug("server.onPhyUpdate tx={} rx={} {}", txPhy, rxPhy,
+                    BleNamesResolver.getStatusString(status));
+        }
+
+        @Override
+        public void onPhyRead(BluetoothDevice device, int txPhy, int rxPhy, int status) {
+            LOG.debug("server.onPhyRead tx={} rx={} {}", txPhy, rxPhy,
+                    BleNamesResolver.getStatusString(status));
         }
     }
 }

@@ -1,6 +1,23 @@
+/*  Copyright (C) 2024-2025 Daniele Gobbetti, José Rebelo, Thomas Kuehne
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,9 +32,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.ChecksumCalculator;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.FileType;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.GarminByteBufferReader;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.exception.FitParseException;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.messages.FitFileId;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.messages.FitRecordDataFactory;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.messages.MessageWriter;
 
@@ -50,12 +71,12 @@ public class FitFile {
         }
     }
 
-    public static FitFile parseIncoming(File file) throws IOException {
+    public static FitFile parseIncoming(File file) throws IOException, FitParseException {
         return parseIncoming(readFileToByteArray(file));
     }
 
     //TODO: process file in chunks??
-    public static FitFile parseIncoming(byte[] fileContents) {
+    public static FitFile parseIncoming(byte[] fileContents) throws FitParseException {
 
         final GarminByteBufferReader garminByteBufferReader = new GarminByteBufferReader(fileContents);
         garminByteBufferReader.setByteOrder(ByteOrder.LITTLE_ENDIAN);
@@ -73,7 +94,7 @@ public class FitFile {
             final Integer timeOffset = recordHeader.getTimeOffset();
             if (timeOffset != null) {
                 if (referenceTimestamp == null) {
-                    throw new IllegalArgumentException("Got compressed timestamp without knowing current timestamp");
+                    throw new FitParseException("Got compressed timestamp without knowing current timestamp");
                 }
 
                 if (timeOffset >= (referenceTimestamp & 0x1FL)) {
@@ -87,7 +108,7 @@ public class FitFile {
                 if (recordDefinition != null) {
                     if (recordHeader.isDeveloperData())
                         for (RecordData rd : dataRecords) {
-                            if (GlobalFITMessage.FIELD_DESCRIPTION.equals(rd.getGlobalFITMessage()))
+                            if (NativeFITMessages.FIT_FIELD_DESCRIPTION.equals(rd.getNativeFITMessage()))
                                 recordDefinition.populateDevFields(rd);
                         }
                     recordDefinitionMap.put(recordHeader.getLocalMessageType(), recordDefinition);
@@ -104,17 +125,22 @@ public class FitFile {
             }
         }
         garminByteBufferReader.setByteOrder(ByteOrder.LITTLE_ENDIAN);
-        int fileCrc = garminByteBufferReader.readShort();
-        if (fileCrc != ChecksumCalculator.computeCrc(fileContents, header.getHeaderSize(), fileContents.length - header.getHeaderSize() - 2)) {
-            throw new IllegalArgumentException("Wrong CRC for FIT file");
+        final int fileCrc = garminByteBufferReader.readShort();
+        final int actualCrc = ChecksumCalculator.computeCrc(fileContents, 0, garminByteBufferReader.getPosition() - 2);
+        if (fileCrc != actualCrc) {
+            throw new FitParseException("Wrong CRC for FIT file: got " + actualCrc + " expected " + fileCrc);
+        }
+        if (garminByteBufferReader.getPosition() < garminByteBufferReader.getLimit()) {
+            LOG.warn("There are {} bytes after the fit file", garminByteBufferReader.getLimit() - garminByteBufferReader.getPosition());
+            // TODO a fit file should actually be multiple fit files
         }
         return new FitFile(header, dataRecords);
     }
 
-    public List<RecordData> getRecordsByGlobalMessage(GlobalFITMessage globalFITMessage) {
+    public List<RecordData> getRecordsByNativeMessage(NativeFITMessage nativeFITMessage) {
         final List<RecordData> filtered = new ArrayList<>();
         for (RecordData rd : dataRecords) {
-            if (globalFITMessage.equals(rd.getGlobalFITMessage()))
+            if (nativeFITMessage.equals(rd.getNativeFITMessage()))
                 filtered.add(rd);
         }
         return filtered;
@@ -144,6 +170,31 @@ public class FitFile {
         this.header.generateOutgoingDataPayload(writer);
         writer.writeBytes(temporary.getBytes());
         writer.writeShort(ChecksumCalculator.computeCrc(writer.getBytes(), this.header.getHeaderSize(), writer.getBytes().length - this.header.getHeaderSize()));
+    }
+
+    @Nullable
+    public FileType.FILETYPE getFileType() {
+        if (dataRecords == null || dataRecords.isEmpty()) {
+            LOG.error("FIT file has no dataRecords");
+            return null;
+        }
+
+        final Optional<FitFileId> fitFileIdOpt = dataRecords.stream()
+                .filter(r -> r instanceof FitFileId)
+                .map(r -> (FitFileId) r)
+                .findFirst();
+
+        if (!fitFileIdOpt.isPresent()) {
+            LOG.error("FIT file has no FILE_ID message");
+            return null;
+        }
+
+        final FitFileId fitFileId = fitFileIdOpt.get();
+        FileType.FILETYPE type = fitFileId.getType();
+        if (type == null) {
+            LOG.error("FIT file FILE_ID message has 'type' value null");
+        }
+        return type;
     }
 
     public byte[] getOutgoingMessage() {
@@ -196,10 +247,10 @@ public class FitFile {
             this.dataSize = dataSize;
         }
 
-        static Header parseIncomingHeader(GarminByteBufferReader garminByteBufferReader) {
+        static Header parseIncomingHeader(GarminByteBufferReader garminByteBufferReader) throws FitParseException {
             int headerSize = garminByteBufferReader.readByte();
             if (headerSize < 12) {
-                throw new IllegalArgumentException("Too short header in FIT file.");
+                throw new FitParseException("Too short header in FIT file.");
             }
             boolean hasCRC = headerSize == 14;
             int protocolVersion = garminByteBufferReader.readByte();
@@ -207,13 +258,13 @@ public class FitFile {
             int dataSize = garminByteBufferReader.readInt();
             int magic = garminByteBufferReader.readInt();
             if (magic != MAGIC) {
-                throw new IllegalArgumentException("Wrong magic header in FIT file");
+                throw new FitParseException("Wrong magic header in FIT file");
             }
             if (hasCRC) {
                 int incomingCrc = garminByteBufferReader.readShort();
 
                 if (incomingCrc != 0 && incomingCrc != ChecksumCalculator.computeCrc(garminByteBufferReader.asReadOnlyBuffer(), 0, headerSize - 2)) {
-                    throw new IllegalArgumentException("Wrong CRC for header in FIT file");
+                    throw new FitParseException("Wrong CRC for header in FIT file");
                 }
                 //            LOG.info("Fit File Header didn't have CRC, no check performed.");
             }

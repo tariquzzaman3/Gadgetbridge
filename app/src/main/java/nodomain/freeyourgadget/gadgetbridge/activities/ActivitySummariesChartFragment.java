@@ -17,6 +17,8 @@
 package nodomain.freeyourgadget.gadgetbridge.activities;
 
 import android.content.Context;
+import android.content.Intent;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -32,18 +34,14 @@ import com.github.mikephil.charting.components.XAxis;
 import com.github.mikephil.charting.components.YAxis;
 import com.github.mikephil.charting.data.Entry;
 import com.github.mikephil.charting.data.LineData;
-import com.github.mikephil.charting.data.LineDataSet;
 import com.github.mikephil.charting.formatter.ValueFormatter;
 import com.github.mikephil.charting.interfaces.datasets.ILineDataSet;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.charts.AbstractActivityChartFragment;
@@ -54,9 +52,12 @@ import nodomain.freeyourgadget.gadgetbridge.activities.charts.SampleXLabelFormat
 import nodomain.freeyourgadget.gadgetbridge.activities.charts.TimestampTranslation;
 import nodomain.freeyourgadget.gadgetbridge.database.DBAccess;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
+import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummary;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityPoint;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySample;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivityTrack;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivityTrackProvider;
 
 
 public class ActivitySummariesChartFragment extends AbstractActivityChartFragment<ChartsData> {
@@ -66,20 +67,36 @@ public class ActivitySummariesChartFragment extends AbstractActivityChartFragmen
     private View view;
 
     // If a track file is being used (takes precedence over activity data)
-    private File trackFile;
+    private BaseActivitySummary summary;
 
     // If activity data is being used
     private GBDevice gbDevice;
     private int startTime;
     private int endTime;
 
-    public void setDateAndGetData(@Nullable File trackFile, GBDevice gbDevice, long startTime, long endTime) {
-        this.trackFile = trackFile;
+    private boolean chartsSetUp;
+    private RefreshTask refreshTask;
+
+    @Override
+    protected void onReceive(final Context context, final Intent intent) {
+        // FIXME: We need to override this, or we crash
+        //  This class should be refactored not to extend AbstractActivityChartFragment
+        //    java.lang.ClassCastException: nodomain.freeyourgadget.gadgetbridge.activities.ActivitySummaryDetail cannot be cast to nodomain.freeyourgadget.gadgetbridge.activities.charts.ChartsHost
+        //      at nodomain.freeyourgadget.gadgetbridge.activities.charts.AbstractChartFragment.getChartsHost(AbstractChartFragment.java:164)
+        //      at nodomain.freeyourgadget.gadgetbridge.activities.charts.AbstractChartFragment.getStartDate(AbstractChartFragment.java:176)
+        //      at nodomain.freeyourgadget.gadgetbridge.activities.charts.AbstractChartFragment.onReceive(AbstractChartFragment.java:215)
+        //      at nodomain.freeyourgadget.gadgetbridge.activities.charts.AbstractChartFragment$1.onReceive(AbstractChartFragment.java:82)
+        //      at androidx.localbroadcastmanager.content.LocalBroadcastManager.executePendingBroadcasts(LocalBroadcastManager.java:319)
+    }
+
+    public void setDateAndGetData(@Nullable BaseActivitySummary summary, GBDevice gbDevice, long startTime, long endTime) {
+        this.summary = summary;
         this.startTime = (int) startTime;
         this.endTime = (int) endTime;
         this.gbDevice = gbDevice;
         if (this.view != null) {
-            createLocalRefreshTask("getting hr and activity", getActivity()).execute();
+            setupChart();
+            startRefreshTask();
         }
     }
 
@@ -100,10 +117,30 @@ public class ActivitySummariesChartFragment extends AbstractActivityChartFragmen
         super.onViewCreated(view, savedInstanceState);
         init();
         this.view = view;
-        if (this.trackFile != null || this.gbDevice != null) {
+        if (this.summary != null || this.gbDevice != null) {
             setupChart();
-            createLocalRefreshTask("getting hr and activity", getActivity()).execute();
+            startRefreshTask();
         }
+    }
+
+    @Override
+    public void onDestroyView() {
+        if (refreshTask != null) {
+            refreshTask.cancel(true);
+            refreshTask = null;
+        }
+        mChart = null;
+        view = null;
+        chartsSetUp = false;
+        super.onDestroyView();
+    }
+
+    private void startRefreshTask() {
+        if (refreshTask != null) {
+            refreshTask.cancel(true);
+        }
+        refreshTask = createLocalRefreshTask("getting hr and activity", getActivity());
+        refreshTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
 
@@ -113,6 +150,9 @@ public class ActivitySummariesChartFragment extends AbstractActivityChartFragmen
     }
 
     private void setupChart() {
+        if (chartsSetUp) {
+            return;
+        }
         mChart.setBackgroundColor(BACKGROUND_COLOR);
         mChart.getDescription().setTextColor(DESCRIPTION_COLOR);
         configureBarLineChartDefaults(mChart);
@@ -145,6 +185,7 @@ public class ActivitySummariesChartFragment extends AbstractActivityChartFragmen
         yAxisRight.setAxisMaximum(HeartRateUtils.getInstance().getMaxHeartRate());
         yAxisRight.setAxisMinimum(HeartRateUtils.getInstance().getMinHeartRate());
 
+        chartsSetUp = true;
     }
 
     @Override
@@ -188,6 +229,7 @@ public class ActivitySummariesChartFragment extends AbstractActivityChartFragmen
     protected void renderCharts() {
     }
 
+    @Override
     protected Entry createLineEntry(float value, int xValue) {
         return new Entry(xValue, value);
     }
@@ -197,40 +239,47 @@ public class ActivitySummariesChartFragment extends AbstractActivityChartFragmen
     }
 
     public class RefreshTask extends DBAccess {
+        private DefaultChartsData<LineData> chartsData;
 
         public RefreshTask(String task, Context context) {
-            super(task, context);
+            super(task, context, false);
         }
 
         @Override
         protected void doInBackground(DBHandler handler) {
-            final DefaultChartsData<?> dcd;
             final DefaultChartsData<LineData> activitySamplesData = buildChartFromSamples(handler);
 
-            if (trackFile != null) {
-                final List<ActivityPoint> activityPoints = ActivitySummariesGpsFragment.getActivityPoints(trackFile)
-                        .stream()
-                        .filter(ap -> ap.getHeartRate() > 0)
-                        .collect(Collectors.toList());
+            if (summary != null && gbDevice != null) {
+                List<ActivityPoint> activityPoints = null;
+                final ActivityTrackProvider activityTrackProvider = gbDevice.getDeviceCoordinator().getActivityTrackProvider(gbDevice, getContext());
+                if (activityTrackProvider != null) {
+                    final ActivityTrack activityTrack = activityTrackProvider.getActivityTrack(summary);
+                    if (activityTrack != null) {
+                        activityPoints = activityTrack.getAllPoints();
+                    }
+                }
 
-                if (!activityPoints.isEmpty()) {
-                    dcd = buildHeartRateChart(activityPoints, activitySamplesData);
+                if (activityPoints != null && !activityPoints.isEmpty()) {
+                    chartsData = buildHeartRateChart(activityPoints, activitySamplesData);
                 } else {
-                    dcd = activitySamplesData;
+                    chartsData = activitySamplesData;
                 }
             } else {
-                dcd = activitySamplesData;
-            }
-
-            if (dcd != null) {
-                mChart.setData(null); // workaround for https://github.com/PhilJay/MPAndroidChart/issues/2317
-                mChart.getXAxis().setValueFormatter(dcd.getXValueFormatter());
-                mChart.setData((LineData) dcd.getData());
+                chartsData = activitySamplesData;
             }
         }
 
         @Override
         protected void onPostExecute(Object o) {
+            super.onPostExecute(o);
+            if (getTaskError() != null || mChart == null) {
+                return;
+            }
+            if (chartsData != null) {
+                mChart.setData(null); // workaround for https://github.com/PhilJay/MPAndroidChart/issues/2317
+                mChart.getXAxis().setValueFormatter(chartsData.getXValueFormatter());
+                mChart.setData(chartsData.getData());
+            }
             mChart.invalidate();
         }
 

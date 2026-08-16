@@ -47,7 +47,7 @@ import com.github.mikephil.charting.utils.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.text.SimpleDateFormat;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -65,6 +65,7 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceService;
+import nodomain.freeyourgadget.gadgetbridge.model.HeartRateSample;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsData> {
@@ -132,7 +133,7 @@ public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsDa
                 steps += stepsDelta;
                 lastTimestamp = timestamp;
             } catch (Exception ex) {
-                GB.toast(LiveActivityFragment.this.getContext(), ex.getMessage(), Toast.LENGTH_SHORT, GB.ERROR, ex);
+                GB.toast(LiveActivityFragment.this.getContext(), ex.getLocalizedMessage(), Toast.LENGTH_SHORT, GB.ERROR, ex);
             }
         }
 
@@ -158,24 +159,41 @@ public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsDa
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            final GBDevice device = intent.getParcelableExtra(GBDevice.EXTRA_DEVICE);
+            if (device == null || !device.equals(getChartsHost().getDevice())) {
+                return;
+            }
+
             String action = intent.getAction();
             switch (action) {
                 case DeviceService.ACTION_REALTIME_SAMPLES: {
-                    ActivitySample sample = (ActivitySample) intent.getSerializableExtra(DeviceService.EXTRA_REALTIME_SAMPLE);
-                    addSample(sample);
+                    addSample(intent.getSerializableExtra(DeviceService.EXTRA_REALTIME_SAMPLE));
                     break;
                 }
             }
         }
     };
 
-    private void addSample(ActivitySample sample) {
-        int heartRate = sample.getHeartRate();
-        int timestamp = tsTranslation.shorten(sample.getTimestamp());
+    private void addSample(Serializable serializedSample) {
+        int heartRate = 0;
+        int timestamp = 0;
+        int steps = 0;
+
+        if (serializedSample instanceof ActivitySample) {
+            ActivitySample activitySample = (ActivitySample) serializedSample;
+            heartRate = activitySample.getHeartRate();
+            timestamp = tsTranslation.shorten(activitySample.getTimestamp());
+            steps = activitySample.getSteps();
+        }
+        if (serializedSample instanceof HeartRateSample) {
+            HeartRateSample heartRateSample = (HeartRateSample) serializedSample;
+            heartRate = heartRateSample.getHeartRate();
+            timestamp = tsTranslation.shorten((int)(heartRateSample.getTimestamp() / 1000));
+        }
+
         if (HeartRateUtils.getInstance().isValidHeartRateValue(heartRate)) {
             setCurrentHeartRate(heartRate, timestamp);
         }
-        int steps = sample.getSteps();
         if (steps > 0) {
             addEntries(steps, timestamp);
         }
@@ -303,9 +321,9 @@ public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsDa
         enableRealtimeTracking(true);
     }
 
-    private ScheduledExecutorService startActivityPulse() {
+    private ScheduledExecutorService startActivityPulse(int interval) {
         ScheduledExecutorService service = Executors.newSingleThreadScheduledExecutor();
-        service.scheduleAtFixedRate(new Runnable() {
+        service.scheduleWithFixedDelay(new Runnable() {
             @Override
             public void run() {
                 FragmentActivity activity = LiveActivityFragment.this.getActivity();
@@ -318,7 +336,7 @@ public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsDa
                     });
                 }
             }
-        }, 0, getPulseIntervalMillis(), TimeUnit.MILLISECONDS);
+        }, 0, interval, TimeUnit.MILLISECONDS);
         return service;
     }
 
@@ -351,16 +369,6 @@ public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsDa
         GBApplication.deviceService(getChartsHost().getDevice()).onEnableRealtimeHeartRateMeasurement(true);
     }
 
-    private int getPulseIntervalMillis() {
-        return 1000;
-    }
-
-    @Override
-    protected void onMadeVisibleInActivity() {
-        super.onMadeVisibleInActivity();
-        enableRealtimeTracking(true);
-    }
-
     private void enableRealtimeTracking(boolean enable) {
         if (enable && pulseScheduler != null) {
             // already running
@@ -371,7 +379,7 @@ public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsDa
             GBApplication.deviceService(getChartsHost().getDevice()).onEnableRealtimeSteps(enable);
             GBApplication.deviceService(getChartsHost().getDevice()).onEnableRealtimeHeartRateMeasurement(enable);
         } catch (IllegalStateException e) {
-            LOG.error("IllegalStateException catched, setting realtime tracking globally to {}", enable);
+            LOG.error("IllegalStateException caught, setting realtime tracking globally to {}", enable);
             GBApplication.deviceService().onEnableRealtimeSteps(enable);
             GBApplication.deviceService().onEnableRealtimeHeartRateMeasurement(enable);
         }
@@ -380,7 +388,7 @@ public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsDa
             if (getActivity() != null) {
                 getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             }
-            pulseScheduler = startActivityPulse();
+            pulseScheduler = startActivityPulse(getChartsHost().getDevice().getDeviceCoordinator().getLiveActivityFragmentPulseInterval());
         } else {
             stopActivityPulse();
             if (getActivity() != null) {
@@ -389,15 +397,9 @@ public class LiveActivityFragment extends AbstractActivityChartFragment<ChartsDa
         }
     }
 
-    @Override
-    public void onMadeInvisibleInActivity() {
-        enableRealtimeTracking(false);
-        super.onMadeInvisibleInActivity();
-    }
 
     @Override
     public void onDestroyView() {
-        onMadeInvisibleInActivity();
         LocalBroadcastManager.getInstance(getActivity()).unregisterReceiver(mReceiver);
         super.onDestroyView();
     }

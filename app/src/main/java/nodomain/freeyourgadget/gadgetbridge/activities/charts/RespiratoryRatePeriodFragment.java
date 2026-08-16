@@ -1,7 +1,5 @@
 package nodomain.freeyourgadget.gadgetbridge.activities.charts;
 
-import android.graphics.Color;
-import android.os.Build;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -19,7 +17,6 @@ import com.github.mikephil.charting.data.LineDataSet;
 import com.github.mikephil.charting.formatter.ValueFormatter;
 import com.github.mikephil.charting.interfaces.datasets.ILineDataSet;
 
-import org.apache.commons.lang3.time.DateUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,14 +30,20 @@ import java.util.Locale;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.util.DateTimeUtils;
 
 public class RespiratoryRatePeriodFragment extends RespiratoryRateFragment<RespiratoryRatePeriodFragment.RespiratoryRateData> {
-    protected static final Logger LOG = LoggerFactory.getLogger(BodyEnergyFragment.class);
+    protected static final Logger LOG = LoggerFactory.getLogger(RespiratoryRatePeriodFragment.class);
 
     private TextView mDateView;
     private TextView sleepAvg;
     private TextView awakeAvg;
     private LineChart respiratoryRateChart;
+
+    @Override
+    protected boolean isSingleDay() {
+        return false;
+    }
 
     public static RespiratoryRatePeriodFragment newInstance (int totalDays) {
         RespiratoryRatePeriodFragment fragmentFirst = new RespiratoryRatePeriodFragment();
@@ -60,11 +63,9 @@ public class RespiratoryRatePeriodFragment extends RespiratoryRateFragment<Respi
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View rootView = inflater.inflate(R.layout.fragment_respiratory_rate_period, container, false);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            rootView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-                getChartsHost().enableSwipeRefresh(scrollY == 0);
-            });
-        }
+        rootView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+            getChartsHost().enableSwipeRefresh(scrollY == 0);
+        });
 
         mDateView = rootView.findViewById(R.id.rr_date_view);
         sleepAvg = rootView.findViewById(R.id.sleep_avg);
@@ -121,13 +122,11 @@ public class RespiratoryRatePeriodFragment extends RespiratoryRateFragment<Respi
     protected RespiratoryRateData refreshInBackground(ChartsHost chartsHost, DBHandler db, GBDevice device) {
         Calendar day = Calendar.getInstance();
         Date to = new Date((long) this.getTSEnd() * 1000);
-        Date from = DateUtils.addDays(to,-(TOTAL_DAYS - 1));
-        String toFormattedDate = new SimpleDateFormat("E, MMM dd").format(to);
-        String fromFormattedDate = new SimpleDateFormat("E, MMM dd").format(from);
-        mDateView.setText(fromFormattedDate + " - " + toFormattedDate);
+        final String formattedDate = DateTimeUtils.formatDaysUntil(TOTAL_DAYS, getTSEnd());
+
         day.setTime(to);
         List<RespiratoryRateDay> respiratoryRateDaysData = getMyRespiratoryRateDaysData(db, day, device);
-        return new RespiratoryRateData(respiratoryRateDaysData);
+        return new RespiratoryRateData(respiratoryRateDaysData, formattedDate);
     }
 
     protected LineDataSet createDataSet(final List<Entry> values, String label, int color) {
@@ -138,7 +137,8 @@ public class RespiratoryRatePeriodFragment extends RespiratoryRateFragment<Respi
         lineDataSet.setFillAlpha(255);
         lineDataSet.setCircleRadius(5f);
         lineDataSet.setDrawCircles(true);
-        lineDataSet.setDrawCircleHole(true);
+        lineDataSet.setDrawCircleHole(false);
+        lineDataSet.setValueTextSize(TEXT_COLOR);
         lineDataSet.setCircleColor(getResources().getColor(color));
         lineDataSet.setAxisDependency(YAxis.AxisDependency.LEFT);
         lineDataSet.setDrawValues(false);
@@ -148,6 +148,7 @@ public class RespiratoryRatePeriodFragment extends RespiratoryRateFragment<Respi
     @Override
     protected void updateChartsnUIThread(RespiratoryRateData respiratoryRateData) {
         respiratoryRateChart.setData(null);
+        mDateView.setText(respiratoryRateData.formattedDate);
         final String emptyValue = requireContext().getString(R.string.stats_empty_value);
         sleepAvg.setText(respiratoryRateData.sleepRateAvg > 0 ? String.valueOf(respiratoryRateData.sleepRateAvg) : emptyValue);
         awakeAvg.setText(respiratoryRateData.awakeRateAvg > 0 ? String.valueOf(respiratoryRateData.awakeRateAvg) : emptyValue);
@@ -205,15 +206,18 @@ public class RespiratoryRatePeriodFragment extends RespiratoryRateFragment<Respi
         respiratoryRateChart.invalidate();
     }
 
+    @Override
     protected void setupLegend(Chart<?> chart) {}
 
     protected static class RespiratoryRateData extends ChartsData {
         List<RespiratoryRateDay> days;
         int awakeRateAvg;
         int sleepRateAvg;
+        final String formattedDate;
 
-        protected RespiratoryRateData(List<RespiratoryRateDay> days) {
+        protected RespiratoryRateData(List<RespiratoryRateDay> days, String formattedDate) {
             this.days = days;
+            this.formattedDate = formattedDate;
             int awakeTotal = 0;
             int sleepTotal = 0;
             int awakeCounter = 0;

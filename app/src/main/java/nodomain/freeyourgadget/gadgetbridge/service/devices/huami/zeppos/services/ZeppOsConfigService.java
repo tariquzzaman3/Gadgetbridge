@@ -24,6 +24,8 @@ import static nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiConst.PREF
 import static nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst.PREF_NIGHT_MODE;
 import static nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst.PREF_NIGHT_MODE_END;
 import static nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst.PREF_NIGHT_MODE_START;
+import static nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.ZeppOsConfigService.ConfigArg.LANGUAGE;
+import static nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.ZeppOsConfigService.ConfigArg.LANGUAGE_FOLLOW_PHONE;
 
 import android.text.TextUtils;
 import android.widget.Toast;
@@ -39,9 +41,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.text.DateFormat;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
@@ -59,28 +58,46 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
+import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.activities.SettingsActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsUtils;
 import nodomain.freeyourgadget.gadgetbridge.capabilities.GpsCapability;
 import nodomain.freeyourgadget.gadgetbridge.capabilities.WorkoutDetectionCapability;
+import nodomain.freeyourgadget.gadgetbridge.capabilities.password.PasswordCapabilityImpl;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventUpdatePreferences;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.ActivateDisplayOnLift;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.ActivateDisplayOnLiftSensitivity;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.AlwaysOnDisplay;
+import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.DoNotDisturb;
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
+import nodomain.freeyourgadget.gadgetbridge.model.DistanceUnit;
+import nodomain.freeyourgadget.gadgetbridge.model.TemperatureUnit;
+import nodomain.freeyourgadget.gadgetbridge.model.WeightUnit;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsMenuType;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiLanguageType;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.AbstractZeppOsService;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsTransactionBuilder;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigIntUnbound;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigBoolean;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigByte;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigByteList;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigDatetimeHhMm;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigInt;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigShort;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigShortList;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigString;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigStringList;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.services.config.ConfigTimestamp;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.MapUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
-import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
 
+@SuppressWarnings({"unused", "MismatchedQueryAndUpdateOfCollection"})
 public class ZeppOsConfigService extends AbstractZeppOsService {
     private static final Logger LOG = LoggerFactory.getLogger(ZeppOsConfigService.class);
 
@@ -129,13 +146,43 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
     }
 
     @Override
-    public void initialize(final TransactionBuilder builder) {
+    public void initialize(final ZeppOsTransactionBuilder builder) {
         write(builder, CMD_CAPABILITIES_REQUEST);
-        requestAllConfigs(builder);
     }
 
     @Override
     public boolean onSendConfiguration(final String prefKey, Prefs prefs) {
+        // Special cases
+        switch (prefKey) {
+            // Fitness goals are global
+            case ActivityUser.PREF_USER_STEPS_GOAL:
+            case ActivityUser.PREF_USER_CALORIES_BURNT:
+            case ActivityUser.PREF_USER_SLEEP_DURATION_MINUTES:
+            case ActivityUser.PREF_USER_GOAL_WEIGHT_KG:
+            case ActivityUser.PREF_USER_GOAL_STANDING_TIME_HOURS:
+            case ActivityUser.PREF_USER_GOAL_FAT_BURN_TIME_MINUTES: {
+                withTransactionBuilder("set fitness goal", this::setFitnessGoal);
+                return true;
+            }
+            // Measurement system is global
+            case SettingsActivity.PREF_UNIT_DISTANCE:
+            case SettingsActivity.PREF_UNIT_TEMPERATURE:
+            case SettingsActivity.PREF_UNIT_WEIGHT: {
+                withTransactionBuilder("set measurement system", this::setMeasurementSystem);
+                return true;
+            }
+            // Password needs sanity checks
+            case PasswordCapabilityImpl.PREF_PASSWORD:
+            case PasswordCapabilityImpl.PREF_PASSWORD_ENABLED: {
+                withTransactionBuilder("set " + prefKey, this::setPassword);
+                return true;
+            }
+            case PREF_LANGUAGE: {
+                withTransactionBuilder("set language", this::setLanguage);
+                return true;
+            }
+        }
+
         if (!PREF_TO_CONFIG.containsKey(prefKey)) {
             return false;
         }
@@ -144,9 +191,7 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         if (setConfig(prefs, prefKey, configSetter)) {
             try {
                 // If the ConfigSetter was able to set the config, just write it and return
-                final TransactionBuilder builder = new TransactionBuilder("send config " + prefKey);
-                configSetter.write(builder);
-                builder.queue(getSupport().getQueue());
+                withTransactionBuilder("send config " + prefKey, configSetter::write);
             } catch (final Exception e) {
                 GB.toast("Error setting configuration", Toast.LENGTH_LONG, GB.ERROR, e);
             }
@@ -155,6 +200,84 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         }
 
         return false;
+    }
+
+    private void setLanguage(final ZeppOsTransactionBuilder builder) {
+        final String localeString = getDevicePrefs().getString("language", "auto");
+
+        LOG.info("Setting device language to {}", localeString);
+
+        newSetter()
+                .setByte(LANGUAGE, getDevicePrefs().getLanguageId())
+                .setBoolean(LANGUAGE_FOLLOW_PHONE, localeString.equals("auto"))
+                .write(builder);
+    }
+
+    private void setPassword(final ZeppOsTransactionBuilder builder) {
+        final boolean passwordEnabled = HuamiCoordinator.getPasswordEnabled(getSupport().getDevice().getAddress());
+        final String password = HuamiCoordinator.getPassword(getSupport().getDevice().getAddress());
+
+        LOG.info("Setting password: {}, {}", passwordEnabled, password);
+
+        if (password == null || password.isEmpty()) {
+            LOG.warn("Invalid password: {}", password);
+            return;
+        }
+
+        newSetter()
+                .setBoolean(ConfigArg.PASSWORD_ENABLED, passwordEnabled)
+                .setString(ConfigArg.PASSWORD_TEXT, password)
+                .write(builder);
+    }
+
+    protected void setFitnessGoal(final ZeppOsTransactionBuilder builder) {
+        final int goalSteps = GBApplication.getPrefs().getInt(ActivityUser.PREF_USER_STEPS_GOAL, ActivityUser.defaultUserStepsGoal);
+        final int goalCalories = GBApplication.getPrefs().getInt(ActivityUser.PREF_USER_CALORIES_BURNT, ActivityUser.defaultUserCaloriesBurntGoal);
+        final int goalSleep = GBApplication.getPrefs().getInt(ActivityUser.PREF_USER_SLEEP_DURATION_MINUTES, ActivityUser.defaultUserSleepDurationGoal);
+        final int goalWeight = GBApplication.getPrefs().getInt(ActivityUser.PREF_USER_GOAL_WEIGHT_KG, ActivityUser.defaultUserGoalWeightKg);
+        final int goalStandingTime = GBApplication.getPrefs().getInt(ActivityUser.PREF_USER_GOAL_STANDING_TIME_HOURS, ActivityUser.defaultUserGoalStandingTimeHours);
+        final int goalFatBurnTime = GBApplication.getPrefs().getInt(ActivityUser.PREF_USER_GOAL_FAT_BURN_TIME_MINUTES, ActivityUser.defaultUserFatBurnTimeMinutes);
+        LOG.info("Setting Fitness Goals to steps={}, calories={}, sleep={}, weight={}, standingTime={}, fatBurn={}", goalSteps, goalCalories, goalSleep, goalWeight, goalStandingTime, goalFatBurnTime);
+
+        final ConfigSetter setter = newSetter()
+                .setShort(ConfigArg.FITNESS_GOAL_CALORIES, (short) goalCalories)
+                .setShort(ConfigArg.FITNESS_GOAL_SLEEP, (short) goalSleep)
+                .setShort(ConfigArg.FITNESS_GOAL_STANDING_TIME, (short) (goalStandingTime))
+                .setShort(ConfigArg.FITNESS_GOAL_FAT_BURN_TIME, (short) goalFatBurnTime);
+
+        final byte healthVersion = Objects.requireNonNullElse(mGroupVersions.get(ConfigGroup.HEALTH), (byte) 0);
+
+        if (healthVersion <= 1) {
+            setter.setShort(ConfigArg.FITNESS_GOAL_STEPS, (short) goalSteps);
+        } else {
+            setter.setInt(ConfigArg.FITNESS_GOAL_STEPS, goalSteps);
+        }
+
+        if (healthVersion < 3) {
+            setter.setShort(ConfigArg.FITNESS_GOAL_WEIGHT, (short) goalWeight);
+        } else {
+            setter.setInt(ConfigArg.FITNESS_GOAL_WEIGHT, goalWeight);
+        }
+
+        setter.write(builder);
+    }
+
+    private void setMeasurementSystem(final ZeppOsTransactionBuilder builder) {
+        final DistanceUnit distanceUnit = GBApplication.getPrefs().getDistanceUnit();
+        final TemperatureUnit temperatureUnit = GBApplication.getPrefs().getTemperatureUnit();
+        final WeightUnit weightUnit = GBApplication.getPrefs().getWeightUnit();
+        LOG.info(
+                "Setting measurement system - distance={}, temperature={}, weight={}",
+                distanceUnit,
+                temperatureUnit,
+                weightUnit
+        );
+
+        newSetter()
+                .setByte(ConfigArg.DISTANCE_UNIT, encodeByte(ConfigArg.DISTANCE_UNIT, distanceUnit.name().toLowerCase(Locale.ROOT)))
+                .setByte(ConfigArg.TEMPERATURE_UNIT, encodeByte(ConfigArg.TEMPERATURE_UNIT, temperatureUnit.name().toLowerCase(Locale.ROOT)))
+                .setByte(ConfigArg.WEIGHT_UNIT, encodeByte(ConfigArg.WEIGHT_UNIT, weightUnit.name().toLowerCase(Locale.ROOT)))
+                .write(builder);
     }
 
     private void handleCapabilitiesResponse(final byte[] payload) {
@@ -166,16 +289,21 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         }
         final int numGroups = payload[2] & 0xFF;
         if (payload.length != numGroups + 3) {
-            LOG.error("Unexpected config capabilities response length {} for {} groups", payload.length, numGroups);
-            return;
+            // Sometimes there are some extra bytes at the end?
+            LOG.warn("Unexpected config capabilities response length {} for {} groups", payload.length, numGroups);
         }
 
+        final ZeppOsTransactionBuilder builder = createTransactionBuilder("configs request");
         for (int i = 0; i < numGroups; i++) {
             final ConfigGroup configGroup = ConfigGroup.fromValue(payload[3 + i]);
+            if (configGroup == null) {
+                LOG.warn("Unknown config group {}", String.format("0x%02x", payload[3 + i]));
+                continue;
+            }
             LOG.debug("Got supported config group {}: {}", String.format("0x%02x", payload[3 + i]), configGroup);
+            requestConfig(builder, configGroup);
         }
-
-        // TODO: We should only request supported config groups
+        builder.queue();
     }
 
     private boolean sentFitnessGoal = false;
@@ -189,9 +317,9 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
 
         final byte version = payload[3];
         if (configGroup.getVersion() != version) {
-            // Special case for HEALTH, where we actually support version 1 as well
+            // Special case for HEALTH, where we actually support versions 1 and 2 as well
             // TODO: Support multiple versions in a cleaner way...
-            if (!(configGroup == ConfigGroup.HEALTH && version == 1)) {
+            if (!(configGroup == ConfigGroup.HEALTH && version <= configGroup.getVersion())) {
                 LOG.warn("Unexpected version {} for {}", String.format("0x%02x", version), configGroup);
                 return;
             }
@@ -215,11 +343,11 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         getSupport().evaluateGBDeviceEvent(eventUpdatePreferences);
 
         if (getSupport().getDevice().isInitialized()) {
-            if (prefs.containsKey(PREF_LANGUAGE) && prefs.get(PREF_LANGUAGE).equals(PREF_LANGUAGE_AUTO)) {
+            if (prefs.containsKey(PREF_LANGUAGE) && PREF_LANGUAGE_AUTO.equals(prefs.get(PREF_LANGUAGE))) {
                 // Band is reporting automatic language, we need to send the actual language
                 getSupport().onSendConfiguration(PREF_LANGUAGE);
             }
-            if (prefs.containsKey(PREF_TIMEFORMAT) && prefs.get(PREF_TIMEFORMAT).equals(PREF_TIMEFORMAT_AUTO)) {
+            if (prefs.containsKey(PREF_TIMEFORMAT) && PREF_TIMEFORMAT_AUTO.equals(prefs.get(PREF_TIMEFORMAT))) {
                 // Band is reporting automatic time format, we need to send the actual time format
                 getSupport().onSendConfiguration(PREF_TIMEFORMAT);
             }
@@ -232,17 +360,17 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         }
     }
 
-    public void requestAllConfigs(final TransactionBuilder builder) {
-        for (final ConfigGroup configGroup : ConfigGroup.values()) {
-            requestConfig(builder, configGroup);
+    public void requestConfig(final ZeppOsTransactionBuilder builder, final ConfigGroup config) {
+        if (BuildConfig.DEBUG && getSupport().getDevicePrefs().getBoolean("zepp_os_request_all_config_args", false)) {
+            LOG.debug("Requesting all config args for {}", config);
+            requestConfig(builder, config, true, Collections.emptyList());
+        } else {
+            // More conservative approach, since we may get config types we don't know how to parse
+            requestConfig(builder, config, true, ZeppOsConfigService.ConfigArg.getAllArgsForConfigGroup(config));
         }
     }
 
-    public void requestConfig(final TransactionBuilder builder, final ConfigGroup config) {
-        requestConfig(builder, config, true, ZeppOsConfigService.ConfigArg.getAllArgsForConfigGroup(config));
-    }
-
-    public void requestConfig(final TransactionBuilder builder,
+    public void requestConfig(final ZeppOsTransactionBuilder builder,
                               final ConfigGroup config,
                               final boolean includeConstraints,
                               final List<ZeppOsConfigService.ConfigArg> args) {
@@ -268,7 +396,7 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         WEARING_DIRECTION(0x05, 0x02),
         OFFLINE_VOICE(0x06, 0x02),
         LANGUAGE(0x07, 0x02),
-        HEALTH(0x08, 0x02),
+        HEALTH(0x08, 0x03),
         WORKOUT(0x09, 0x01),
         SYSTEM(0x0a, 0x01),
         BLUETOOTH(0x0b, 0x01),
@@ -306,11 +434,13 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         STRING(0x20),
         STRING_LIST(0x21),
         SHORT(0x01),
+        SHORT_LIST(0x02),
         INT(0x03),
         BYTE(0x10),
         BYTE_LIST(0x11),
         DATETIME_HH_MM(0x30),
         TIMESTAMP_MILLIS(0x40),
+        INT_UNBOUND(0x50),
         ;
 
         private final byte value;
@@ -336,6 +466,7 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
 
     public enum ConfigArg {
         // AGPS
+        AGPS_UNK_0x08(ConfigGroup.AGPS, ConfigType.INT_UNBOUND, 0x08, null), // TODO ?
         AGPS_UPDATE_TIME(ConfigGroup.AGPS, ConfigType.TIMESTAMP_MILLIS, 0x09, PREF_AGPS_UPDATE_TIME),
         AGPS_EXPIRE_TIME(ConfigGroup.AGPS, ConfigType.TIMESTAMP_MILLIS, 0x0a, PREF_AGPS_EXPIRE_TIME),
 
@@ -362,6 +493,7 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         COVER_TO_MUTE(ConfigGroup.SOUND_AND_VIBRATION, ConfigType.BOOL, 0x08, PREF_COVER_TO_MUTE),
         VIBRATE_FOR_ALERT(ConfigGroup.SOUND_AND_VIBRATION, ConfigType.BOOL, 0x09, PREF_VIBRATE_FOR_ALERT),
         TEXT_TO_SPEECH(ConfigGroup.SOUND_AND_VIBRATION, ConfigType.BOOL, 0x0a, PREF_TEXT_TO_SPEECH),
+        VIBRATION_INTENSITY(ConfigGroup.SOUND_AND_VIBRATION, ConfigType.BYTE, 0x12, PREF_VIBRATION_INTENSITY),
 
         // Wearing Direction
         WEARING_DIRECTION_BUTTONS(ConfigGroup.WEARING_DIRECTION, ConfigType.BYTE, 0x02, PREF_WEARDIRECTION),
@@ -417,19 +549,22 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         WORKOUT_DETECTION_ALERT(ConfigGroup.WORKOUT, ConfigType.BOOL, 0x41, PREF_WORKOUT_DETECTION_ALERT),
         WORKOUT_DETECTION_SENSITIVITY(ConfigGroup.WORKOUT, ConfigType.BYTE, 0x42, PREF_WORKOUT_DETECTION_SENSITIVITY),
         WORKOUT_POOL_SWIMMING_SIZE(ConfigGroup.WORKOUT, ConfigType.BYTE, 0x51, null), // TODO ?
+        WORKOUT_HEART_RATE_ZONES(ConfigGroup.WORKOUT, ConfigType.SHORT_LIST, 0x05, null),
 
         // System
         TIME_FORMAT(ConfigGroup.SYSTEM, ConfigType.BYTE, 0x01, PREF_TIMEFORMAT),
         DATE_FORMAT(ConfigGroup.SYSTEM, ConfigType.STRING, 0x02, PREF_DATEFORMAT),
+        DISTANCE_UNIT(ConfigGroup.SYSTEM, ConfigType.BYTE, 0x05, null), // TODO needs to be handled globally
         DND_MODE(ConfigGroup.SYSTEM, ConfigType.BYTE, 0x0a, PREF_DO_NOT_DISTURB),
         DND_SCHEDULED_START(ConfigGroup.SYSTEM, ConfigType.DATETIME_HH_MM, 0x0b, PREF_DO_NOT_DISTURB_START),
         DND_SCHEDULED_END(ConfigGroup.SYSTEM, ConfigType.DATETIME_HH_MM, 0x0c, PREF_DO_NOT_DISTURB_END),
         CALL_DELAY(ConfigGroup.SYSTEM, ConfigType.SHORT, 0x11, PREF_NOTIFICATION_DELAY_CALLS),
-        TEMPERATURE_UNIT(ConfigGroup.SYSTEM, ConfigType.BYTE, 0x12, SettingsActivity.PREF_MEASUREMENT_SYSTEM),
+        TEMPERATURE_UNIT(ConfigGroup.SYSTEM, ConfigType.BYTE, 0x12, null), // TODO needs to be handled globally
         TIME_FORMAT_FOLLOWS_PHONE(ConfigGroup.SYSTEM, ConfigType.BOOL, 0x13, null /* special case, handled below */),
         UPPER_BUTTON_LONG_PRESS(ConfigGroup.SYSTEM, ConfigType.STRING_LIST, 0x15, PREF_UPPER_BUTTON_LONG_PRESS),
         LOWER_BUTTON_PRESS(ConfigGroup.SYSTEM, ConfigType.STRING_LIST, 0x16, PREF_LOWER_BUTTON_SHORT_PRESS),
         DISPLAY_CALLER(ConfigGroup.SYSTEM, ConfigType.BOOL, 0x18, PREF_DISPLAY_CALLER),
+        WEIGHT_UNIT(ConfigGroup.SYSTEM, ConfigType.BYTE, 0x1a, null), // TODO needs to be handled globally
         NIGHT_MODE_MODE(ConfigGroup.SYSTEM, ConfigType.BYTE, 0x1b, PREF_NIGHT_MODE),
         NIGHT_MODE_SCHEDULED_START(ConfigGroup.SYSTEM, ConfigType.DATETIME_HH_MM, 0x1c, PREF_NIGHT_MODE_START),
         NIGHT_MODE_SCHEDULED_END(ConfigGroup.SYSTEM, ConfigType.DATETIME_HH_MM, 0x1d, PREF_NIGHT_MODE_END),
@@ -469,13 +604,21 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                     return null;
                 }
 
-                switch (groupVersion) {
-                    case 0x01:
-                        return ConfigType.SHORT;
-                    case 0x02:
-                    default:
-                        return ConfigType.INT;
+                return groupVersion == 1 ? ConfigType.SHORT : ConfigType.INT;
+            }
+
+            if (this == FITNESS_GOAL_WEIGHT) {
+                if (groupVersions == null) {
+                    return ConfigType.SHORT;
                 }
+
+                final Byte groupVersion = groupVersions.get(getConfigGroup());
+                if (groupVersion == null) {
+                    LOG.error("Version for {} is not known", getConfigGroup());
+                    return null;
+                }
+
+                return groupVersion < 3 ? ConfigType.SHORT : ConfigType.INT;
             }
 
             return configType;
@@ -512,7 +655,7 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
     /**
      * Map of pref key to config.
      */
-    private static final Map<String, ConfigArg> PREF_TO_CONFIG = new HashMap<String, ConfigArg>() {{
+    private static final Map<String, ConfigArg> PREF_TO_CONFIG = new HashMap<>() {{
         for (final ConfigArg arg : ConfigArg.values()) {
             if (arg.getPrefKey() != null) {
                 if (containsKey(arg.getPrefKey())) {
@@ -538,7 +681,13 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
             return false;
         }
 
-        switch (configArg.getConfigType(mGroupVersions)) {
+        final ConfigType configType = configArg.getConfigType(mGroupVersions);
+        if (configType == null) {
+            LOG.error("Unknown config type for {}", configArg);
+            return false;
+        }
+
+        switch (configType) {
             case BOOL:
                 setter.setBoolean(configArg, prefs.getBoolean(key, false));
                 return true;
@@ -643,8 +792,12 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                 return encodeString(TIME_FORMAT_MAP, value);
             case DND_MODE:
                 return encodeEnum(DND_MODE_MAP, value);
+            case DISTANCE_UNIT:
+                return encodeEnum(DISTANCE_UNIT_MAP, value);
             case TEMPERATURE_UNIT:
                 return encodeEnum(TEMPERATURE_UNIT_MAP, value);
+            case WEIGHT_UNIT:
+                return encodeEnum(WEIGHT_UNIT_MAP, value);
             case NIGHT_MODE_MODE:
                 return encodeString(NIGHT_MODE_MAP, value);
             case WEARING_DIRECTION_BUTTONS:
@@ -663,6 +816,8 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                 return encodeEnum(WORKOUT_DETECTION_CATEGORY_MAP, value);
             case WORKOUT_DETECTION_SENSITIVITY:
                 return encodeEnum(WORKOUT_DETECTION_SENSITIVITY_MAP, value);
+            case VIBRATION_INTENSITY:
+                return encodeString(VIBRATION_INTENSITY_MAP, value);
         }
 
         LOG.error("No encoder for {}", configArg);
@@ -804,7 +959,7 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
             return baos.toByteArray();
         }
 
-        public void write(final TransactionBuilder builder) {
+        public void write(final ZeppOsTransactionBuilder builder) {
             // Write one command per config group
             for (final ConfigGroup configGroup : arguments.keySet()) {
                 ZeppOsConfigService.this.write(builder, encode(configGroup));
@@ -839,6 +994,7 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         }
     }
 
+    @SuppressWarnings({"SwitchStatementWithTooFewBranches", "EnhancedSwitchMigration"})
     public class ConfigParser {
         private final ConfigGroup configGroup;
         private final boolean includesConstraints;
@@ -863,13 +1019,13 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                 final byte configArgByte = buf.get();
                 final ZeppOsConfigService.ConfigArg configArg = ZeppOsConfigService.ConfigArg.fromCode(configGroup, configArgByte);
                 if (configArg == null) {
-                    LOG.error("Unknown config {} for {}", String.format("0x%02x", configArgByte), configGroup);
+                    LOG.error("Unknown config arg for {}: {}", configGroup, String.format("0x%02x", configArgByte));
                 }
 
                 final byte configTypeByte = buf.get();
                 final ConfigType configType = ConfigType.fromValue(configTypeByte);
                 if (configType == null) {
-                    LOG.error("Unknown type {} for {}", String.format("0x%02x", configTypeByte), configArg);
+                    LOG.error("Unknown type {} for {} - aborting", String.format("0x%02x", configTypeByte), configArg);
                     // Abort, since we don't know how to parse this type or how many bytes it is
                     // Return whatever we parsed so far, since that's still valid
                     return prefs;
@@ -919,21 +1075,20 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                         break;
                     case SHORT:
                         final ConfigShort valShort = ConfigShort.consume(buf, includesConstraints);
-                        if (valShort == null) {
-                            LOG.error("Failed to parse {} for {}", configType, configArg);
-                            return prefs;
-                        }
                         LOG.info("Got {} ({}) = {}", configArg, String.format("0x%02x", configArgByte), valShort);
                         if (configArg != null) {
                             argPrefs = convertShortToPrefs(configArg, valShort);
                         }
                         break;
+                    case SHORT_LIST:
+                        final ConfigShortList valShortList = ConfigShortList.consume(buf, includesConstraints);
+                        LOG.info("Got {} ({}) = {}", configArg, String.format("0x%02x", configArgByte), valShortList);
+                        if (configArg != null) {
+                            // TODO
+                        }
+                        break;
                     case INT:
                         final ConfigInt valInt = ConfigInt.consume(buf, includesConstraints);
-                        if (valInt == null) {
-                            LOG.error("Failed to parse {} for {}", configType, configArg);
-                            return prefs;
-                        }
                         LOG.info("Got {} ({}) = {}", configArg, String.format("0x%02x", configArgByte), valInt);
                         if (configArg != null) {
                             argPrefs = convertIntToPrefs(configArg, valInt);
@@ -941,10 +1096,6 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                         break;
                     case BYTE:
                         final ConfigByte valByte = ConfigByte.consume(buf, includesConstraints);
-                        if (valByte == null) {
-                            LOG.error("Failed to parse {} for {}", configType, configArg);
-                            return prefs;
-                        }
                         LOG.info("Got {} ({}) = {}", configArg, String.format("0x%02x", configArgByte), valByte);
                         if (configArg != null) {
                             argPrefs = convertByteToPrefs(configArg, valByte);
@@ -952,10 +1103,6 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                         break;
                     case BYTE_LIST:
                         final ConfigByteList valByteList = ConfigByteList.consume(buf, includesConstraints);
-                        if (valByteList == null) {
-                            LOG.error("Failed to parse {} for {}", configType, configArg);
-                            return prefs;
-                        }
                         LOG.info("Got {} ({}) = {}", configArg, String.format("0x%02x", configArgByte), valByteList);
                         if (configArg != null) {
                             argPrefs = convertByteListToPrefs(configArg, valByteList);
@@ -974,13 +1121,16 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                         break;
                     case TIMESTAMP_MILLIS:
                         final ConfigTimestamp valTimestamp = ConfigTimestamp.consume(buf);
-                        if (valTimestamp == null) {
-                            LOG.error("Failed to parse {} for {}", configType, configArg);
-                            return prefs;
-                        }
                         LOG.info("Got {} ({}) = {}", configArg, String.format("0x%02x", configArgByte), valTimestamp);
                         if (configArg != null) {
                             argPrefs = convertTimestampToPrefs(configArg, valTimestamp);
+                        }
+                        break;
+                    case INT_UNBOUND:
+                        final ConfigIntUnbound valIntUnbound = ConfigIntUnbound.consume(buf, includesConstraints);
+                        LOG.info("Got {} ({}) = {}", configArg, String.format("0x%02x", configArgByte), valIntUnbound);
+                        if (configArg != null) {
+                            // TODO
                         }
                         break;
                     default:
@@ -1202,7 +1352,13 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                             final List<String> possibleLanguages = new ArrayList<>();
                             possibleLanguages.add("auto");
                             for (final byte possibleValue : value.getPossibleValues()) {
-                                possibleLanguages.add(languageByteToLocale(possibleValue));
+                                final String languageCode = languageByteToLocale(possibleValue);
+                                if (languageCode == null) {
+                                    LOG.warn("Unknown language byte {}", String.format("0x%02x", possibleValue));
+                                    possibleLanguages.add(String.format("0x%x", possibleValue));
+                                } else {
+                                    possibleLanguages.add(languageCode);
+                                }
                             }
                             possibleLanguages.removeAll(Collections.singleton(null));
                             prefs.put(DeviceSettingsUtils.getPrefPossibleValuesKey(configArg.getPrefKey()), TextUtils.join(",", possibleLanguages));
@@ -1225,9 +1381,17 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                 case DND_MODE:
                     decoder = b -> decodeEnum(DND_MODE_MAP, b);
                     break;
+                case DISTANCE_UNIT:
+                    // TODO: This should be per device...
+                    decoder = b -> decodeEnum(DISTANCE_UNIT_MAP, b);
+                    break;
                 case TEMPERATURE_UNIT:
                     // TODO: This should be per device...
                     decoder = b -> decodeEnum(TEMPERATURE_UNIT_MAP, b);
+                    break;
+                case WEIGHT_UNIT:
+                    // TODO: This should be per device...
+                    decoder = b -> decodeEnum(WEIGHT_UNIT_MAP, b);
                     break;
                 case NIGHT_MODE_MODE:
                     decoder = b -> decodeString(NIGHT_MODE_MAP, b);
@@ -1253,23 +1417,29 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
                 case WORKOUT_DETECTION_SENSITIVITY:
                     decoder = b -> decodeEnum(WORKOUT_DETECTION_SENSITIVITY_MAP, b);
                     break;
+                case VIBRATION_INTENSITY:
+                    decoder = b -> decodeString(VIBRATION_INTENSITY_MAP, b);
+                    break;
                 default:
                     decoder = null;
             }
 
-            if (decoder != null) {
-                prefs = singletonMap(configArg.getPrefKey(), decoder.decode(value.getValue()));
-                if (includesConstraints) {
-                    prefs.put(
-                            DeviceSettingsUtils.getPrefPossibleValuesKey(configArg.getPrefKey()),
-                            TextUtils.join(",", decodeByteValues(possibleValues, decoder))
-                    );
+            if (configArg.getPrefKey() != null) {
+                if (decoder != null) {
+                    prefs = singletonMap(configArg.getPrefKey(), decoder.decode(value.getValue()));
+                    if (includesConstraints) {
+                        prefs.put(
+                                DeviceSettingsUtils.getPrefPossibleValuesKey(configArg.getPrefKey()),
+                                TextUtils.join(",", decodeByteValues(possibleValues, decoder))
+                        );
+                    }
                 }
             }
 
             return prefs;
         }
 
+        @SuppressWarnings("ReplaceNullCheck")
         private List<String> decodeByteValues(final byte[] values, final ValueDecoder<Byte> decoder) {
             final List<String> decoded = new ArrayList<>(values.length);
             for (final byte b : values) {
@@ -1302,378 +1472,13 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
 
         private Map<String, Object> singletonMap(final String key, final Object value) {
             if (key == null) {
-                LOG.error("Null key in prefs update");
-                if (BuildConfig.DEBUG) {
-                    // Crash
-                    throw new IllegalStateException("Null key in prefs update");
-                }
-                return Collections.emptyMap();
+                LOG.warn("Null key in prefs update, val = {}", value);
+                return new HashMap<>();
             }
 
-            return new HashMap<String, Object>() {{
+            return new HashMap<>() {{
                 put(key, value);
             }};
-        }
-    }
-
-    private static class ConfigBoolean {
-        private final boolean value;
-
-        public ConfigBoolean(final boolean value) {
-            this.value = value;
-        }
-
-        public boolean getValue() {
-            return value;
-        }
-
-        private static ConfigBoolean consume(final ByteBuffer buf) {
-            return new ConfigBoolean(buf.get() == 1);
-        }
-
-        @Override
-        public String toString() {
-            return String.format("ConfigBoolean{value=%s}", value);
-        }
-    }
-
-    private static class ConfigString {
-        private final String value;
-        private final int maxLength;
-
-        public ConfigString(final String value, final int maxLength) {
-            this.value = value;
-            this.maxLength = maxLength;
-        }
-
-        public String getValue() {
-            return value;
-        }
-
-        public int getMaxLength() {
-            return maxLength;
-        }
-
-        private static ConfigString consume(final ByteBuffer buf, final boolean includesConstraints) {
-            final String value = StringUtils.untilNullTerminator(buf);
-            if (value == null) {
-                LOG.error("Null terminator not found in buffer");
-                return null;
-            }
-
-            if (!includesConstraints) {
-                return new ConfigString(value, -1);
-            }
-
-            final int maxLength = buf.get() & 0xff;
-
-            return new ConfigString(value, maxLength);
-        }
-
-        @Override
-        public String toString() {
-            return String.format("ConfigString{value=%s}", value);
-        }
-    }
-
-    private static class ConfigStringList {
-        private final String value;
-        private final List<String> possibleValues;
-
-        public ConfigStringList(final String value, final List<String> possibleValues) {
-            this.value = value;
-            this.possibleValues = possibleValues;
-        }
-
-        public String getValue() {
-            return value;
-        }
-
-        public List<String> getPossibleValues() {
-            return possibleValues;
-        }
-
-        private static ConfigStringList consume(final ByteBuffer buf, final boolean includesConstraints) {
-            final String value = StringUtils.untilNullTerminator(buf);
-            if (value == null) {
-                LOG.error("Null terminator not found in buffer");
-                return null;
-            }
-
-            final List<String> possibleValues = new ArrayList<>();
-            if (includesConstraints) {
-                final int unknown1 = buf.get() & 0xff; // ?
-                final int numPossibleValues = buf.get() & 0xff;
-
-                for (int i = 0; i < numPossibleValues; i++) {
-                    final String possibleValue = StringUtils.untilNullTerminator(buf);
-                    possibleValues.add(possibleValue);
-                }
-            }
-
-            return new ConfigStringList(value, possibleValues);
-        }
-
-        @Override
-        public String toString() {
-            return String.format("ConfigStringList{value=%s, possibleValues=%s}", value, possibleValues);
-        }
-    }
-
-    private static class ConfigShort {
-        private final short value;
-        private final short min;
-        private final short max;
-        private final boolean minMaxKnown;
-
-        public ConfigShort(final short value) {
-            this.value = value;
-            this.min = this.max = 0;
-            minMaxKnown = false;
-        }
-
-        public ConfigShort(final short value, final short min, final short max) {
-            this.value = value;
-            this.min = min;
-            this.max = max;
-            this.minMaxKnown = true;
-        }
-
-        public short getValue() {
-            return value;
-        }
-
-        public short getMin() {
-            return min;
-        }
-
-        public short getMax() {
-            return max;
-        }
-
-        public boolean isMinMaxKnown() {
-            return minMaxKnown;
-        }
-
-        private static ConfigShort consume(final ByteBuffer buf, final boolean includesConstraints) {
-            final short value = buf.getShort();
-
-            if (!includesConstraints) {
-                return new ConfigShort(value);
-            }
-
-            final short min = buf.getShort();
-            final short max = buf.getShort();
-
-            return new ConfigShort(value, min, max);
-        }
-
-        @Override
-        public String toString() {
-            if (isMinMaxKnown()) {
-                return String.format(Locale.ROOT, "ConfigShort{value=%d, min=%d, max=%d}", value, min, max);
-            } else {
-                return String.format(Locale.ROOT, "ConfigShort{value=%d}", value);
-            }
-        }
-    }
-
-    private static class ConfigInt {
-        private final int value;
-        private final int min;
-        private final int max;
-        private final boolean minMaxKnown;
-
-        public ConfigInt(final int value) {
-            this.value = value;
-            this.min = this.max = 0;
-            minMaxKnown = false;
-        }
-
-        public ConfigInt(final int value, final int min, final int max) {
-            this.value = value;
-            this.min = min;
-            this.max = max;
-            this.minMaxKnown = true;
-        }
-
-        public int getValue() {
-            return value;
-        }
-
-        public int getMin() {
-            return min;
-        }
-
-        public int getMax() {
-            return max;
-        }
-
-        public boolean isMinMaxKnown() {
-            return minMaxKnown;
-        }
-
-        private static ConfigInt consume(final ByteBuffer buf, final boolean includesConstraints) {
-            final int value = buf.getInt();
-
-            if (!includesConstraints) {
-                return new ConfigInt(value);
-            }
-
-            final int min = buf.getInt();
-            final int max = buf.getInt();
-
-            return new ConfigInt(value, min, max);
-        }
-
-        @Override
-        public String toString() {
-            if (isMinMaxKnown()) {
-                return String.format(Locale.ROOT, "ConfigInt{value=%d, min=%d, max=%d}", value, min, max);
-            } else {
-                return String.format(Locale.ROOT, "ConfigInt{value=%d}", value);
-            }
-        }
-    }
-
-    private static class ConfigTimestamp {
-        private final long value;
-
-        public ConfigTimestamp(final long value) {
-            this.value = value;
-        }
-
-        public long getValue() {
-            return value;
-        }
-
-        private static ConfigTimestamp consume(final ByteBuffer buf) {
-            final long value = buf.getLong();
-
-            return new ConfigTimestamp(value);
-        }
-
-        @Override
-        public String toString() {
-            return String.format(Locale.ROOT, "ConfigTimestamp{value=%s}", new Date(value));
-        }
-    }
-
-    private static class ConfigByte {
-        private final byte value;
-        private final byte[] possibleValues;
-
-        public ConfigByte(final byte value, final byte[] possibleValues) {
-            this.value = value;
-            this.possibleValues = possibleValues;
-        }
-
-        public byte getValue() {
-            return value;
-        }
-
-        public byte[] getPossibleValues() {
-            return possibleValues;
-        }
-
-        private static ConfigByte consume(final ByteBuffer buf, final boolean includesConstraints) {
-            final byte value = buf.get();
-
-            if (includesConstraints) {
-                final int numPossibleValues = buf.get() & 0xff;
-                final byte[] possibleValues = new byte[numPossibleValues];
-
-                for (int i = 0; i < numPossibleValues; i++) {
-                    possibleValues[i] = buf.get();
-                }
-
-                return new ConfigByte(value, possibleValues);
-            }
-
-            return new ConfigByte(value, new byte[0]);
-        }
-
-        @Override
-        public String toString() {
-            return String.format("ConfigByte{value=0x%02x, possibleValues=%s}", value, GB.hexdump(possibleValues));
-        }
-    }
-
-    private static class ConfigByteList {
-        private final byte[] values;
-        private final byte[] possibleValues;
-
-        public ConfigByteList(final byte[] values, final byte[] possibleValues) {
-            this.values = values;
-            this.possibleValues = possibleValues;
-        }
-
-        public byte[] getValues() {
-            return values;
-        }
-
-        @Nullable
-        public byte[] getPossibleValues() {
-            return possibleValues;
-        }
-
-        private static ConfigByteList consume(final ByteBuffer buf, final boolean includesConstraints) {
-            final int numValues = buf.get() & 0xff;
-            final byte[] values = new byte[numValues];
-            for (int i = 0; i < numValues; i++) {
-                values[i] = buf.get();
-            }
-
-            if (includesConstraints) {
-                final int numPossibleValues = buf.get() & 0xff;
-                final byte[] possibleValues = new byte[numPossibleValues];
-
-                for (int i = 0; i < numPossibleValues; i++) {
-                    possibleValues[i] = buf.get();
-                }
-
-                return new ConfigByteList(values, possibleValues);
-            }
-
-            return new ConfigByteList(values, null);
-        }
-
-        @Override
-        public String toString() {
-            if (possibleValues != null) {
-                return String.format("ConfigByteList{values=%s, possibleValues=%s}", GB.hexdump(values), GB.hexdump(possibleValues));
-            } else {
-                return String.format("ConfigByteList{values=%s}", GB.hexdump(values));
-            }
-        }
-    }
-
-    private static class ConfigDatetimeHhMm {
-        final String value;
-
-        public ConfigDatetimeHhMm(final String value) {
-            this.value = value;
-        }
-
-        public String getValue() {
-            return value;
-        }
-
-        private static ConfigDatetimeHhMm consume(final ByteBuffer buf) {
-            final DateFormat df = new SimpleDateFormat("HH:mm", Locale.getDefault());
-            final String hhmm = String.format(Locale.ROOT, "%02d:%02d", buf.get(), buf.get());
-            try {
-                df.parse(hhmm);
-            } catch (final ParseException e) {
-                LOG.error("Failed to parse HH:mm from {}", hhmm);
-                return null;
-            }
-            return new ConfigDatetimeHhMm(hhmm);
-        }
-
-        @Override
-        public String toString() {
-            return String.format("ConfigDatetimeHhMm{value=%s}", value);
         }
     }
 
@@ -1688,7 +1493,13 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
 
     public static Byte languageLocaleToByte(final String locale) {
         if (HuamiLanguageType.idLookup.containsKey(locale)) {
-            return (byte) (int) HuamiLanguageType.idLookup.get(locale);
+            return (byte) (int) Objects.requireNonNull(HuamiLanguageType.idLookup.get(locale));
+        }
+
+        // value doesn't match a known language, attempt to parse it as hex
+        final Matcher matcher = Pattern.compile("^0[xX]([0-9a-fA-F]{1,2})$").matcher(locale);
+        if (matcher.find()) {
+            return (byte) Integer.parseInt(Objects.requireNonNull(matcher.group(1)), 16);
         }
 
         return null;
@@ -1711,73 +1522,85 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         }
     }
 
-    private static final Map<Byte, Enum<?>> ALWAYS_ON_DISPLAY_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> ALWAYS_ON_DISPLAY_MAP = new HashMap<>() {{
         put((byte) 0x00, AlwaysOnDisplay.OFF);
         put((byte) 0x01, AlwaysOnDisplay.AUTOMATIC);
         put((byte) 0x02, AlwaysOnDisplay.SCHEDULED);
         put((byte) 0x03, AlwaysOnDisplay.ALWAYS);
     }};
 
-    private static final Map<Byte, String> NIGHT_MODE_MAP = new HashMap<Byte, String>() {{
+    private static final Map<Byte, String> NIGHT_MODE_MAP = new HashMap<>() {{
         put((byte) 0x00, MiBandConst.PREF_NIGHT_MODE_OFF);
         put((byte) 0x01, MiBandConst.PREF_NIGHT_MODE_SUNSET);
         put((byte) 0x02, MiBandConst.PREF_NIGHT_MODE_SCHEDULED);
     }};
 
-    private static final Map<Byte, Enum<?>> DND_MODE_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> DND_MODE_MAP = new HashMap<>() {{
         put((byte) 0x00, DoNotDisturb.OFF);
         put((byte) 0x01, DoNotDisturb.SCHEDULED);
         put((byte) 0x02, DoNotDisturb.AUTOMATIC);
         put((byte) 0x03, DoNotDisturb.ALWAYS);
     }};
 
-    private static final Map<Byte, Enum<?>> TEMPERATURE_UNIT_MAP = new HashMap<Byte, Enum<?>>() {{
-        put((byte) 0x00, MiBandConst.DistanceUnit.METRIC);
-        put((byte) 0x01, MiBandConst.DistanceUnit.IMPERIAL);
+    private static final Map<Byte, Enum<?>> DISTANCE_UNIT_MAP = new HashMap<>() {{
+        put((byte) 0x00, DistanceUnit.METRIC);
+        put((byte) 0x01, DistanceUnit.IMPERIAL);
     }};
 
-    private static final Map<Byte, String> TIME_FORMAT_MAP = new HashMap<Byte, String>() {{
+    private static final Map<Byte, Enum<?>> TEMPERATURE_UNIT_MAP = new HashMap<>() {{
+        put((byte) 0x00, TemperatureUnit.CELSIUS);
+        put((byte) 0x01, TemperatureUnit.FAHRENHEIT);
+    }};
+
+    private static final Map<Byte, Enum<?>> WEIGHT_UNIT_MAP = new HashMap<>() {{
+        put((byte) 0x00, WeightUnit.KILOGRAM);
+        put((byte) 0x01, WeightUnit.JIN); // jin (500g)
+        put((byte) 0x02, WeightUnit.POUND);
+        put((byte) 0x03, WeightUnit.STONE); // stone (1 stone = 14 pounds)
+    }};
+
+    private static final Map<Byte, String> TIME_FORMAT_MAP = new HashMap<>() {{
         put((byte) 0x00, DeviceSettingsPreferenceConst.PREF_TIMEFORMAT_24H);
         put((byte) 0x01, DeviceSettingsPreferenceConst.PREF_TIMEFORMAT_12H);
     }};
 
-    private static final Map<Byte, Enum<?>> LIFT_WRIST_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> LIFT_WRIST_MAP = new HashMap<>() {{
         put((byte) 0x00, ActivateDisplayOnLift.OFF);
         put((byte) 0x01, ActivateDisplayOnLift.SCHEDULED);
         put((byte) 0x02, ActivateDisplayOnLift.ON);
         put((byte) 0x03, ActivateDisplayOnLift.SMART);
     }};
 
-    private static final Map<Byte, Enum<?>> LIFT_WRIST_SENSITIVITY_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> LIFT_WRIST_SENSITIVITY_MAP = new HashMap<>() {{
         put((byte) 0x00, ActivateDisplayOnLiftSensitivity.NORMAL);
         put((byte) 0x01, ActivateDisplayOnLiftSensitivity.SENSITIVE);
     }};
 
-    private static final Map<Byte, String> WEARING_DIRECTION_MAP = new HashMap<Byte, String>() {{
+    private static final Map<Byte, String> WEARING_DIRECTION_MAP = new HashMap<>() {{
         put((byte) 0x00, "buttons_on_left");
         put((byte) 0x01, "buttons_on_right");
     }};
 
-    private static final Map<Byte, String> OFFLINE_VOICE_LANGUAGE_MAP = new HashMap<Byte, String>() {{
+    private static final Map<Byte, String> OFFLINE_VOICE_LANGUAGE_MAP = new HashMap<>() {{
         put((byte) 0x01, "zh_CN"); // TODO confirm
         put((byte) 0x02, "en_US");
         put((byte) 0x03, "de_DE");
         put((byte) 0x04, "es_ES");
     }};
 
-    private static final Map<Byte, Enum<?>> GPS_PRESET_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> GPS_PRESET_MAP = new HashMap<>() {{
         put((byte) 0x00, GpsCapability.Preset.ACCURACY);
         put((byte) 0x01, GpsCapability.Preset.BALANCED);
         put((byte) 0x02, GpsCapability.Preset.POWER_SAVING);
         put((byte) 0x04, GpsCapability.Preset.CUSTOM);
     }};
 
-    private static final Map<Byte, Enum<?>> GPS_BAND_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> GPS_BAND_MAP = new HashMap<>() {{
         put((byte) 0x00, GpsCapability.Band.SINGLE_BAND);
         put((byte) 0x01, GpsCapability.Band.DUAL_BAND);
     }};
 
-    private static final Map<Byte, Enum<?>> GPS_COMBINATION_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> GPS_COMBINATION_MAP = new HashMap<>() {{
         put((byte) 0x00, GpsCapability.Combination.LOW_POWER_GPS);
         put((byte) 0x01, GpsCapability.Combination.GPS);
         put((byte) 0x02, GpsCapability.Combination.GPS_BDS);
@@ -1786,12 +1609,12 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         put((byte) 0x05, GpsCapability.Combination.ALL_SATELLITES);
     }};
 
-    private static final Map<Byte, Enum<?>> GPS_SATELLITE_SEARCH_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> GPS_SATELLITE_SEARCH_MAP = new HashMap<>() {{
         put((byte) 0x00, GpsCapability.SatelliteSearch.SPEED_FIRST);
         put((byte) 0x01, GpsCapability.SatelliteSearch.ACCURACY_FIRST);
     }};
 
-    private static final Map<Byte, Enum<?>> WORKOUT_DETECTION_CATEGORY_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> WORKOUT_DETECTION_CATEGORY_MAP = new HashMap<>() {{
         put((byte) 0x03, WorkoutDetectionCapability.Category.WALKING);
         put((byte) 0x28, WorkoutDetectionCapability.Category.INDOOR_WALKING);
         put((byte) 0x01, WorkoutDetectionCapability.Category.OUTDOOR_RUNNING);
@@ -1802,15 +1625,22 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         put((byte) 0x17, WorkoutDetectionCapability.Category.ROWING_MACHINE);
     }};
 
-    private static final Map<Byte, Enum<?>> WORKOUT_DETECTION_SENSITIVITY_MAP = new HashMap<Byte, Enum<?>>() {{
+    private static final Map<Byte, Enum<?>> WORKOUT_DETECTION_SENSITIVITY_MAP = new HashMap<>() {{
         put((byte) 0x00, WorkoutDetectionCapability.Sensitivity.HIGH);
         put((byte) 0x01, WorkoutDetectionCapability.Sensitivity.STANDARD);
         put((byte) 0x02, WorkoutDetectionCapability.Sensitivity.LOW);
     }};
 
+    private static final Map<Byte, String> VIBRATION_INTENSITY_MAP = new HashMap<>() {{
+        put((byte) 0x00, "normal");
+        put((byte) 0x01, "enhanced");
+    }};
+
     public static String decodeEnum(final Map<Byte, Enum<?>> map, final byte b) {
         if (map.containsKey(b)) {
-            return map.get(b).name().toLowerCase(Locale.ROOT);
+            return Objects.requireNonNull(map.get(b))
+                    .name()
+                    .toLowerCase(Locale.ROOT);
         }
 
         return null;
@@ -1831,7 +1661,7 @@ public class ZeppOsConfigService extends AbstractZeppOsService {
         // Byte doesn't match a known enum value, attempt to parse it as hex
         final Matcher matcher = Pattern.compile("^0[xX]([0-9a-fA-F]{1,2})$").matcher(val);
         if (matcher.find()) {
-            return (byte) Integer.parseInt(matcher.group(1), 16);
+            return (byte) Integer.parseInt(Objects.requireNonNull(matcher.group(1)), 16);
         }
 
         return null;

@@ -16,9 +16,30 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.deviceevents;
 
+import android.content.Context;
+import android.content.Intent;
+
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import nodomain.freeyourgadget.gadgetbridge.activities.appmanager.AbstractAppManagerFragment;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceApp;
 
 public class GBDeviceEventAppInfo extends GBDeviceEvent {
-    public GBDeviceApp apps[];
+    private static final Logger LOG = LoggerFactory.getLogger(GBDeviceEventAppInfo.class);
+
+    public GBDeviceApp[] apps;
     public byte freeSlot = -1;
+
+    @Override
+    public void evaluate(final Context context, final GBDevice device) {
+        LOG.info("Got event for APP_INFO with {} apps", apps.length);
+
+        final Intent appInfoIntent = new Intent(AbstractAppManagerFragment.ACTION_REFRESH_APPLIST);
+        appInfoIntent.putExtra(AbstractAppManagerFragment.EXTRA_APP_LIST, apps);
+        LocalBroadcastManager.getInstance(context).sendBroadcast(appInfoIntent);
+    }
 }

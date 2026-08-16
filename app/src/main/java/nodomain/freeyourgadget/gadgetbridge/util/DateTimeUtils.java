@@ -20,12 +20,16 @@ package nodomain.freeyourgadget.gadgetbridge.util;
 import android.content.Context;
 import android.text.format.DateUtils;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.github.pfichtner.durationformatter.DurationFormatter;
 
 import java.text.FieldPosition;
 import java.text.ParseException;
 import java.text.ParsePosition;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Calendar;
 import java.util.Date;
@@ -38,8 +42,8 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 
 public class DateTimeUtils {
-    private static SimpleDateFormat DAY_STORAGE_FORMAT = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
-    private static SimpleDateFormat HOURS_MINUTES_FORMAT = new SimpleDateFormat("HH:mm", Locale.US);
+    private static final SimpleDateFormat DAY_STORAGE_FORMAT = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+    private static final SimpleDateFormat HOURS_MINUTES_FORMAT = new SimpleDateFormat("HH:mm", Locale.US);
     public static SimpleDateFormat ISO_8601_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US){
         //see https://github.com/Freeyourgadget/Gadgetbridge/issues/1076#issuecomment-383834116 and https://stackoverflow.com/a/30221245
 
@@ -52,6 +56,7 @@ public class DateTimeUtils {
 
         }
 
+        @NonNull
         @Override
         public StringBuffer format(Date date, StringBuffer toAppendTo, FieldPosition pos) {
             StringBuffer rfcFormat = super.format(date, toAppendTo, pos);
@@ -75,6 +80,11 @@ public class DateTimeUtils {
         }
         ISO_8601_FORMAT.setTimeZone(TimeZone.getDefault());
         return ISO_8601_FORMAT.format(date);
+    }
+
+    @Nullable
+    public static String formatIso8601(@Nullable Calendar calendar) {
+        return (calendar == null) ? null : formatIso8601(calendar.getTime());
     }
 
     public static String formatIso8601UTC(Date date) {
@@ -117,13 +127,22 @@ public class DateTimeUtils {
         Calendar cal = GregorianCalendar.getInstance();
         cal.setTime(date);
         cal.add(GregorianCalendar.DAY_OF_YEAR, offset);
-        Date newDate = cal.getTime();
-        return newDate;
+        return cal.getTime();
     }
 
     public static Date dayStart(final Date date) {
         final Calendar calendar = Calendar.getInstance();
         calendar.setTime(date);
+        calendar.set(Calendar.HOUR_OF_DAY, 0);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        return calendar.getTime();
+    }
+
+    public static Date dayStart(final int year, final int monthOfYear, final int dayOfMonth) {
+        final Calendar calendar = Calendar.getInstance();
+        calendar.set(year, monthOfYear, dayOfMonth);
         calendar.set(Calendar.HOUR_OF_DAY, 0);
         calendar.set(Calendar.MINUTE, 0);
         calendar.set(Calendar.SECOND, 0);
@@ -176,6 +195,16 @@ public class DateTimeUtils {
         return calendar.getTime();
     }
 
+    public static Date dayEnd(final int year, final int monthOfYear, final int dayOfMonth) {
+        final Calendar calendar = Calendar.getInstance();
+        calendar.set(year, monthOfYear, dayOfMonth);
+        calendar.set(Calendar.HOUR_OF_DAY, 23);
+        calendar.set(Calendar.MINUTE, 59);
+        calendar.set(Calendar.SECOND, 59);
+        calendar.set(Calendar.MILLISECOND, 999);
+        return calendar.getTime();
+    }
+
     public static Date parseTimeStamp(int timestamp) {
         GregorianCalendar cal = (GregorianCalendar) GregorianCalendar.getInstance();
         cal.setTimeInMillis(timestamp * 1000L); // make sure it's converted to long
@@ -186,10 +215,6 @@ public class DateTimeUtils {
         GregorianCalendar cal = (GregorianCalendar) GregorianCalendar.getInstance();
         cal.setTimeInMillis(timestamp);
         return cal.getTime();
-    }
-
-    public static String dayToString(Date date) {
-        return DAY_STORAGE_FORMAT.format(date);
     }
 
     public static Date dayFromString(String day) throws ParseException {
@@ -224,9 +249,6 @@ public class DateTimeUtils {
     /**
      * Calculates new timestamp with a month offset (positive to add or negative to remove)
      * from a given time
-     *
-     * @param time
-     * @param month
      */
     public static int shiftMonths(int time, int month) {
         Calendar day = Calendar.getInstance();
@@ -238,25 +260,12 @@ public class DateTimeUtils {
     /**
      * Calculates new timestamp with a day offset (positive to add or negative to remove)
      * from a given time
-     *
-     * @param time
-     * @param days
      */
     public static int shiftDays(int time, int days) {
         Calendar day = Calendar.getInstance();
         day.setTimeInMillis(time * 1000L);
         day.add(Calendar.DAY_OF_YEAR, days);
         return (int) (day.getTimeInMillis() / 1000);
-    }
-
-    /**
-     * Calculates difference in days between two timestamps
-     *
-     * @param time1
-     * @param time2
-     */
-    public static int  getDaysBetweenTimes(int time1, int time2) {
-        return (int) TimeUnit.MILLISECONDS.toDays((time2 - time1) * 1000L);
     }
 
     /**
@@ -318,5 +327,45 @@ public class DateTimeUtils {
         }
 
         return context.getString(R.string.unknown);
+    }
+
+    public static String formatDaysUntil(int days, int endTs) {
+        final SimpleDateFormat simpleDateFormat = new SimpleDateFormat("E, MMM dd", Locale.getDefault());
+        final Date to = new Date((long) endTs * 1000);
+        final Date from = org.apache.commons.lang3.time.DateUtils.addDays(to, - (days - 1));
+        final String toFormattedDate = simpleDateFormat.format(to);
+        final String fromFormattedDate = simpleDateFormat.format(from);
+        return fromFormattedDate + " - " + toFormattedDate;
+    }
+
+    /// format UTC millisecond epoch as local time (e.g. 23:59:59)
+    public static String formatLocalTime(long epochMilli) {
+        Date date = new Date(epochMilli);
+        SimpleDateFormat format = new SimpleDateFormat("HH:mm:ss", Locale.ROOT);
+        return format.format(date);
+    }
+
+    /// format duration day - milliseconds with max 3 units shown
+    public static String formatSportsDuration(long duration, TimeUnit unit) {
+        DurationFormatter df = DurationFormatter.Builder.SYMBOLS
+                .maximum(TimeUnit.HOURS)
+                .minimum(TimeUnit.MILLISECONDS)
+                .suppressZeros(DurationFormatter.SuppressZeros.LEADING, DurationFormatter.SuppressZeros.TRAILING)
+                .maximumAmountOfUnitsToShow(3)
+                .build();
+        return df.format(duration, unit);
+    }
+
+    /// number of seconds since UTC epoch of 1970-01-01T00:00:00Z
+    public static long getEpochSeconds() {
+        final long epoc;
+        if (GBApplication.isRunningOreoOrLater()) {
+            epoc = Instant.now().getEpochSecond();
+        } else {
+            Calendar calendar = getCalendarUTC();
+            long millis = calendar.getTimeInMillis();
+            epoc = Math.round(millis / 1000.0d);
+        }
+        return epoc;
     }
 }

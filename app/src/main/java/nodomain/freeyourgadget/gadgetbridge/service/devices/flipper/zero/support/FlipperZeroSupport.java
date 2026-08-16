@@ -1,4 +1,4 @@
-/*  Copyright (C) 2022-2024 Daniel Dakhno
+/*  Copyright (C) 2022-2026 Daniel Dakhno
 
     This file is part of Gadgetbridge.
 
@@ -22,20 +22,26 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Bundle;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInfo;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryState;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCharacteristic;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.IntentListener;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfo;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfoProfile;
@@ -47,6 +53,9 @@ import nodomain.freeyourgadget.gadgetbridge.util.protobuf.messagefields.StringMe
 import nodomain.freeyourgadget.gadgetbridge.util.protobuf.messagefields.VarintMessageField;
 
 public class FlipperZeroSupport extends FlipperZeroBaseSupport{
+    private static final Logger LOG = LoggerFactory.getLogger(FlipperZeroSupport.class);
+    private static final AtomicLong THREAD_COUNTER = new AtomicLong(0L);
+
     private BatteryInfoProfile batteryInfoProfile = new BatteryInfoProfile(this);
 
     private final String UUID_SERIAL_SERVICE = "8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000";
@@ -74,7 +83,7 @@ public class FlipperZeroSupport extends FlipperZeroBaseSupport{
                         handlePlaySubGHZ(intent);
                     }
                 }
-            }).start();
+            }, "FlipperZeroSupport_" + THREAD_COUNTER.getAndIncrement()).start();
         }
     };
     boolean recevierRegistered = false;
@@ -84,11 +93,11 @@ public class FlipperZeroSupport extends FlipperZeroBaseSupport{
 
         String filePath = intent.getStringExtra("EXTRA_FILE_PATH");
         if(filePath == null){
-            GB.log("missing EXTRA_FILE_PATH in intent", GB.ERROR, null);
+            LOG.error("missing EXTRA_FILE_PATH in intent");
             return;
         }
         if(filePath.isEmpty()){
-            GB.log("empty EXTRA_FILE_PATH in intent", GB.ERROR, null);
+            LOG.error("empty EXTRA_FILE_PATH in intent");
             return;
         }
 
@@ -130,42 +139,44 @@ public class FlipperZeroSupport extends FlipperZeroBaseSupport{
             recevierRegistered = true;
         }
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
-        builder.read(getCharacteristic(GattCharacteristic.UUID_CHARACTERISTIC_FIRMWARE_REVISION_STRING));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
+        builder.read(GattCharacteristic.UUID_CHARACTERISTIC_FIRMWARE_REVISION_STRING);
 
         batteryInfoProfile.requestBatteryInfo(builder);
         batteryInfoProfile.enableNotify(builder, true);
 
         return builder
-                .notify(getCharacteristic(UUID.fromString(UUID_SERIAL_CHARACTERISTIC_RESPONSE)), true)
+                .notify(UUID.fromString(UUID_SERIAL_CHARACTERISTIC_RESPONSE), true)
                 .requestMtu(512)
-                .add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+                .setDeviceState(GBDevice.State.INITIALIZED);
     }
 
     @Override
-    public boolean onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+    public boolean onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
         if(characteristic.getUuid().equals(GattCharacteristic.UUID_CHARACTERISTIC_FIRMWARE_REVISION_STRING)){
-            String revision = characteristic.getStringValue(0);
+            String revision = BLETypeConversions.getStringValue(value, 0);
             getDevice().setFirmwareVersion(revision);
             getDevice().sendDeviceUpdateIntent(getContext());
         }
-        return super.onCharacteristicRead(gatt, characteristic, status);
+        return super.onCharacteristicRead(gatt, characteristic, value, status);
     }
 
     @Override
     public void dispose() {
-        super.dispose();
+        synchronized (ConnectionMonitor) {
+            super.dispose();
 
-        if(recevierRegistered) {
-            getContext().unregisterReceiver(receiver);
-            recevierRegistered = false;
+            if (recevierRegistered) {
+                getContext().unregisterReceiver(receiver);
+                recevierRegistered = false;
+            }
         }
     }
 
     private void sendSerialData(byte[] data){
-        new TransactionBuilder("send serial data")
-                .write(getCharacteristic(UUID.fromString(UUID_SERIAL_CHARACTERISTIC_WRITE)), data)
-                .queue(getQueue());
+        createTransactionBuilder("send serial data")
+                .write(UUID.fromString(UUID_SERIAL_CHARACTERISTIC_WRITE), data)
+                .queue();
     }
 
     private RootMessageField createMainRequest(int requestFieldNumber, MessageField... children){
@@ -218,7 +229,7 @@ public class FlipperZeroSupport extends FlipperZeroBaseSupport{
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
         try {
             openApp("Infrared");
         } catch (IOException e) {
@@ -244,6 +255,6 @@ public class FlipperZeroSupport extends FlipperZeroBaseSupport{
 
     @Override
     public void onFetchRecordedData(int dataTypes) {
-        onTestNewFunction();
+        onTestNewFunction(null);
     }
 }

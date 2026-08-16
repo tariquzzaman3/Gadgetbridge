@@ -29,8 +29,6 @@ import nodomain.freeyourgadget.gadgetbridge.devices.casio.CasioConstants;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEOperation;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.casio.gb6900.CasioGB6900DeviceSupport;
 
 public class InitOperation extends AbstractBTLEOperation<CasioGB6900DeviceSupport> {
     private static final Logger LOG = LoggerFactory.getLogger(InitOperation.class);
@@ -47,11 +45,11 @@ public class InitOperation extends AbstractBTLEOperation<CasioGB6900DeviceSuppor
 
     @Override
     protected void doPerform() throws IOException {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
         TransactionBuilder builder = getSupport().createTransactionBuilder("readBleSettings");
         builder.setCallback(this);
-        builder.read(getCharacteristic(CasioConstants.CASIO_SETTING_FOR_BLE_CHARACTERISTIC_UUID));
-        getSupport().performImmediately(builder);
+        builder.read(CasioConstants.CASIO_SETTING_FOR_BLE_CHARACTERISTIC_UUID);
+        builder.queueImmediately();
     }
 
     @Override
@@ -61,10 +59,11 @@ public class InitOperation extends AbstractBTLEOperation<CasioGB6900DeviceSuppor
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] value) {
         UUID characteristicUUID = characteristic.getUuid();
         LOG.info("Unhandled characteristic changed: " + characteristicUUID);
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, value);
     }
 
     private void configureBleSettings() {
@@ -85,8 +84,8 @@ public class InitOperation extends AbstractBTLEOperation<CasioGB6900DeviceSuppor
         try {
             TransactionBuilder builder = getSupport().createTransactionBuilder("writeBleInit");
             builder.setCallback(this);
-            builder.write(getCharacteristic(CasioConstants.CASIO_SETTING_FOR_BLE_CHARACTERISTIC_UUID), mBleSettings);
-            getSupport().performImmediately(builder);
+            builder.writeLegacy(getCharacteristic(CasioConstants.CASIO_SETTING_FOR_BLE_CHARACTERISTIC_UUID), mBleSettings);
+            builder.queueImmediately();
         } catch(IOException e) {
             LOG.error("Error writing BLE settings: " + e.getMessage());
         }
@@ -94,10 +93,10 @@ public class InitOperation extends AbstractBTLEOperation<CasioGB6900DeviceSuppor
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic, int status) {
+                                        BluetoothGattCharacteristic characteristic, byte[] data,
+                                        int status) {
 
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
 
         if(data.length == 0)
             return true;
@@ -160,7 +159,7 @@ public class InitOperation extends AbstractBTLEOperation<CasioGB6900DeviceSuppor
             writeBleSettings();
         }
         else {
-            return super.onCharacteristicRead(gatt, characteristic, status);
+            return super.onCharacteristicRead(gatt, characteristic, data, status);
         }
 
         return true;

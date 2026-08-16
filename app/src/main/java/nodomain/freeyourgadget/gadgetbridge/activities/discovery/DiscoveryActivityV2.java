@@ -25,7 +25,6 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
@@ -35,7 +34,6 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.os.Build;
@@ -46,17 +44,15 @@ import android.os.ParcelUuid;
 import android.os.Parcelable;
 import android.provider.Settings;
 import android.text.TextUtils;
-import android.util.Pair;
+import android.util.SparseArray;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.Button;
-import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
-import android.widget.Spinner;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -65,7 +61,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.annotation.RequiresPermission;
-import androidx.annotation.StringRes;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.MenuProvider;
@@ -78,28 +73,29 @@ import org.slf4j.LoggerFactory;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.AbstractGBActivity;
-import nodomain.freeyourgadget.gadgetbridge.activities.DebugActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.AuthKeyActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsActivity;
 import nodomain.freeyourgadget.gadgetbridge.adapter.DeviceCandidateAdapter;
-import nodomain.freeyourgadget.gadgetbridge.adapter.SpinnerWithIconAdapter;
-import nodomain.freeyourgadget.gadgetbridge.adapter.SpinnerWithIconItem;
+import nodomain.freeyourgadget.gadgetbridge.adapter.SimpleIconListAdapter;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
+import nodomain.freeyourgadget.gadgetbridge.model.RunnableListIconItem;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.BleNamesResolver;
 import nodomain.freeyourgadget.gadgetbridge.util.AndroidUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.BondingInterface;
 import nodomain.freeyourgadget.gadgetbridge.util.BondingUtil;
 import nodomain.freeyourgadget.gadgetbridge.util.DeviceHelper;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
+import nodomain.freeyourgadget.gadgetbridge.util.DeviceTypeDialog;
 
 
 public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterView.OnItemClickListener,
@@ -109,6 +105,7 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
         MenuProvider {
     private static final Logger LOG = LoggerFactory.getLogger(DiscoveryActivityV2.class);
 
+    private static final int CHILD_RESULT = 0x826983; // "RES" as ASCII hex
     private final Handler handler = new Handler();
 
     private static final long SCAN_DURATION = 30000; // 30s
@@ -126,7 +123,7 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
     private Button startButton;
     private boolean scanning;
 
-    private long selectedUnsupportedDeviceKey = DebugActivity.SELECT_DEVICE;
+    private ActivityResultLauncher<Intent> authKeyLauncher;
 
     private final Runnable stopRunnable = () -> {
         stopDiscovery();
@@ -144,7 +141,13 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
     @Override
     public void onActivityResult(final int requestCode, final int resultCode, final Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        BondingUtil.handleActivityResult(this, requestCode, resultCode, data);
+        if (requestCode == CHILD_RESULT && resultCode == RESULT_OK) {
+            // A device with a custom pairing activity has finished and indicated that the discovery activity should be
+            // closed.
+            finish();
+        } else {
+            BondingUtil.handleActivityResult(this, requestCode, resultCode, data);
+        }
     }
 
     @Nullable
@@ -185,6 +188,22 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
         registerBroadcastReceivers();
 
         checkAndRequestLocationPermission();
+
+        authKeyLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() == Activity.RESULT_OK) {
+                        final Intent data = result.getData();
+                        if (data == null) {
+                            // Should never happen
+                            GB.toast(this, "Auth data is null", Toast.LENGTH_LONG, GB.ERROR);
+                            return;
+                        }
+                        final GBDeviceCandidate deviceCandidate = data.getParcelableExtra(AuthKeyActivity.EXTRA_DEVICE_CANDIDATE_RESULT);
+                        final DeviceType deviceType = DeviceHelper.getInstance().resolveDeviceType(Objects.requireNonNull(deviceCandidate));
+                        startPair(deviceCandidate, deviceType.getDeviceCoordinator());
+                    }
+                });
 
         if (!startDiscovery()) {
             /* if we couldn't start scanning, go back to the main page.
@@ -276,6 +295,8 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
         LOG.info("Starting discovery");
         startButton.setText(getString(R.string.discovery_stop_scanning));
 
+        DeviceHelper.getInstance().clearForcedDeviceTypes();
+
         deviceFoundProcessor.clear();
         deviceFoundProcessor.start();
 
@@ -287,11 +308,11 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
             final Set<BluetoothDevice> pairedDevices = BluetoothAdapter.getDefaultAdapter().getBondedDevices();
             for (final BluetoothDevice device : pairedDevices) {
                 try {
-                    final Method isConnectedMethod = device.getClass().getMethod("isConnected");
+                    @SuppressWarnings("JavaReflectionMemberAccess") final Method isConnectedMethod = device.getClass().getMethod("isConnected");
                     final Boolean isConnected = (Boolean) isConnectedMethod.invoke(device);
-                    if (isConnected!= null && isConnected) {
+                    if (isConnected != null && isConnected) {
                         LOG.debug("Pre-adding already bonded device {}", device.getAddress());
-                        deviceFoundProcessor.scheduleProcessing(new GBScanEvent(device, (short) -1, null));
+                        deviceFoundProcessor.scheduleProcessing(new GBScanEvent(device, (short) -1, device.getUuids(), null));
                     }
                 } catch (final Exception e) {
                     LOG.error("Failed to check whether {} is connected", device.getAddress());
@@ -490,11 +511,9 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
         final ScanSettings.Builder builder = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            builder.setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES);
-            builder.setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE);
-            builder.setNumOfMatches(ScanSettings.MATCH_NUM_ONE_ADVERTISEMENT);
-        }
+        builder.setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES);
+        builder.setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE);
+        builder.setNumOfMatches(ScanSettings.MATCH_NUM_ONE_ADVERTISEMENT);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             builder.setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED);
@@ -503,25 +522,10 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
         return builder.build();
     }
 
-    private List<ScanFilter> getScanFilters() {
-        final List<ScanFilter> allFilters = new ArrayList<>();
-        for (DeviceType deviceType : DeviceType.values()) {
-            allFilters.addAll(deviceType.getDeviceCoordinator().createBLEScanFilters());
-        }
-        return allFilters;
-    }
-
     private Message getPostMessage(final Runnable runnable) {
         final Message message = Message.obtain(handler, runnable);
         message.obj = runnable;
         return message;
-    }
-
-    private void showWarnDialog(@StringRes final int message) {
-        new MaterialAlertDialogBuilder(getContext())
-                .setMessage(message)
-                .setPositiveButton(R.string.ok, (dialog, whichButton) -> {})
-                .show();
     }
 
     private void checkAndRequestLocationPermission() {
@@ -538,7 +542,7 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
             wantedPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
         }
         // if we need location permissions, request both together to avoid a bunch of dialogs
-        if (wantedPermissions.size() > 0) {
+        if (!wantedPermissions.isEmpty()) {
             toast(DiscoveryActivityV2.this, getString(R.string.error_no_location_access), Toast.LENGTH_SHORT, GB.ERROR);
             ActivityCompat.requestPermissions(this, wantedPermissions.toArray(new String[0]), 0);
             wantedPermissions.clear();
@@ -564,13 +568,14 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
                 wantedPermissions.add(Manifest.permission.BLUETOOTH_CONNECT);
             }
         }
-        if (wantedPermissions.size() > 0) {
+        if (!wantedPermissions.isEmpty()) {
             GB.toast(this, getString(R.string.permission_granting_mandatory), Toast.LENGTH_LONG, GB.ERROR);
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
                 ActivityCompat.requestPermissions(this, wantedPermissions.toArray(new String[0]), 0);
             } else {
                 ActivityResultLauncher<String[]> requestMultiplePermissionsLauncher =
                         registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), isGranted -> {
+                            //noinspection StatementWithEmptyBody
                             if (!isGranted.containsValue(false)) {
                                 // Permission is granted. Continue the action or workflow in your app.
                                 // should we do startDiscovery here??
@@ -609,7 +614,14 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
             return;
         }
 
-        DeviceType deviceType = DeviceHelper.getInstance().resolveDeviceType(deviceCandidate);
+        // Normal click - clear all potential forced devices
+        DeviceHelper.getInstance().clearForcedDeviceTypes();
+
+        preparePair(deviceCandidate);
+    }
+
+    private void preparePair(final GBDeviceCandidate deviceCandidate) {
+        final DeviceType deviceType = DeviceHelper.getInstance().resolveDeviceType(deviceCandidate);
 
         if (!deviceType.isSupported()) {
             LOG.warn("Unsupported device candidate {}", deviceCandidate);
@@ -622,29 +634,25 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
         final DeviceCoordinator coordinator = deviceType.getDeviceCoordinator();
         LOG.info("Using device candidate {} with coordinator {}", deviceCandidate, coordinator.getClass());
 
-        if (coordinator.getBondingStyle() == DeviceCoordinator.BONDING_STYLE_REQUIRE_KEY) {
-            final SharedPreferences sharedPrefs = GBApplication.getDeviceSpecificSharedPrefs(deviceCandidate.getMacAddress());
-
-            final String authKey = sharedPrefs.getString("authkey", null);
-            if (authKey == null || authKey.isEmpty()) {
-                showWarnDialog(R.string.discovery_need_to_enter_authkey);
-                return;
-            } else if (!coordinator.validateAuthKey(authKey)) {
-                showWarnDialog(R.string.discovery_entered_invalid_authkey);
-                return;
-            }
-        }
-
         if (coordinator.suggestUnbindBeforePair() && deviceCandidate.isBonded()) {
             new MaterialAlertDialogBuilder(getContext())
                     .setTitle(R.string.unbind_before_pair_title)
                     .setMessage(R.string.unbind_before_pair_message)
                     .setIcon(R.drawable.ic_warning_gray)
                     .setPositiveButton(R.string.ok, (dialog, whichButton) -> {
-                        startPair(deviceCandidate, coordinator);
+                        checkAuthKeyAndPair(deviceCandidate, coordinator);
                     })
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
+        } else {
+            checkAuthKeyAndPair(deviceCandidate, coordinator);
+        }
+    }
+
+    private void checkAuthKeyAndPair(final GBDeviceCandidate deviceCandidate, final DeviceCoordinator coordinator) {
+        if (coordinator.requiresAuthKey()) {
+            final Intent authIntent = AuthKeyActivity.Companion.newIntent(this, deviceCandidate);
+            authKeyLauncher.launch(authIntent);
         } else {
             startPair(deviceCandidate, coordinator);
         }
@@ -655,7 +663,8 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
         if (pairingActivity != null) {
             final Intent intent = new Intent(this, pairingActivity);
             intent.putExtra(DeviceCoordinator.EXTRA_DEVICE_CANDIDATE, deviceCandidate);
-            startActivity(intent);
+            intent.putParcelableArrayListExtra(DeviceCoordinator.EXTRA_DEVICE_ALL_CANDIDATES, deviceCandidates);
+            startActivityForResult(intent, CHILD_RESULT);
         } else {
             if (coordinator.getBondingStyle() == DeviceCoordinator.BONDING_STYLE_NONE ||
                     coordinator.getBondingStyle() == DeviceCoordinator.BONDING_STYLE_LAZY) {
@@ -697,92 +706,82 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
 
         final GBDeviceCandidate deviceCandidate = deviceCandidates.get(position);
         if (deviceCandidate == null) {
-            LOG.error("Device candidate clicked, but item not found");
+            LOG.error("Device candidate long clicked, but item not found");
             return true;
         }
 
-        DeviceType deviceType = DeviceHelper.getInstance().resolveDeviceType(deviceCandidate);
+        final List<RunnableListIconItem> longClickItems = new ArrayList<>(3);
 
-        if (!deviceType.isSupported()) {
-            showUnsupportedDeviceDialog(deviceCandidate);
-            return true;
+        final DeviceType deviceType = DeviceHelper.getInstance().resolveDeviceType(deviceCandidate);
+
+        final GBDevice existingDevice = GBApplication.app().getDeviceManager()
+                .getDeviceByAddress(deviceCandidate.getMacAddress());
+
+        if (existingDevice == null) {
+            longClickItems.add(new RunnableListIconItem(
+                    getString(R.string.add_test_device),
+                    R.drawable.ic_warning,
+                    () -> showUnsupportedDeviceDialog(deviceCandidate)
+            ));
         }
 
         final DeviceCoordinator coordinator = deviceType.getDeviceCoordinator();
         final GBDevice device = DeviceHelper.getInstance().toSupportedDevice(deviceCandidate);
-        if (coordinator.getSupportedDeviceSpecificSettings(device) == null) {
+
+        if (coordinator.getSupportedDeviceSpecificAuthenticationSettings().length > 0) {
+            longClickItems.add(new RunnableListIconItem(
+                    getString(R.string.auth_settings),
+                    R.drawable.ic_vpn_key,
+                    () -> {
+                        final Intent startIntent = new Intent(DiscoveryActivityV2.this, DeviceSettingsActivity.class);
+                        startIntent.putExtra(GBDevice.EXTRA_DEVICE, device);
+                        startIntent.putExtra(DeviceSettingsActivity.MENU_ENTRY_POINT, DeviceSettingsActivity.MENU_ENTRY_POINTS.AUTH_SETTINGS);
+                        startActivity(startIntent);
+                    }
+            ));
+        }
+
+        if (coordinator.getDeviceSpecificSettings(device) != null) {
+            longClickItems.add(new RunnableListIconItem(
+                    getString(R.string.pref_header_device_spec_settings),
+                    R.drawable.ic_settings,
+                    () -> {
+                        final Intent startIntent = new Intent(DiscoveryActivityV2.this, DeviceSettingsActivity.class);
+                        startIntent.putExtra(GBDevice.EXTRA_DEVICE, device);
+                        startIntent.putExtra(DeviceSettingsActivity.MENU_ENTRY_POINT, DeviceSettingsActivity.MENU_ENTRY_POINTS.DEVICE_SETTINGS);
+                        startActivity(startIntent);
+                    }
+            ));
+        }
+
+        if (longClickItems.isEmpty()) {
+            LOG.error("Device candidate long clicked, but there are no options");
             return true;
         }
 
-        final Intent startIntent;
-        startIntent = new Intent(this, DeviceSettingsActivity.class);
-        startIntent.putExtra(GBDevice.EXTRA_DEVICE, device);
-        if (coordinator.getBondingStyle() == DeviceCoordinator.BONDING_STYLE_REQUIRE_KEY) {
-            startIntent.putExtra(DeviceSettingsActivity.MENU_ENTRY_POINT, DeviceSettingsActivity.MENU_ENTRY_POINTS.AUTH_SETTINGS);
-        } else {
-            startIntent.putExtra(DeviceSettingsActivity.MENU_ENTRY_POINT, DeviceSettingsActivity.MENU_ENTRY_POINTS.DEVICE_SETTINGS);
-        }
-        startActivity(startIntent);
+        final SimpleIconListAdapter adapter = new SimpleIconListAdapter(this, longClickItems);
+
+        new MaterialAlertDialogBuilder(this)
+                .setAdapter(adapter, (dialog, i1) -> longClickItems.get(i1).getAction().run())
+                .setTitle(deviceCandidate.getName())
+                .setNegativeButton(android.R.string.cancel, (dialogInterface, i1) -> {
+                })
+                .create()
+                .show();
+
         return true;
     }
 
     private void showUnsupportedDeviceDialog(final GBDeviceCandidate deviceCandidate) {
         LOG.info("Unsupported device candidate selected: {}", deviceCandidate);
 
-        final Map<String, Pair<Long, Integer>> allDevices = DebugActivity.getAllSupportedDevices(getApplicationContext());
-
-        final LinearLayout linearLayout = new LinearLayout(DiscoveryActivityV2.this);
-        linearLayout.setOrientation(LinearLayout.VERTICAL);
-
-        final ArrayList<SpinnerWithIconItem> deviceListArray = new ArrayList<>();
-        for (Map.Entry<String, Pair<Long, Integer>> item : allDevices.entrySet()) {
-            deviceListArray.add(new SpinnerWithIconItem(item.getKey(), item.getValue().first, item.getValue().second));
-        }
-        final SpinnerWithIconAdapter deviceListAdapter = new SpinnerWithIconAdapter(
-                DiscoveryActivityV2.this,
-                R.layout.spinner_with_image_layout,
-                R.id.spinner_item_text,
-                deviceListArray
-        );
-
-        final Spinner deviceListSpinner = new Spinner(DiscoveryActivityV2.this);
-        deviceListSpinner.setAdapter(deviceListAdapter);
-        deviceListSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(final AdapterView<?> parent, final View view, final int pos, final long id) {
-                final SpinnerWithIconItem selectedItem = (SpinnerWithIconItem) parent.getItemAtPosition(pos);
-                selectedUnsupportedDeviceKey = selectedItem.getId();
-            }
-
-            @Override
-            public void onNothingSelected(final AdapterView<?> arg0) {
-            }
-        });
-        linearLayout.addView(deviceListSpinner);
-
-        final LinearLayout macLayout = new LinearLayout(DiscoveryActivityV2.this);
-        macLayout.setOrientation(LinearLayout.HORIZONTAL);
-        macLayout.setPadding(20, 0, 20, 0);
-        linearLayout.addView(macLayout);
-
-        new MaterialAlertDialogBuilder(DiscoveryActivityV2.this)
-                .setCancelable(true)
-                .setTitle(R.string.add_test_device)
-                .setView(linearLayout)
-                .setPositiveButton(R.string.ok, (dialog, which) -> {
-                    if (selectedUnsupportedDeviceKey != DebugActivity.SELECT_DEVICE) {
-                        DebugActivity.createTestDevice(
-                                DiscoveryActivityV2.this,
-                                selectedUnsupportedDeviceKey,
-                                deviceCandidate.getMacAddress(),
-                                deviceCandidate.getName()
-                        );
-                        finish();
-                    }
-                })
-                .setNegativeButton(R.string.Cancel, (dialog, which) -> {
-                })
-                .show();
+        new DeviceTypeDialog(this, R.string.add_test_device, deviceCandidate.getMacAddress())
+                .show(null, (macAddress, deviceType) -> {
+                    LOG.debug("Force-pairing {} as {}", deviceCandidate, deviceType);
+                    DeviceHelper.getInstance().setForcedDeviceType(deviceCandidate.getMacAddress().toLowerCase(), deviceType);
+                    preparePair(deviceCandidate);
+                    return kotlin.Unit.INSTANCE;
+                });
     }
 
     @Override
@@ -793,11 +792,6 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
     @Override
     public GBDeviceCandidate getCurrentTarget() {
         return this.deviceTarget;
-    }
-
-    @Override
-    public String getMacAddress() {
-        return deviceTarget.getDevice().getAddress();
     }
 
     @Override
@@ -854,6 +848,7 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
     }
 
     private final class BluetoothReceiver extends BroadcastReceiver {
+        @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         @Override
         public void onReceive(final Context context, final Intent intent) {
             switch (Objects.requireNonNull(intent.getAction())) {
@@ -874,7 +869,7 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
                     }
                     LOG.debug("ACTION_FOUND {}", device.getAddress());
                     final short rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, GBDevice.RSSI_UNKNOWN);
-                    deviceFoundProcessor.scheduleProcessing(new GBScanEvent(device, rssi, null));
+                    deviceFoundProcessor.scheduleProcessing(new GBScanEvent(device, rssi, device.getUuids(), null));
                     break;
                 }
                 case BluetoothDevice.ACTION_UUID: {
@@ -887,17 +882,29 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
                     final short rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, GBDevice.RSSI_UNKNOWN);
                     final Parcelable[] uuids = intent.getParcelableArrayExtra(BluetoothDevice.EXTRA_UUID);
                     final ParcelUuid[] uuids2 = AndroidUtils.toParcelUuids(uuids);
-                    deviceFoundProcessor.scheduleProcessing(new GBScanEvent(device, rssi, uuids2));
+                    deviceFoundProcessor.scheduleProcessing(new GBScanEvent(device, rssi, uuids2, null));
                     break;
                 }
                 case BluetoothDevice.ACTION_BOND_STATE_CHANGED: {
                     LOG.debug("ACTION_BOND_STATE_CHANGED");
                     final BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                     if (device != null) {
-                        final int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE);
-                        LOG.debug("Bond state: {}", bondState);
+                        final String macAddress = device.getAddress();
+                        final String targetMacAddress = getMacAddress();
+                        final int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
+                        final int prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR);
+                        LOG.info("Bond state changed for {} from {} to {}, target address {}",
+                                macAddress,
+                                BleNamesResolver.getBondStateString(prevBondState),
+                                BleNamesResolver.getBondStateString(bondState),
+                                targetMacAddress
+                        );
 
-                        if (bondState == BluetoothDevice.BOND_BONDED) {
+                        if (targetMacAddress == null || !targetMacAddress.equalsIgnoreCase(macAddress)) {
+                            LOG.debug("ignore due to MAC address: got {} but expected {}", macAddress, targetMacAddress);
+                        } else if (bondState != BluetoothDevice.BOND_BONDED) {
+                            LOG.debug("ignore due bonding state: {}", BleNamesResolver.getBondStateString(bondState));
+                        } else {
                             BondingUtil.handleDeviceBonded((BondingInterface) context, getCandidateFromMAC(device));
                         }
                     }
@@ -913,17 +920,28 @@ public class DiscoveryActivityV2 extends AbstractGBActivity implements AdapterVi
             super.onScanResult(callbackType, result);
             try {
                 final ScanRecord scanRecord = result.getScanRecord();
-                ParcelUuid[] uuids = null;
-                if (scanRecord != null) {
-                    final List<ParcelUuid> serviceUuids = scanRecord.getServiceUuids();
-                    if (serviceUuids != null) {
-                        uuids = serviceUuids.toArray(new ParcelUuid[0]);
-                    }
+                if (scanRecord == null) {
+                    LOG.warn("Got a null scan record");
+                    return;
                 }
+                ParcelUuid[] uuids = null;
+                SparseArray<byte[]> manufacturerSpecificData;
+                final List<ParcelUuid> serviceUuids = scanRecord.getServiceUuids();
+                if (serviceUuids != null) {
+                    uuids = serviceUuids.toArray(new ParcelUuid[0]);
+                }
+                manufacturerSpecificData = scanRecord.getManufacturerSpecificData();
                 final BluetoothDevice device = result.getDevice();
                 final short rssi = (short) result.getRssi();
-                LOG.debug("BLE result: {}, {}, {}", device.getAddress(), ((scanRecord != null) ? scanRecord.getBytes().length : -1), rssi);
-                deviceFoundProcessor.scheduleProcessing(new GBScanEvent(device, rssi, uuids));
+                LOG.debug(
+                        "BLE scan record for {} ({}): len={}, rssi={}, uuids={}",
+                        device.getAddress(),
+                        scanRecord.getDeviceName(),
+                        scanRecord.getBytes().length,
+                        rssi,
+                        uuids != null ? uuids.length : "null"
+                );
+                deviceFoundProcessor.scheduleProcessing(new GBScanEvent(device, rssi, uuids, manufacturerSpecificData));
             } catch (final Exception e) {
                 LOG.warn("Error handling BLE scan result", e);
             }

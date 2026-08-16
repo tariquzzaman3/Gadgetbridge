@@ -1,5 +1,859 @@
 ### Changelog
 
+#### 0.93.0
+
+* Initial support for AK75 Pro, AK86, AK102 (TopStep / FitCloud)
+* Initial support for DM58 (GloryFit Pro)
+* Initial support for Garmin Fenix 6S / Forerunner 170 Music
+* Initial support for Haylou S35 ANC
+* Initial support for Honor Watch 5 / 5 Pro / 6
+* Initial support for HUAWEI FreeClip 2
+* Initial support for iGPSPORT BiNavi / BiNavi Air / BSC 500
+* Initial support for MoYoung L70
+* Initial support for Ollee Watch One
+* Initial support for Soundcore Life Tune XR
+* Initial support for UNA Watch
+* Experimental support for Amazfit Balance 3, Balance Ultra, Bip Max, Cheetah 2 Ultra
+* Experimental support for BM6 Battery Monitor
+* Experimental support for Garmin CIRQA, Fenix 5S Plus
+* Experimental support for Honor Band 7, 9, 10
+* Experimental support for Xiaomi Scooter 5 Max
+* Add cumulative calories daily chart
+* Add Quick Settings tiles for some device (AAWireless, Sinilink, Shokz, Sony Headphones)
+* Amazfit Active 3 Premium: Fix map upload via Bluetooth
+* Bangle.js: Support notification actions
+* Casio GBD-200: Add world time / world clocks support
+* Casio GBD-200: Improve activity session sync
+* Casio: Fix notifications with long unicode text
+* Charts: Add battery voltage, current, power, temperature
+* Charts: Respect unit preferences
+* Charts: Use activity-specific units for charts
+* CoMaps: Add support for navigation instructions
+* Debug: Randomize test weather
+* Endurain: Upload workout photos
+* FIT Export: Add local timestamp, distance, elevation, step length
+* Fix crash when opening map view
+* Fix non-zero step counts at midnight after time zone change
+* Garmin HRM Pro+: Improved connection support
+* Garmin: Add point winds support
+* Garmin: Display notification on OAuth expiration
+* Garmin: Fix activity sync signal
+* Garmin: Fix crash on number parsing
+* Garmin: Fix crash when Bluetooth is disconnected
+* Garmin: Fix duplicated activities on some devices
+* Garmin: Fix race condition on some devices
+* Garmin: Fix realtime settings debug menu
+* Garmin: Improve activity sync on new sync protocol
+* Garmin: Improve recovery when service connection drops
+* Garmin: Move performance condition chart to standalone group
+* Gpx: Export and import power
+* H59: Add alarm support
+* Health Connect: Fix sleep sessions written with truncated stages
+* Health Connect: Fix sleep sync being cut off on some devices
+* Health Connect: Fix sync of GPS route for some devices
+* Health Connect: Fix sync of very long GPS routes
+* HUAWEI FreeClip 2: Add adaptive volume, extra media volume
+* HUAWEI FreeClip 2: Add find headphones
+* HUAWEI FreeClip 2: Add low Latency mode
+* Huawei: Add per-sample workout metrics (HR, speed, cadence, altitude) into activity track
+* Huawei: Avoid out-of-memory crash when uploading large music files
+* Huawei: Basic support for offline maps
+* Huawei: Fix activity sync on some recent watches
+* Huawei: GPS track uploading
+* Huawei: Improved calendar sync
+* InfiniTime: Add navigation competion percentage and more icons
+* Internet Helper: Improved error feedback
+* Mi Band 9 Active: Fix activity summary parsing
+* Pebble: Add support for Weather Land and Love Weather watchfaces
+* Prevent multiple find phone activities from being opened
+* Recognize "Google Messages" as SMS app
+* Sleep as Android: Add support for Huami (pre-Zepp-OS), Garmin and Xiaomi-protobuf devices
+* Sleep as Android: Add SpO2 support for Huami devices
+* SoFlow: Update icon and device kind to scooter
+* Sony WF-1000XM4: Add voice notifications
+* Sony WH-ULT900N: Enable more features
+* Soundcore Sport X20: Extend functionality
+* Victron SmartShunt: Persist battery power and current
+* Withings: Improved connection flow control
+* Workouts: Add function to set header photo
+* Xiaomi-protobuf: Add dynamic vibration pattern configuration screen
+* Xiaomi-protobuf: Fix cloudy weather icon
+* Xiaomi-protobuf: Improve daily summary parsing
+* Xiaomi-protobuf: Improve workout summary parsing
+* Xiaomi-protobuf: Parse workout details
+* Yawell Rings: Fix temperature sync to Health Connect
+* Zepp OS: Fix temperature and distance units
+
+#### 0.92.2
+
+* Charts: Avoid empty charts if no charts are enabled
+* Garmin: Fix regression in ExploreSync historical-catalog sync
+* Health Connect: Fix some workouts mapping
+* Huawei: Fix deadlock on activity listing
+* Improve connection to low power devices
+* Mi Band 6: Hide some invalid workout summary values
+* Shokz: Fix reading language from device
+* Soundcore Q30: Add some other device names
+
+#### 0.92.1
+
+* iGPSPORT: Fix activity track reprocessing
+* Fix sleep time mismatch on some devices
+
+#### 0.92.0
+
+* Add activity upload to Endurain / Wanderer
+* Initial support for Anker Soundcore Sport X20
+* Initial support for Blackview R3Max
+* Initial support for EarFun Free Pro 3
+* Initial support for Garmin Forerunner 170 / Forerunner 970
+* Initial support for Garmin GPSMAP H1
+* Initial support for Huawei Watch Fit 5 / 5 Pro
+* Initial support for iGPSPORT bike computers (BiNavi Air, BSC200, BSC200S, BSC300, iGS630, iGS630S, iGS800)
+* Initial support for Keep Health devices
+* Initial support for Kieslect Calling Smartwatch Kr Pro
+* Initial support for Matson MA98415 (BM2 battery monitors)
+* Initial support for Moondrop Space Travel 2 Ultra
+* Initial support for P22B1 (Moyoung / Da Fit)
+* Initial support for Realme Buds Air 6 Pro, Buds T200
+* Initial support for Redmi Buds 6
+* Initial support for Redmi Watch Move
+* Initial support for Sinilink audio amplifiers
+* Initial support for Soundbreener Core
+* Initial support for Victron SmartShunt
+* Initial support for Xplora XMOVE
+* Initial support for Yell Smart Watch GT3 (FitPro)
+* Experimental support for Xiaomi Smart Band 10 Pro
+* Add device-agnostic FIT activity export
+* Add setting to enable TRACE log level
+* Amazfit Balance: Fix code for outdoor cycling
+* Amazfit Bip Lite: Add workout GPS settings
+* Amazfit Bip S: Attempt to fix reboot on notification without subject or body
+* Bangle.jS: Add optional device target filter for com.banglejs.uart.tx intent
+* Bangle.js: Add support for different data types in intent extras
+* Casio GBD-200: Improved support
+* Casio: Improved connection stability
+* Charts: Add charts for generic sample
+* Charts: Add weekly/monthly temperature charts
+* Charts: Fix steps overshooting values
+* Charts: Improve HRV chart
+* Charts: Show VO2 max to decimal place
+* CMF Buds 2 Plus: Add spatial mode
+* CMF Buds 2 Plus: Enable touch configuration
+* CMF Buds 2a: Add touch options
+* CMF Buds: Enable low latency on more devices
+* CMF Buds: Enable spatial audio for more models
+* CMF Buds: Enable ultra bass for more devices
+* CMF Buds: Update equalizer presets
+* Colmi V76: Fix workout parsing
+* FitPro: Add camera
+* Fix connection attempts while bluetooth is off for some devices
+* Fix drawer being drawn behind status bar
+* Fix file type when sharing
+* Garmin: Fix activity sync getting stuck on some devices
+* Garmin: Fix empty caller when unknown
+* Garmin: Fix http request without headers
+* Garmin: Fix unknown transfer notification
+* Garmin: Show toast on waypoint upload complete
+* Garmin: Sync activity tracks for some GPS devices
+* Garmin: Sync and archive some unknown files (should prevent Instinct series reboots)
+* GPX: Fix parsing of timestamps without timezone
+* Health Connect: Fix data being skipped under some situations
+* Health Connect: Fix some crashes during sync
+* Huami: Avoid infinite loop when fetching very short activity
+* Huawei: Allow encryption to be enabled / disabled
+* Include workouts in activity list
+* Intent API: Add Alarm Intent API
+* Maps: Reduce memory usage
+* OpenTracks: Fix extra empty activity track and rare crash
+* Pebble: Add support for installing dual slot firmware
+* Pebble: Add support for pull to refresh for pebble health data
+* Pebble: Fix Pebble [Core 2 Duo / Time 2 / 2 Round] BLE pairing
+* Pebble: pass dev_settings to rebble store url, do enable pbw downloads in browser
+* Prevent crash on devices without GPS
+* Recognize Thunderbird for Android as email and ignore its summary notifications
+* Sony WF-1000XM5: Enable further capabilities
+* Track auto-fetch times per device
+* Xiaomi-protobuf: Fix alarm notifications
+* Xiaomi-protobuf: Fix notification dismissal after reconnection
+* Xiaomi-protobuf: Fix swapped min and max temperatures
+* Xiaomi-protobuf: Fix watchface management
+* Zepp OS: Weather stability improvements
+
+#### 0.91.1
+
+* Casio: Fix connection issues after first pairing
+* Fix occasional crash when leaving activity list
+* Garmin: Fix unknown transfer notification
+* Huawei: Fix connection stuck on authentication on newer firmware
+* OpenTracks integration: Remove unsupported elevation field
+* Xiaomi-protobuf: Fix GPS dropping mid-workout on newer firmware
+
+#### 0.91.0
+
+* Initial support for Braun iCheck 7 BPW4500 blood pressure monitor
+* Initial support for CMF Buds 2a, Buds 2 Plus
+* Initial support for Garmin Descent G1, Forerunner 570
+* Initial support for Garmin HRM 600
+* Initial support for Huawei Band 11 Pro, Watch GT Runner 2, Watch Ultimate 2
+* Initial support for Moondrop Space Travel 2
+* Initial support for Redmi Buds 8 Active
+* Initial support for iTECH Active 3 (MoYoung / Da Fit)
+* Initial support for ZL02D (MoYoung / Da Fit)
+* Experimental support for Amazfit Active 3 Premium, Cheetah 2 Pro, T-Rex Ultra 2
+* Experimental support for Sony WH-1000XM6
+* Add and adjust default sleep range to 18:00
+* Add auto export of gpx files
+* Add FossWallet support
+* Add missing characters to polish transliterator
+* Add support for nautical units
+* Adjust value precision depending on unit
+* Amazfit Bip S: Attempt to fix reboot on notification without title
+* Avoid crash when BLE Scan Service is enabled on zip restore
+* Bangle.js: Honor Content-Type header
+* CMF Buds 2a: Add equalizer, low latency mode, ultra bass
+* CMF Buds: Fix ANC modes list update
+* CMF Buds: Fix reading ANC status on newer buds
+* CMF Buds: Handle ANC mode change on buds
+* CMF Buds: Handle In-Ear detection change
+* CMF Buds: Read low latency / in-ear status on init
+* CMF Buds: Request firmware version on initialization
+* CMF Buds: Support more ANC modes
+* CMF Buds: Use better icons for device specific settings
+* CMF Watch Pro 3: Initial workout sync for some activities
+* CMF Watch Pro: Fix crash when chunks larger than mtu are received
+* Fix connection to device on gpx upload
+* Fix crash on companion pairing in Android 12
+* Fix crash on timezones without daylight savings
+* Fix duplicated weight conversion
+* Fossil: Increase request timeout for big activity file downloads
+* Fossil Q: Add button actions for showing step goal progress and ringing phone
+* Fossil Q: Add dev preference for saving raw activity files
+* Fossil Q: Add/fix button actions for music and volume control
+* Fossil Q: Fix commands being sent to all connected Fossil watches
+* Fossil Q: Hide unused authentication key preference
+* Fossil Q: Improve time picker visuals
+* Fossil Q: Limit amount of toasts
+* Fossil Q: Move configuration from custom screen to device preferences
+* Fossil Q: Support activity data syncing
+* Fossil Q: Support calibration of physical hands
+* Fossil Q: Support for find device
+* Fossil Q: Use global step goal preference instead of custom one
+* Fossil Q: Vibrate watch on incoming call
+* Garmin: Add basic activity to send waypoints
+* Garmin: add support for installing FIT location and segment files
+* Garmin: Display human friendly names for ANT+ gear in activity summaries
+* Garmin: Enhance activity summaries
+* Garmin: Experimental settings for wake / sleep times
+* Garmin: Export FIT laps as GPX track segments
+* Garmin: Extend support for non-GPS activities
+* Garmin: Extract and store some metrics endurance score, FTP, training readiness (no UI)
+* Garmin: Fix activity sync stuck when keep activity data on device is enabled
+* Garmin: Fix edge case in encoding some commands
+* Garmin: Fix identification of relevant dive session summary
+* Garmin: Fix start time handling for stopwatch activities
+* Garmin: Fix step length visualisation
+* Garmin: Ignore invalid location when checking for activity GPS
+* Garmin: Improve FIT file parsing
+* Gpx: Add support for importing older GPX version 1.0 files
+* Gpx: Export track name
+* Health Connect: Add distance sync
+* Health Connect: Bridge non-sleep gaps with no activity as awake sleep
+* Health Connect: Fix device model
+* Health Connect: Fix partial sleep sessions not being replaced by full data
+* Health Connect: Fix sleep sessions being interrupted by awake sections
+* Health Connect: Fix sync on daylight savings switch
+* Huawei: Fix crash on sync for some devices
+* Huawei: Fix watchface installation on some devices
+* Huawei: Improve workout sync error handling
+* Ignore notifications from suspended apps
+* Improve battery notifications
+* Include awake-sleep duration in sleep sessions
+* Intent API: Add Intent to change global settings
+* Pebble: Add toggle for PebbleKit support
+* Pebble: Added support for pebble-findmygadgetbridge (findmyphone pebble app)
+* Pebble: Improve PebbleKit when multiple pebble devices are paired
+* Polar H10: Add configuration settings
+* Redmi Buds 6 Active: Add battery, firmware, EQ presets, touch options
+* Sony WH-1000XM3: Add support for LDAC and NC/AMBIENT button switch
+* Sony WHULT900N: Fix ambient sound control
+* Split measurement system units
+* Use grams for weight values under 1kg
+* Weather: Fix night computation when sunrise and sunset are on different UTC dates
+* Xiaomi-protobuf: Add support for Rpk
+* Xiaomi-protobuf: Enable App Manager UI
+* Xiaomi-protobuf: Enable awake sleep
+* Xiaomi-protobuf: Fix re-processing of some older activities
+* Xiaomi-protobuf: Fix reminder crash on unknown repetition
+* Zepp OS: Add Floorball activity
+* Zepp OS: Fix notification icons and pictures on some devices
+
+#### 0.90.0
+
+* Initial support for Honor Magic Watch
+* Initial support for Y6 (GloryFit)
+* Initial support for Garmin Forerunner 935, Instinct 2S Surf, Instinct Solar Tactical
+* Initial support for Huawei Band 11
+* Initial support for Laxasfit devices
+* Amazfit GTR 4: Add bluetooth name for Limited Edition
+* Amazfit Helio Strap: Hide heart rate monitoring config (always-on by design)
+* Charts: Improve VO2 Max chart range
+* CMF Watch Pro: Fix activity over-counting on timezone change
+* CMF Watch Pro: Fix exception on connection
+* Dashboard: Add PAI widget
+* Dashboard: Add preference for disabling dimming in Today widget
+* Dashboard: Add week day
+* Database: Improve access performance
+* Debug: Add setting to change device mac address
+* Garmin Venu 4: Fix bluetooth name
+* Garmin: Add Recovery Heart Rate and Rate of Perceived Exertion to activity summary
+* Garmin: Fix activity over-counting on timezone change
+* Garmin: Use current day resting heart rate
+* Health Connect: Fix calories unit
+* Health Connect: Fix duplicate and truncated sleep records
+* Health Connect: Fix duplicate records from workout syncer overlapping activity sync
+* Health Connect: Fix sync skipping some records
+* Huami: Map more apps to notification icons
+* Huawei Watch GT 6 Pro: Fix workout processing
+* Huawei/Honor: Enable VO2 Max for supported devices
+* Huawei/Honor: Fix workout processing for some devices
+* Mi Band 9 Active: Fix activity fetching
+* Pebble: Fix app configuration when internet helper is available but disallowed
+* Pebble: Fix crash when returning from exernal website from browser application
+* Pebble: Fix sending config to watchfaces
+* Sony WF-1000XM4: Enable speak-to-chat support
+* Webview: Do not check firewall when direct internet access is available
+* Withings Steel HR: Update battery and time on sync
+* Xiaomi-protobuf: Fix calories charts
+* Xiaomi: Fix first HC sync for SpO2 data
+* Zepp OS: Add setting to disable calendar event reminders
+* Zepp OS: Fix notification pictures
+* Zepp OS: Map some unknown display items
+* Zepp OS: Parse swimming details and temperature
+* Fix Tiny Weather Forecast Germany on some devices
+* Fix workout list icon tint in action menu
+* Fix crash on calendar sync if permissions are not granted
+
+#### 0.89.1
+
+* Garmin: Fix edge case on activity timestamp processing
+* Huawei/Honor: Fix exception when processing workout data
+
+#### 0.89.0
+
+* Add support for Internet Helper
+* Add support for Health Connect
+* Initial support for CMF Buds 2
+* Initial support for Colmi V73
+* Initial support for D3, Qecnato S10 (GloryFit)
+* Initial support for Galaxy Buds3 Pro
+* Initial support for Garmin Edge 25, Edge 130, Edge 840, Edge 1040, Forerunner 920, GPSMAP 66s, Lily 2, Tactix 7, Tactix 8
+* Initial support for Yawell R05
+* Initial support for Sanitas SBM67 / SilverCrest SBM67 blood pressure meter
+* Initial support for Zendure SolarFlow (tested only 800 Pro)
+* Experimental support for Amazfit Active Max, Balance 2 XT
+* Experimental support for Garmin Fenix 5S
+* Experimental support for Mi Band 4C
+* Experimental support for OneTouch blood glucose meters (tested only Select Plus Flex)
+* Amazfit Bip / Bip Lite / Cor 2: Restore 3rd party realtime HR setting
+* Amazfit Helio Strap: Enable workout detection sensitivity
+* Bangle.js: Fix handling HTTP method
+* Bangle.js: Fix starting accelerometer when SleepAsAndroid resumes
+* CMF Watch Pro 2: Improve activity parsing
+* CMF Watch Pro: Fix active score
+* CMF Watch Pro: Fix measurement system
+* CMF Watch Pro: Rework device settings screen
+* CMF Watch: Fix weather
+* Even Realities G1: Improve connection stability
+* Galaxy Buds3 Pro: Fix icon color
+* Garmin: Add average ascent velocity
+* Garmin: Allow firewalled app internet access
+* Garmin: Disable some features on unsupported devices
+* Garmin: Disable VO2 Max split on devices that do not support it
+* Garmin: Display intervals on non-swimming activities
+* Garmin: Display sleep restless moments
+* Garmin: Fix esports activity
+* Garmin: Fix occasional crash when disconnecting
+* Garmin: Fix pairing for some older devices
+* Garmin: Fix processing of activity files with custom data
+* Garmin: Fix some crashes when processing activity files
+* Garmin: Fix some missing VO2 Max cycling activities
+* Garmin: Improve connection stability
+* Garmin: Make calories consistent with other devices
+* GloryFit: Add screen timeout setting
+* GloryFit: Fix screen timeout preference
+* GloryFit: SOS contact (experimental)
+* Heart Rate devices: Parse and persist RR intervals
+* Huami: Improve workout charts for activities without gps
+* Huawei Watch Fit: Fix crash on sync
+* Huawei: Sync raw ECG data (no UI)
+* InfiniTime: Add resources upload
+* Marstek B2500: Support setting solar panel peak power
+* Pebble: Add weather support in Tears of the Kingdom watchface
+* Pebble: Check for watchapp updates if internet is available
+* Pebble: Download and show app/watchface previews
+* Pebble: Fix nightly weather icons
+* Pebble: Support Signal icon with 2025 models
+* Pinetime: Add sunrise and sunset weather data
+* Polar: Disable unused charts
+* Xiaomi-protobuf: Enable active calories
+* Xiaomi-protobuf: Improve outdoor running, treadmill and elliptical parsing
+* Zepp OS 5: Fix weather
+* Zepp OS: Add e-bike activity
+* Zepp OS: Add jump rope stats
+* Zepp OS: Fix HRV on some devices
+* Zepp OS: Fix notification image encoding for some devices
+* Zepp OS: Use Catima barcode encoding if available
+* Add "Today" and "distant past" quick filter option to workout list with persistent selection
+* Add auto phone call answer and notification speaking to some headphones that were missing it (Anker Soundcore Liberty 3 Pro / 4 NC, Bose QC35, Pixel Buds A, Redmi Buds, Soundcore AeroFit 2 / Q30)
+* Add distinct VO2 Max ranges per age / gender
+* Add HRV summary computation for all devices that support HRV
+* Add italian transliteration
+* Add timeout to reconnect when initial connection becomes stuck
+* Add transliteration of arrow emojis
+* Attempt to reconnect faster on connection loss
+* Avoid UI freeze when deleting device
+* Calendar Sync: Add the option to filter events
+* Camera: Fix theme
+* Charts: Add hours to x-axis
+* Charts: Add loading indicator
+* Charts: Add units to calories and SpO2 charts
+* Charts: Add weekly/monthly blood oxygen
+* Charts: Add weekly/monthly body energy
+* Charts: Fix imperial units on temperature charts
+* Charts: Make max temperature dynamic
+* Dashboard: Fix some widgets linking to unsupported devices
+* Dashboard: Only include activities from enabled devices
+* Debug: Add setting to override BUSY_CHECKING
+* Debug: Revamp debug activity
+* Dismiss permissions screen after all permissions granted
+* Display device alias hints on file manager
+* Fetch all sync data types from notification
+* Fix 0-second sleep sessions
+* Fix bluetooth disconnected toasts while bluetooth is off
+* Fix call mute command in non-mainline build flavors
+* Fix raw details paths when moving between Gadgetbridge versions
+* Improve Gadgetbridge restart
+* Improve zip export speed
+* Intent API: Fix database and zip export intents
+* Keep screen on during zip export / import
+* Make GenericWeatherReceiver work without any connected devices
+
+#### 0.88.0
+
+* Initial support for Amazfit GTS 4 Mini New, T-Rex 3 Pro
+* Initial support for Coospo H9Z
+* Initial support for Garmin Edge Explore
+* Initial support for Garmin HRM-Pro Plus
+* Initial support for Garmin Descent G2, Enduro, Epix, Fenix 6 Pro, Fenix 6S Pro Solar, Fenix 6X Sapphire, Forerunner 35, Forerunner 745, Quatix 8, Venu 4
+* Initial support for Huawei FreeArc
+* Initial support for Huawei Watch GT 6 (Pro)
+* Initial support for more FitPro devices
+* Initial support for Pebble 2 Duo / Time 2
+* Initial support for IMIKI Frame 2, S52 (GloryFit)
+* Initial support for Sony WH-CH720N
+* Amazfit GTS: Fix device discovery
+* Amazfit T-Rex 3 Pro: Fix device discovery
+* Bangle.js: Avoid repeated media updates without changes
+* C20: Fix bluetooth name matching on some watches
+* CMF Watch Pro: Fix some activity samples being discarded
+* Coospo HW807: Fix device discovery
+* Even Realities G1: Fix support for some BLE names
+* Even Realities G1: Improve connection reliability
+* Even Realities G1: Support non-latin charaters in notifications
+* Garmin: Add debug support to fetch DEVICE_XML
+* Garmin: Add respiratory rate chart
+* Garmin: Add temperature / diving depth charts
+* Garmin: Add workaround for missing next page id on new sync protocol
+* Garmin: Allow installing unsupported files
+* Garmin: Fix current training load fetching
+* Garmin: Fix feels-like temperature
+* Garmin: Fix legacy fit file decoding
+* Garmin: Fix map in diving activities
+* Garmin: Fix notifications on recent firmware versions
+* Garmin: Fix realtime settings crash
+* Garmin: MLR support
+* Garmin: Send app notification icons
+* Garmin: Send current air quality
+* Huawei: Activate Arterial Stiffness Detection, ECG (no sync)
+* Huawei: Add contact sync support
+* Huawei: Experimental support for health feature configuration
+* Huawei: Fetch HRV, more sleep stats, resting HR, and emotions
+* Huawei: Fix send GPS and time data
+* Huawei: Fix VoIP call notification
+* Huawei: Fix weather speed, wind direction and uvIndex
+* Huawei: Improve swimming and jump rope workout parsing
+* Huawei: Initial step-by-step navigation support
+* Huawei: Notifications picture support
+* Huawei: Pulse wave arrhythmia activation and control (no sync)
+* Huawei: Sleep breathing awareness for new devices (no sync)
+* Huawei: Sync sleep apnea (no UI)
+* Huawei: View heart rate zones and limits
+* Pebble: Map cloudy weather icons in system weather app (on fw 4.x)
+* Pebble: Remove firmware 1.x and 2.x support
+* Pebble: Support fetching debug logs
+* Pebble: Support multiple weather location with system weather app (on fw 4.x)
+* Pebble: Support night icons on TrekVolle and TimeStyle
+* Pebble 2/2 Duo: Fix random crashes on disconnect
+* Pebble 2 Duo: Support getting inital battery level
+* Pebble: support night weather icons in TrekVolle watch face
+* Sony Wena 3: Enable body energy
+* Withings Steel HR: Improve initialization reliability
+* Xiaomi-protobuf: Fix outdoor running HR zones for some devices
+* Xiaomi-protobuf: Parse daily calories, distance, energy
+* Zepp OS: Add some missing menu items and shortcuts
+* Zepp OS: Fix gpx import for some devices
+* Zepp OS: Map bouldering activity
+* Zepp OS: Process workout movement evaluation
+* Allow notifications while screen saver is on
+* Add setting to force legacy GATT
+* Maps: Add themes biker, dark, indigo
+* Fix auto zip export when file already exists
+* Fix full crash when re-processing workout details fails
+* Fix crash while loading some notification pictures
+* Fix OpenTracks icon mapping
+* Fix pairing of unsupported devices
+* Fix spam from Microsoft Teams and WhatsApp notifications
+* Improve gpx parsing and exporting
+* Remove toast when bluetooth is off
+
+#### 0.87.1
+
+* Garmin: Fix strength workout fetching and parsing
+
+#### 0.87.0
+
+* Initial support for Amazfit Active 2 Square, Helio Strap, Helio Ring
+* Initial support for Blackview R60
+* Initial support for Colmi R07, P76, P80, V76
+* Initial support for Coospo H6, HW9, HW807
+* Initial support for Garmin Descent Mk3, Fenix 3, Fenix 3 HR, Fenix 6X Pro, Forerunner 165 Music, Forerunner 945, Instinct Tactical, Venu X1, Vívoactive 6, Vivomove Sport, Vivosmart 3
+* Initial support for Garmin Edge 540
+* Initial support for Garmin eTrex SE, inReach Mini 2
+* Initial support for Garmin HRM 200
+* Initial support for generic heart rate sensor
+* Initial support for generic thermal printer
+* Initial support for generic weight scale
+* Initial support for GloryFit devices - Dotn P66D, Oukitel BT103, Y66
+* Initial support for H59, HC96 (Da Fit / Moyoung)
+* Initial support for Haylou Watch 2 Pro
+* Initial support for Nothing Ear (a)
+* Initial support for Polar H9
+* Initial support for Redmi Smart Band 3 (experimental), Watch 5
+* Initial support for Shokz OpenSwim Pro
+* Initial support for Soundcore AeroFit 2
+* Initial support for Xiaomi Smart Band 9 Active, Band 10, Watch S4
+* Initial support for Yawell rings R10 and R11
+* Experimental support for Amazfit Balance 2
+* Experimental support for ATC_BLE_OEPL
+* Amazfit Active 2: Change connection default to BTBR
+* Amazfit Active: Allow AGPS update with brm files
+* Amazfit Active: Fix firmware recognition
+* AsteroidOS: Add screenshot support
+* Bangle.js: Fix altitude stats in workout details
+* Casio: Fix connection to some devices
+* CMF Watch Pro: Firmware update
+* Even Realites G1: Support Notifications and improve disconnections
+* Fossil Q: Fix hands color in apps overview
+* Fossil Q: Fix hands positions during setup
+* Fossil/Skagen Hybrids: Add calendar support
+* Fossil/Skagen Hybrids: Add support for workouts sync
+* Fossil/Skagen Hybrids: Fix some crashes on config activity
+* Garmin: Add new sync protocol
+* Garmin: Allow gpx track name to be changed when uploading
+* Garmin: Display activity fetch and parse progress
+* Garmin: Display progress on fetch notification
+* Garmin: Display workout set exercise, step speed loss
+* Garmin: Fix distance not complete at end of day
+* Garmin: Fix sleep stages for partial syncs
+* Garmin: Fix upload of larger PRG files
+* Garmin: Initial diving support
+* Garmin: New workout details charts
+* Garmin: Set alarms from phone on older watches
+* Garmin: Split fit files per type / year
+* Huami: Allow fetching multiple workouts in current day
+* Huami: Sync calendar event updates
+* Huawei: Display recovery heart rate on workouts
+* Huawei: Fix avg speed/pace calculation
+* Huawei: Fix some device crashes on calendar sync
+* Huawei: Fix temperature sample provider
+* Huawei: Fix UI for apps icons uploading
+* Huawei: Improved activity and workout fetching
+* Huawei: Improved workout parsing
+* Huawei: Increase app icons upload limit to 30
+* Huawei: Initial diving support
+* Huawei: New step rate support
+* Huawei: New workout details charts
+* Huawei: Parse TruSleep data for new devices
+* Mi Band 9 Pro: Fix walking activity parsing
+* Mi Smart Scale: Fix disconnection
+* Moondrop Space Travel: Fix toast on null firmware version
+* Pebble: Map condition code icons for TrekVolle
+* Pebble: Send current weather when opening the native weather app
+* Sony headphones: Fix recognition of some bluetooth names
+* Xaomi-protobuf: Split fit files per type / year
+* Zepp OS: Add activity type for indoor walking
+* Zepp OS: Allow gpx track name to be changed when uploading
+* Zepp OS: Allow installing zpk files directly
+* Zepp OS: Fix settings on some firmware versions
+* Zepp OS: Fix some unknown setting items
+* Zepp OS: Fix some upload operations not finishing in the UI
+* Zepp OS: Fix steps and weight goals on some versions
+* Zepp OS: Fix weather UV Index
+* Zepp OS: Parse workout laps
+* Add auth key activity
+* Add automatic zip export
+* Add Goodwy and Simple SMS to sms apps
+* Allow blocking screenshots
+* Allow disabling swipe to refresh
+* Allow sleep goal in minutes
+* Allow unsupported devices to follow normal pairing process
+* Bluetooth: Improved connection and reconnection for BLE/BTBR/BT Classic
+* Charts: Add additional sleep chart with sleep stages
+* Charts: Add sleep charts overlays (hr, spo2, temperature, respiratory rate)
+* Charts: Add training load
+* Charts: Compute time weighted avarage for heart rate
+* Charts: Fix crash if database fetch fails
+* Charts: Improve values text contrast
+* Charts: Rework blood oxygen chart
+* Delete export files when deleting a device
+* Display device type name during discovery
+* Drop support for outdated app Weather Notification
+* Fix caller number for some VoIP apps
+* Fix crash when exporting zip with large database
+* Fix crash when music player sends unexpected duration format
+* Fix crash when no calendar provider is available
+* Fix crash when using large maps
+* Fix freeze when processing large firmware files
+* Fix headphones connection on some Android 12 devices
+* Fix notification pictures for some apps
+* Fix repeating battery exemption request
+* Fix some crashes when using bulgarian language
+* Ignore Firefox call notifications
+* Improve workout list loading speed
+* Intent API: Add command for heap dump
+* Save track to GPX file when stopping OpenTracks recording
+* Settings: Add search
+* Simplify disabling permissions request screen
+* Sort transliteration languages
+* UI: Make device types not translatable
+* UI: Update material icons
+* Weather: Add compressed WeatherGz support
+* Workout details: add additional charts (cadence, elevation, hr, power, speed)
+
+#### 0.86.1
+
+* Fossil/Skagen Hybrids: Fix connection failure
+
+#### 0.86.0
+
+* Initial support for Amazfit Active 2 NFC
+* Initial support for Colmi R12
+* Initial support for Da Fit / Moyoung devices - Advan Watch SE1 AI, C20 smartwatch, KT80 smartwatch, R50Pro smartwatch, Colmi i28 Ultra, Colmi V72, Colmi V89, Fire-Boltt Talk, KSIX Venture, Misirun C17, Rainbuvvy T97, Viran C29
+* Initial support for Polar H10
+* Initial support for Garmin bike computers - Edge 130 Plus, Edge Explore 2
+* Initial support for Garmin Fenix 7X Pro, Forerunner 630, Forerunner 645 Music, Instinct 2X Tactical, Instinct 3 Tactical, Vívoactive HR, Vívosmart 4
+* Initial support for Huawei Freebuds 6
+* Initial support for Huawei Watch 5
+* Initial support for Oppo Enco Buds2
+* Initial support for Pixel Buds A
+* Initial support for Realme Buds Air 5 Pro, Buds T100, Buds T300
+* Initial support for Redmi Buds 6 Pro
+* Initial support for Sony WF-C710N
+* Experimental support for AAWireless
+* Experimental support for Huawei Watch Fit 4 / 4 Pro
+* Bangle.js: Add support for insecure TLS and HTTP requests
+* Bangle.js: Add support for version 2 weather
+* Bangle.js: Set the HTTP request timeout
+* Bangle.js: Use html-compatible parser for xpath queries
+* CMF Watch Pro/2: Improve activity parsing
+* Colmi R0x: Add support for display preferences
+* Colmi R12: Fix bluetooth name
+* Even Realities G1: Improved support, add more settings
+* Even Realities G1: Pair as a single device
+* Garmin: Fix activity renaming
+* Garmin: Fix fetching of concatenated fit files
+* Garmin: Parse swimming workout intervals
+* Garmin: Prevent infinite loop when fetching activity data
+* Garmin: Upload all segments from first track in gpx
+* Huami: Add broadcast package to device actions
+* Huawei: Add more info to device details
+* Huawei: Configuration of goal reminders
+* Huawei: Fix crash in app list
+* Huawei: Fix message during firmware update
+* Huawei: Handle workout sync errors
+* Huawei: Upload notification app icons
+* iTag/thermometer: Fix icon colors in dynamic color theme
+* Mi Smart Scale: Mark device as busy while fetching weight history
+* Moondrop Space Travel: Enable battery reporting
+* Moondrop Space Travel: Fix device icon
+* Oppo Headphones: Prevent crash on invalid incoming commands
+* Ultrahuman: Add basic support for breathing exercise
+* Zepp OS: Add missing application names
+* Zepp OS: Add setting for UTC sun/moon times
+* Zepp OS: Disable realtime steps on connection
+* Zepp OS: Experimental btrfcomm support
+* Zepp OS: Fix crash when sending music info
+* Zepp OS: Fix crash when uploading some watchfaces
+* Zepp OS: Fix DST when setting time
+* Zepp OS: Fix moon phase icon
+* Zepp OS: Fix zip files being wrongly recognized as AGPS
+* Zepp OS: Parse workout pace, cadence, strength sets
+* BLE: Add reconnect on gadget-initiated connection
+* BLE: Add setting to request low-power connection
+* BLE: Fix companion pairing on some devices
+* BLE: Fix some race conditions
+* Charts: Add average day for body energy
+* Charts: Add weekly/monthly views for calories and stress
+* Charts: Display resting metabolic rate
+* Dashboard: Fix resting calories when using multiple devices
+* Intent API: Add command to set device type
+* OpenTracks: Fix detection of some versions of the app
+* Add more icons for preferences and activities
+* Fix inconsistent sleep scores
+
+#### 0.85.0
+
+* Initial support for 1MORE SonoFlow headphones
+* Initial support for Amazfit Bip 6
+* Initial support for EarFun Air S and Air Pro 4 headphones
+* Initial support for Garmin Instinct 3
+* Initial support for Generic Audio BT Devices
+* Initial support for Honor Watch 4 / 4 Pro
+* Initial support for Huawei Band 10
+* Initial support for Huawei FreeBuds Pro
+* Initial support for Redmi Buds 3 Pro
+* Experimental support for Ultrahuman Air smart ring
+* Amazfit Active 2: Fix device discovery, improved support
+* Amazfit Bip 3: Add workout gps settings
+* Amazfit GTR2e: Enable PAI support
+* Bangle.js: Fix cached messages not send after reconnect
+* Bangle.js: Fix music sometimes not being sent to the watch
+* Bangle.js: Missed call notifications
+* Bangle.js: Send phone music volume level to watch
+* CMF Watch Pro: Allow enable of bluetooth calls
+* Fossil/Skagen Hybrids: Fix hidden upload button in app manager
+* Garmin: Add nap support
+* Garmin: Allow manual import of activity files
+* Garmin: Fix fit file checksum computation
+* Garmin: Fix weight unit in strength training sets
+* Garmin: Parse extended running and cycling workout data
+* Garmin: Resolve names for services and characteristics
+* Huami: Delete some missing tables when deleting a device
+* Huami: Fix sending air quality index
+* Huawei Freebuds 5i: Fix crash on device preferences
+* Huawei: Add stress calibration and sync
+* Huawei: Add support for find device
+* Huawei: Add trail run activity
+* Huawei: Fix delete notifications for LE devices
+* Huawei: Fix some crashes
+* Huawei: Fix workout average pace calculation
+* Huawei: Improve database performance
+* Huawei: Increase user ID length to 19 characters
+* Huawei: Real-time heart rate mode and low/high alerts
+* Lenovo Watch X (Plus): Fix language setting
+* Mi Band 8: Parse elliptical and rowing workouts
+* Pebble: Fix all day events timezone
+* Xiaomi-protobuf: Make GPS timeout configurable
+* Xiaomi-protobuf: Map some missing workout types
+* Zepp OS 3.5+: Fetch sleep stages and score
+* Zepp OS 3+: Fix screenshots
+* Zepp OS 4: Fix notification icons
+* Zepp OS: Allow 32-character hex key without 0x prefix
+* Zepp OS: Allow upload of UIHH AGPS bundles
+* Zepp OS: Fetch body temperature, HR stats, HRV, sleep respiratory rate
+* Zepp OS: Fix AGPS section not available on some devices
+* Zepp OS: Fix parsing of PAI values after factory reset
+* Zepp OS: Fix temperature and distance unit configuration
+* Zepp OS: Map all missing activity kinds
+* Zepp OS: Maps upload
+* Zepp OS: Music upload (unstable)
+* Zepp OS: Request high MTU on connection
+* Zepp OS: Respect calendar sync setting
+* Zepp OS: Sync audio recordings (voice memos)
+* Add page with all open-source licenses
+* Charts: Add sleep HR average
+* Fix app crash when switching between Android user profiles
+* Fix battery full notifications for devices that do not report charging state
+* Fix icon on low battery level
+* Fix ignoring low priority notifications on Android 13+
+* Fix some preference summaries not getting updated
+* Improve idle and stale media session handling
+* Make alarm notifications respect app whitelist/blacklist
+* Reduce log spam from browsing preferences
+* Workouts: Offline maps
+
+#### 0.84.0
+* Initial support for Even G1 Smart Glasses
+* Initial support for Garmin Fenix 7S Pro, Forerunner 45 / 735XT, Instinct E / Lily 2 Active
+* Initial support for Gree Air Conditioner units
+* Initial support for Redmi Buds 6 Active
+* Initial support for Sony WH-ULT900N, WF-C510
+* Initial support for Soundcore Q30
+* Experimental support for Amazfit Active 2
+* Amazfit Neo: Fix sound options
+* AsteroidOS: Add volume control
+* AsteroidOS: Fix missing sender notification attribute
+* Charts: Add heart rate weekly and monthly tabs
+* Charts: Add option to hide sleep and steps balance
+* Charts: Restore steps balance on weekly and monthly charts
+* Colmi R09: Add preference to toggle temperature measurements
+* Colmi R09: Fix temperature data parsing
+* Colmi R0x: Add support for realtime heart rate meassurements and live activity tracking
+* Garmin: Add basic fit file viewer
+* Garmin: Add custom notification actions
+* Garmin: Allow fake OAuth
+* Garmin: Allow PRG file upload
+* Garmin: Fix connection to newer firmware versions
+* Garmin: Improve workout parsing
+* Huawei: Add firmware update support
+* Huawei: Add screenshots support
+* Huawei: Add support to set and use canned replies
+* Huawei: Fix all day events timezone
+* Huawei: Fix calendar event updates
+* Huawei: Fix sleep phases in dashboard
+* Huawei: Improve reconnection when device goes out of range
+* Huawei: Improve workout parsing
+* Huawei: Remove notifications from watch
+* Huawei: Set basic goals
+* Marstek B2500: Decode more values, add debug section
+* Marstek B2500: Display sensor temperature in Status Activity
+* Marstek B2500: Fix setting pass-though mode
+* Oppo Headphones: Fix missing battery on some devices
+* Pebble: Fix pairing on Android 14+
+* Sony Headphones: Allow overriding supported features
+* Sony Headphones: Fix initialization for some devices
+* Sony Headphones: Update default low battery threshold
+* Xiaomi-protobuf: Add HDOP data and remove elevation zero in GPX exports
+* Xiaomi-protobuf: Enable contacts configuration for Redmi Watch 4 / 5 Active / 5 Lite
+* Xiaomi-protobuf: Fix multi location weather support on some devices
+* Xiaomi-protobuf: Improve workout parsing
+* Zepp OS: Fix activity details parsing getting stuck
+* Add disabling battery optimizations to permissions screen
+* Dashboard: Fix AM and PM labels for 24h mode in the dashboard activity chart
+* Fix a crash when media session changes
+* Fix default date of birth
+* Fix inverted logic for notification times
+* Fix phone calls with Fossify Phone
+* Fix workout parser from incorrect devices being used sometimes
+* Intent API: Allow filtering of BLE characteristics
+* Limit live activity to just the current device
+* Localize notification actions
+* Recognize Fossify SMS / Quik as SMS
+
+#### 0.83.1
+* Initial support for Garmin Fenix 6X Pro Solar
+* Initial support for Redmi Buds 4 Active
+* Colmi R09: Add support for temperature data
+* Garmin: Enable calendar sync setting
+* Garmin: Enable transliteration setting
+* Garmin: Prevent double initialization
+* Marstek B2500: Display current battery change level in Wh, not only percentage
+* Marstek B2500: Fix wrong gauge display for panel 2 and output 2
+* Xiaomi-protobuf: Improve activity and workout parsing
+* Display sleep HR average in past 24h mode
+* Send phone volume changes to devices
+
 #### 0.83.0
 * Add first start onboarding screen
 * Initial support for Bowers and Wilkins P Series

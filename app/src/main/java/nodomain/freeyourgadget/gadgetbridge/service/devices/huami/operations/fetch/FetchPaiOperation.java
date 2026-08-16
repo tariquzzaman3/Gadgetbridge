@@ -18,6 +18,8 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.huami.operations.fe
 
 import android.widget.Toast;
 
+import androidx.annotation.StringRes;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,13 +33,13 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
+import nodomain.freeyourgadget.gadgetbridge.devices.HuamiPaiSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.devices.huami.HuamiPaiSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuamiPaiSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.User;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiFetcher;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 /**
@@ -46,13 +48,14 @@ import nodomain.freeyourgadget.gadgetbridge.util.GB;
 public class FetchPaiOperation extends AbstractRepeatingFetchOperation {
     private static final Logger LOG = LoggerFactory.getLogger(FetchPaiOperation.class);
 
-    public FetchPaiOperation(final HuamiSupport support) {
-        super(support, HuamiFetchDataType.PAI);
+    public FetchPaiOperation(final HuamiFetcher fetcher) {
+        super(fetcher, HuamiFetchDataType.PAI);
     }
 
+    @StringRes
     @Override
-    protected String taskDescription() {
-        return getContext().getString(R.string.busy_task_fetch_pai_data);
+    public int taskDescription() {
+        return R.string.busy_task_fetch_pai_data;
     }
 
     @Override
@@ -61,10 +64,15 @@ public class FetchPaiOperation extends AbstractRepeatingFetchOperation {
 
         final ByteBuffer buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
 
+        if (bytes.length % 102 != 0) {
+            LOG.error("Unexpected length for PAI data {}, not divisible by 102", bytes.length);
+            return false;
+        }
+
         while (buf.position() < bytes.length) {
             final int type = buf.get() & 0xff;
 
-            if (type != 5) {
+            if (type != 5 && type != 0) {
                 LOG.error("Unsupported PAI type {}", type);
                 return false;
             }
@@ -97,6 +105,12 @@ public class FetchPaiOperation extends AbstractRepeatingFetchOperation {
                     GB.hexdump(unknown1),
                     GB.hexdump(unknown2)
             );
+
+            if (type == 0) {
+                // Values from before the factory reset?
+                LOG.warn("Ignoring PAI type 0");
+                continue;
+            }
 
             final HuamiPaiSample sample = new HuamiPaiSample();
             sample.setTimestamp(timestamp.getTimeInMillis());

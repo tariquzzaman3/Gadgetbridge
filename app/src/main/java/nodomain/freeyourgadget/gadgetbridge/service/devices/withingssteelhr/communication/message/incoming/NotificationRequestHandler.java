@@ -21,6 +21,8 @@ import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.widget.Toast;
 
+import androidx.core.content.res.ResourcesCompat;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,7 +45,7 @@ public class NotificationRequestHandler implements IncomingMessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(NotificationRequestHandler.class);
 
     private final WithingsSteelHRDeviceSupport support;
-    private Map<String, byte[]> appIconCache = new HashMap<>();
+    private final Map<String, byte[]> appIconCache = new HashMap<>();
 
     public NotificationRequestHandler(WithingsSteelHRDeviceSupport support) {
         this.support = support;
@@ -64,7 +66,7 @@ public class NotificationRequestHandler implements IncomingMessageHandler {
             support.sendToDevice(reply);
         } catch (Exception e) {
             logger.error("Failed to respond to notification request.", e);
-            GB.toast("Failed to respond to notification request:" + e.getMessage(), Toast.LENGTH_LONG, GB.WARN);
+            GB.toast("Failed to respond to notification request:" + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.WARN);
         }
     }
 
@@ -77,8 +79,8 @@ public class NotificationRequestHandler implements IncomingMessageHandler {
                 try {
                     Drawable icon = null;
                     if (notificationSpec.iconId != 0) {
-                        Context sourcePackageContext = support.getContext().createPackageContext(sourceAppId, 0);
-                        icon = sourcePackageContext.getResources().getDrawable(notificationSpec.iconId);
+                        Context sourcePackageContext = support.getContext().createPackageContext(notificationSpec.iconPackageId, 0);
+                        icon = ResourcesCompat.getDrawable(sourcePackageContext.getResources(), notificationSpec.iconId, null);
                     }
                     if (icon == null) {
                         PackageManager pm = support.getContext().getPackageManager();

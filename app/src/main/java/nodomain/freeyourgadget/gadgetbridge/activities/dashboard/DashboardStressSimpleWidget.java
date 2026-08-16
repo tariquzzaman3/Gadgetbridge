@@ -21,7 +21,7 @@ import android.os.Bundle;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.DashboardFragment;
-import nodomain.freeyourgadget.gadgetbridge.activities.charts.StressChartFragment;
+import nodomain.freeyourgadget.gadgetbridge.activities.charts.StressDailyFragment;
 import nodomain.freeyourgadget.gadgetbridge.activities.dashboard.data.DashboardStressData;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
@@ -40,7 +40,7 @@ public class DashboardStressSimpleWidget extends AbstractGaugeWidget {
 
     @Override
     protected boolean isSupportedBy(final GBDevice device) {
-        return device.getDeviceCoordinator().supportsStressMeasurement();
+        return device.getDeviceCoordinator().supportsStressMeasurement(device);
     }
 
     @Override
@@ -56,7 +56,7 @@ public class DashboardStressSimpleWidget extends AbstractGaugeWidget {
             return;
         }
 
-        final int color = StressChartFragment.StressType.fromStress(
+        final int color = StressDailyFragment.StressType.fromStress(
                 stressData.value,
                 stressData.ranges
         ).getColor(GBApplication.getContext());

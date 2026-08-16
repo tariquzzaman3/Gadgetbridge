@@ -16,11 +16,13 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.activities.devicesettings;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.XmlRes;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
 
 public enum DeviceSpecificSettingsScreen {
+    ADVANCED_SETTINGS("pref_screen_advanced_settings", R.xml.devicesettings_root_advanced_settings),
     ACTIVITY_INFO("pref_screen_activity_info", R.xml.devicesettings_root_activity_info),
     AUDIO("pref_screen_audio", R.xml.devicesettings_root_audio),
     AUTHENTICATION("pref_screen_authentication", R.xml.devicesettings_root_authentication),
@@ -28,6 +30,8 @@ public enum DeviceSpecificSettingsScreen {
     CALENDAR("pref_screen_calendar", R.xml.devicesettings_root_calendar),
     CALLS_AND_NOTIFICATIONS("pref_screen_calls_and_notifications", R.xml.devicesettings_root_calls_and_notifications),
     CONNECTION("pref_screen_connection", R.xml.devicesettings_root_connection),
+    INTERNET("pref_screen_internet", R.xml.devicesettings_root_internet),
+    DASHBOARD("pref_screen_dashboard", R.xml.devicesettings_root_dashboard),
     DEVELOPER("pref_screen_developer", R.xml.devicesettings_root_developer),
     DISPLAY("pref_screen_display", R.xml.devicesettings_root_display),
     GENERIC("pref_screen_generic", R.xml.devicesettings_root_generic),
@@ -37,7 +41,8 @@ public enum DeviceSpecificSettingsScreen {
     WORKOUT("pref_screen_workout", R.xml.devicesettings_root_workout),
     HEALTH("pref_screen_health", R.xml.devicesettings_root_health),
     TOUCH_OPTIONS("pref_screen_touch_options", R.xml.devicesettings_root_touch_options),
-    SOUND("pref_screen_sound", R.xml.devicesettings_root_touch_options),
+    SOUND("pref_screen_sound", R.xml.devicesettings_root_sound),
+    EXPERIMENTAL("pref_screen_experimental", R.xml.devicesettings_root_experimental),
     ;
 
     private final String key;
@@ -49,11 +54,22 @@ public enum DeviceSpecificSettingsScreen {
         this.xml = xml;
     }
 
+    @NonNull
     public String getKey() {
         return key;
     }
 
     public int getXml() {
         return xml;
+    }
+
+    public static DeviceSpecificSettingsScreen fromXml(final int xml) {
+        for (final DeviceSpecificSettingsScreen screen : DeviceSpecificSettingsScreen.values()) {
+            if (screen.xml == xml) {
+                return screen;
+            }
+        }
+
+        return null;
     }
 }

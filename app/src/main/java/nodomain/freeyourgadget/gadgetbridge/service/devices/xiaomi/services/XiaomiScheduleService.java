@@ -107,7 +107,9 @@ public class XiaomiScheduleService extends AbstractXiaomiService {
                 handleAlarms(cmd.getSchedule().getAlarms());
                 return;
             case CMD_ALARMS_CREATE:
-                pendingAlarmAcks--;
+                if (pendingAlarmAcks > 0) {
+                    pendingAlarmAcks--;
+                }
                 LOG.debug("Got alarms create ack, remaining {}", pendingAlarmAcks);
                 if (pendingAlarmAcks <= 0) {
                     LOG.debug("Requesting alarms after all acks");
@@ -127,8 +129,10 @@ public class XiaomiScheduleService extends AbstractXiaomiService {
                 handleReminders(cmd.getSchedule().getReminders());
                 return;
             case CMD_REMINDERS_CREATE:
-                pendingReminderAcks--;
-                LOG.debug("Got alarms create ack, remaining {}", pendingReminderAcks);
+                if (pendingReminderAcks > 0) {
+                    pendingReminderAcks--;
+                }
+                LOG.debug("Got reminders create ack, remaining {}", pendingReminderAcks);
                 if (pendingReminderAcks <= 0) {
                     LOG.debug("Requesting reminders after all acks");
                     requestReminders();
@@ -141,6 +145,11 @@ public class XiaomiScheduleService extends AbstractXiaomiService {
 
     @Override
     public void initialize() {
+        watchAlarms.clear();
+        watchReminders.clear();
+        pendingAlarmAcks = 0;
+        pendingReminderAcks = 0;
+
         if (getCoordinator().supportsAlarms()) {
             requestAlarms();
         }
@@ -182,14 +191,22 @@ public class XiaomiScheduleService extends AbstractXiaomiService {
             gbReminder.setDate(XiaomiPreferences.toDate(reminder.getReminderDetails().getDate(), reminder.getReminderDetails().getTime()));
 
             switch (reminder.getReminderDetails().getRepeatMode()) {
-                case REPETITION_ONCE:
-                    gbReminder.setRepetition(Alarm.ALARM_ONCE);
-                    break;
                 case REPETITION_DAILY:
-                    gbReminder.setRepetition(Alarm.ALARM_DAILY);
+                    gbReminder.setRepetition(Reminder.EVERY_DAY);
                     break;
                 case REPETITION_WEEKLY:
-                    gbReminder.setRepetition(reminder.getReminderDetails().getRepeatFlags());
+                    gbReminder.setRepetition(Reminder.EVERY_WEEK);
+                    // TODO support for weekly repeat flags reminder.getReminderDetails().getRepeatFlags()
+                    break;
+                case REPETITION_MONTHLY:
+                    gbReminder.setRepetition(Reminder.EVERY_MONTH);
+                    break;
+                case REPETITION_YEARLY:
+                    gbReminder.setRepetition(Reminder.EVERY_YEAR);
+                    break;
+                case REPETITION_ONCE:
+                default:
+                    gbReminder.setRepetition(Reminder.ONCE);
                     break;
             }
 
@@ -306,15 +323,22 @@ public class XiaomiScheduleService extends AbstractXiaomiService {
                     .setTitle(reminder.getMessage());
 
             switch (reminder.getRepetition()) {
-                case Alarm.ALARM_ONCE:
-                    reminderDetails.setRepeatMode(REPETITION_ONCE);
-                    break;
-                case Alarm.ALARM_DAILY:
+                case Reminder.EVERY_DAY:
                     reminderDetails.setRepeatMode(REPETITION_DAILY);
                     break;
-                default:
+                case Reminder.EVERY_WEEK:
                     reminderDetails.setRepeatMode(REPETITION_WEEKLY);
-                    reminderDetails.setRepeatFlags(reminder.getRepetition());
+                    reminderDetails.setRepeatFlags((reminderTime.get(Calendar.DAY_OF_WEEK) + 5) % 7 + 1);
+                    break;
+                case Reminder.EVERY_MONTH:
+                    reminderDetails.setRepeatMode(REPETITION_MONTHLY);
+                    break;
+                case Reminder.EVERY_YEAR:
+                    reminderDetails.setRepeatMode(REPETITION_YEARLY);
+                    break;
+                case Reminder.ONCE:
+                default:
+                    reminderDetails.setRepeatMode(REPETITION_ONCE);
                     break;
             }
 

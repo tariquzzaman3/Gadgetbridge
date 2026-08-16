@@ -17,8 +17,13 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.util;
 
+import android.content.Context;
 import android.graphics.Color;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.SparseArray;
+
+import androidx.annotation.Nullable;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -31,57 +36,19 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.UUID;
 
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.pebble.webview.PebbleJsService;
+
+/**
+ * Utility methods for Pebble devices.
+ * For hardware definitions and BLE detection, see
+ * {@link nodomain.freeyourgadget.gadgetbridge.devices.pebble.PebbleHardware}.
+ */
 public class PebbleUtils {
     private static final Logger LOG = LoggerFactory.getLogger(PebbleUtils.class);
 
-    public static String getPlatformName(String hwRev) {
-        final String DEFAULT_PLATFORM = "aplite";
-        if (hwRev == null || hwRev.isEmpty()) {
-            return DEFAULT_PLATFORM;
-        }
-
-        if (hwRev.startsWith("snowy")) {
-            return "basalt";
-        } else if (hwRev.startsWith("spalding")) {
-            return "chalk";
-        } else if (hwRev.startsWith("silk")) {
-            return "diorite";
-        } else if (hwRev.startsWith("robert")) {
-            return "emery";
-        }
-        return DEFAULT_PLATFORM;
-    }
-
-    public static String getModel(String hwRev) {
-        //TODO: get real data?
-        final String DEFAULT_MODEL = "pebble_black";
-        if (hwRev == null || hwRev.isEmpty()) {
-            return DEFAULT_MODEL;
-        }
-        if (hwRev.startsWith("snowy")) {
-            return "pebble_time_black";
-        } else if (hwRev.startsWith("spalding")) {
-            return "pebble_time_round_black_20mm";
-        } else if (hwRev.startsWith("silk")) {
-            return "pebble2_black";
-        } else if (hwRev.startsWith("robert")) {
-            return "pebble_time2_black";
-        }
-        return DEFAULT_MODEL;
-    }
-
     public static int getFwMajor(String fwString) {
         return fwString.charAt(1) - 48;
-    }
-
-    public static boolean hasHRM(String hwRev) {
-        String platformName = getPlatformName(hwRev);
-        return "diorite".equals(platformName) || "emery".equals(platformName);
-    }
-
-    public static boolean hasHealth(String hwRev) {
-        String platformName = getPlatformName(hwRev);
-        return !"aplite".equals(platformName);
     }
 
     /**
@@ -109,7 +76,6 @@ public class PebbleUtils {
         return getPebbleColor(Color.parseColor(colorHex));
     }
 
-
     /**
      * Returns the directory containing the .pbw cache.
      * @throws IOException when the external files directory cannot be accessed
@@ -118,6 +84,7 @@ public class PebbleUtils {
         return new File(FileUtils.getExternalFilesDir(), "pbw-cache");
     }
 
+    @Nullable
     public static JSONObject getAppConfigurationKeys(UUID uuid) {
         try {
             File destDir = getPbwCacheDir();
@@ -183,5 +150,35 @@ public class PebbleUtils {
             LOG.warn("Unable to parse incoming app message", e);
         }
         return jsAppMessage.toString();
+    }
+
+    public static void startJsEngineForDevice(Context context, GBDevice device, UUID uuid) {
+        PebbleJsService service = PebbleJsService.Companion.getInstance();
+
+        if (service == null) {
+            LOG.warn("PebbleJsService not running yet, starting it");
+            PebbleJsService.Companion.startService(context);
+
+            // Delay start until service is ready
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                PebbleJsService s = PebbleJsService.Companion.getInstance();
+                if (s == null) {
+                    LOG.warn("Couldn't start PebbleJsService");
+                } else {
+                    s.startJsForDevice(device, uuid);
+                }
+            }, 1000);
+
+            return;
+        }
+
+        service.startJsForDevice(device, uuid);
+    }
+
+    public static void stopJsEngineForDevice(GBDevice device) {
+        PebbleJsService service = PebbleJsService.Companion.getInstance();
+        if (service != null) {
+            service.stopJsForDevice(device);
+        }
     }
 }

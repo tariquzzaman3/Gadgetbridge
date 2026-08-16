@@ -19,6 +19,7 @@ package nodomain.freeyourgadget.gadgetbridge.devices.huami.amazfitgtr;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 
@@ -46,7 +47,7 @@ public class AmazfitGTRCoordinator extends HuamiCoordinator {
         return Pattern.compile("Amazfit GTR", Pattern.CASE_INSENSITIVE);
     }
     @Override
-    public InstallHandler findInstallHandler(final Uri uri, final Context context) {
+    public InstallHandler findInstallHandler(final Uri uri, final Bundle options, final Context context) {
         final AmazfitGTRFWInstallHandler handler = new AmazfitGTRFWInstallHandler(uri, context);
         return handler.isValid() ? handler : null;
     }
@@ -62,17 +63,17 @@ public class AmazfitGTRCoordinator extends HuamiCoordinator {
     }
 
     @Override
-    public boolean supportsActivityTracks() {
+    public boolean supportsRecordedActivities(final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsWeather() {
+    public boolean supportsWeather(final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsMusicInfo() {
+    public boolean supportsMusicInfo(@NonNull GBDevice device) {
         return true;
     }
 
@@ -132,12 +133,17 @@ public class AmazfitGTRCoordinator extends HuamiCoordinator {
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return AmazfitGTRSupport.class;
     }
 
     @Override
     public int getDeviceNameResource() {
         return R.string.devicetype_amazfit_gtr;
+    }
+
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.WATCH;
     }
 }

@@ -117,9 +117,10 @@ public class SendNotificationOperation extends AbstractID115Operation {
 
         TransactionBuilder builder = performInitialized("send notification chunk");
         builder.write(controlCharacteristic, cmd);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
+    @Override
     void handleResponse(byte[] data) {
         if (!isOperationRunning()) {
             LOG.error("ignoring notification because operation is not running. Data length: " + data.length);

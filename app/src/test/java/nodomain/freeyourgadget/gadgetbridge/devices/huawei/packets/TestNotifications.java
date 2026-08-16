@@ -21,6 +21,7 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.List;
 
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiPacket;
@@ -98,15 +99,35 @@ public class TestNotifications {
                 )
                 .put(0x11, sourceAppId);
 
+
+        ArrayList<Notifications.NotificationActionRequest.TextElement> content = new ArrayList<>();
+        content.add(
+                new Notifications.NotificationActionRequest.TextElement(
+                        (byte)Notifications.TextType.title,
+                        (byte)encoding,
+                        titleContent)
+        );
+        content.add(
+                new Notifications.NotificationActionRequest.TextElement(
+                        (byte) Notifications.TextType.sender,
+                        (byte)encoding,
+                        senderContent)
+        );
+        content.add(
+                new Notifications.NotificationActionRequest.TextElement(
+                        (byte) Notifications.TextType.text,
+                        (byte)encoding,
+                        bodyContent)
+        );
+
+
         Notifications.NotificationActionRequest request = new Notifications.NotificationActionRequest(
                 secretsProvider,
                 notificationId,
                 notificationType,
-                encoding,
-                titleContent,
-                senderContent,
-                bodyContent,
-                sourceAppId
+                content,
+                sourceAppId,
+                null
         );
 
         Assert.assertEquals(0x02, request.serviceId);

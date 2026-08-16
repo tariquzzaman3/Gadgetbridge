@@ -92,6 +92,8 @@ public class XiaomiNotificationService extends AbstractXiaomiService implements 
 
     @Override
     public void initialize() {
+        // We intentionally do not clear the queues, so that we don't lose track if the device briefly loses connection
+
         getSupport().sendCommand("get screen on on notifications", COMMAND_TYPE, CMD_SCREEN_ON_ON_NOTIFICATIONS_GET);
         requestCannedMessages();
     }
@@ -430,11 +432,7 @@ public class XiaomiNotificationService extends AbstractXiaomiService implements 
     }
 
     public boolean canSendSms() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            return getSupport().getContext().checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED;
-        } else {
-            return true;
-        }
+        return getSupport().getContext().checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED;
     }
 
     private void handleNotificationIconQuery(final XiaomiProto.NotificationIconPackage notificationIconPackage) {

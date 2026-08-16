@@ -33,12 +33,11 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 
-public class ID115Support extends AbstractBTLEDeviceSupport {
+public class ID115Support extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(ID115Support.class);
 
     public BluetoothGattCharacteristic normalWriteCharacteristic = null;
@@ -56,7 +55,7 @@ public class ID115Support extends AbstractBTLEDeviceSupport {
         normalWriteCharacteristic = getCharacteristic(ID115Constants.UUID_CHARACTERISTIC_WRITE_NORMAL);
         healthWriteCharacteristic = getCharacteristic(ID115Constants.UUID_CHARACTERISTIC_WRITE_HEALTH);
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         setTime(builder)
                 .setWrist(builder)
@@ -89,7 +88,7 @@ public class ID115Support extends AbstractBTLEDeviceSupport {
         try {
             TransactionBuilder builder = performInitialized("time");
             setTime(builder);
-            builder.queue(getQueue());
+            builder.queue();
         } catch(IOException e) {
             LOG.warn("Unable to send current time", e);
         }
@@ -126,13 +125,13 @@ public class ID115Support extends AbstractBTLEDeviceSupport {
             builder.write(normalWriteCharacteristic, new byte[] {
                     ID115Constants.CMD_ID_DEVICE_RESTART, ID115Constants.CMD_KEY_REBOOT
             });
-            builder.queue(getQueue());
+            builder.queue();
         } catch(Exception e) {
         }
     }
 
     private void setInitialized(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
     }
 
     ID115Support setTime(TransactionBuilder builder) {
@@ -223,7 +222,7 @@ public class ID115Support extends AbstractBTLEDeviceSupport {
                     ID115Constants.CMD_KEY_NOTIFY_STOP,
                     1
             });
-            builder.queue(getQueue());
+            builder.queue();
         } catch(IOException e) {
             LOG.warn("Unable to stop call notification", e);
         }

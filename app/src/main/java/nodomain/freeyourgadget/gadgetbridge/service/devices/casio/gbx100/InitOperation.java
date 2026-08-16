@@ -30,9 +30,7 @@ import nodomain.freeyourgadget.gadgetbridge.devices.casio.CasioConstants;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEOperation;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.casio.Casio2C2DSupport;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.casio.gbx100.CasioGBX100DeviceSupport;
 
 public class InitOperation extends AbstractBTLEOperation<CasioGBX100DeviceSupport> {
     private static final Logger LOG = LoggerFactory.getLogger(InitOperation.class);
@@ -58,7 +56,7 @@ public class InitOperation extends AbstractBTLEOperation<CasioGBX100DeviceSuppor
             TransactionBuilder builder = createTransactionBuilder("writeAllFeaturesRequest");
             builder.setCallback(this);
             support.writeAllFeaturesRequest(builder, arr);
-            support.performImmediately(builder);
+            builder.queueImmediately();
         } catch(IOException e) {
             LOG.error("Error writing all features: " + e.getMessage());
         }
@@ -69,7 +67,7 @@ public class InitOperation extends AbstractBTLEOperation<CasioGBX100DeviceSuppor
             TransactionBuilder builder = createTransactionBuilder("writeAllFeatures");
             builder.setCallback(this);
             support.writeAllFeatures(builder, arr);
-            support.performImmediately(builder);
+            builder.queueImmediately();
         } catch(IOException e) {
             LOG.error("Error writing all features: " + e.getMessage());
         }
@@ -256,19 +254,19 @@ public class InitOperation extends AbstractBTLEOperation<CasioGBX100DeviceSuppor
             TransactionBuilder builder = createTransactionBuilder("notifyAllFeatures");
             builder.setCallback(this);
             enableAllFeatures(builder, enable);
-            support.performImmediately(builder);
+            builder.queueImmediately();
         } catch(IOException e) {
             LOG.error("Error setting notification value on all features: " + e.getMessage());
         }
     }
 
     private void enableAllFeatures(TransactionBuilder builder, boolean enable) {
-        builder.notify(getCharacteristic(CasioConstants.CASIO_ALL_FEATURES_CHARACTERISTIC_UUID), enable);
+        builder.notify(CasioConstants.CASIO_ALL_FEATURES_CHARACTERISTIC_UUID, enable);
     }
 
     @Override
     protected void doPerform() throws IOException {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
         enableAllFeatures(builder, true);
         requestWatchName(builder);
     }
@@ -280,9 +278,9 @@ public class InitOperation extends AbstractBTLEOperation<CasioGBX100DeviceSuppor
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] data) {
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
 
         if(data.length == 0)
             return true;
@@ -343,7 +341,7 @@ public class InitOperation extends AbstractBTLEOperation<CasioGBX100DeviceSuppor
                         TransactionBuilder builder = createTransactionBuilder("writeCurrentTime");
                         support.writeCurrentTime(builder, ZonedDateTime.now());
                         writeAllFeaturesInit(builder);
-                        support.performImmediately(builder);
+                        builder.queueImmediately();
                     } catch(IOException e) {
                         LOG.error("Error setting device to initialized: " + e.getMessage());
                     }
@@ -372,14 +370,15 @@ public class InitOperation extends AbstractBTLEOperation<CasioGBX100DeviceSuppor
             return true;
         } else {
             LOG.info("Unhandled characteristic changed: " + characteristicUUID);
-            return super.onCharacteristicChanged(gatt, characteristic);
+            return super.onCharacteristicChanged(gatt, characteristic, data);
         }
     }
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic, int status) {
+                                        BluetoothGattCharacteristic characteristic, byte[] value,
+                                        int status) {
 
-        return super.onCharacteristicRead(gatt, characteristic, status);
+        return super.onCharacteristicRead(gatt, characteristic, value, status);
     }
 }

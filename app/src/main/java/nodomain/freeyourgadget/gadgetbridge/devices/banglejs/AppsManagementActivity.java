@@ -16,44 +16,29 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.banglejs;
 
-import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_DEVICE_INTERNET_ACCESS;
+import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_BANGLEJS_WEBVIEW_URL;
 
 import android.app.Activity;
-import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Environment;
 import android.util.Base64;
-import android.view.LayoutInflater;
-import android.view.MenuItem;
 import android.view.View;
-import android.view.ViewGroup;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
-import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
-import android.widget.ListView;
-import android.widget.PopupMenu;
-import android.widget.TextView;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.json.JSONArray;
-import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,14 +50,12 @@ import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.AbstractGBActivity;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
+import nodomain.freeyourgadget.gadgetbridge.internet.InternetRequestType;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.banglejs.BangleJSDeviceSupport;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport;
-import nodomain.freeyourgadget.gadgetbridge.util.DeviceHelper;
-import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
-import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_BANGLEJS_WEBVIEW_URL;
+import nodomain.freeyourgadget.gadgetbridge.webview.GBChromeClient;
+import nodomain.freeyourgadget.gadgetbridge.webview.GBWebClient;
+import nodomain.freeyourgadget.gadgetbridge.webview.RequestInterceptorInterface;
 
 public class AppsManagementActivity extends AbstractGBActivity {
     private static final Logger LOG = LoggerFactory.getLogger(AppsManagementActivity.class);
@@ -109,10 +92,6 @@ public class AppsManagementActivity extends AbstractGBActivity {
         mCoordinator = mGBDevice.getDeviceCoordinator();
     }
 
-    private void toast(String data) {
-        GB.toast(data, Toast.LENGTH_LONG, GB.INFO);
-    }
-
     @Override
     protected void onPause() {
         super.onPause();
@@ -131,8 +110,10 @@ public class AppsManagementActivity extends AbstractGBActivity {
 
     @Override
     protected void onDestroy() {
-        webView.destroy();
-        webView = null;
+        if (webView != null) {
+            webView.destroy();
+            webView = null;
+        }
         LocalBroadcastManager.getInstance(this).unregisterReceiver(deviceUpdateReceiver);
         super.onDestroy();
         finish();
@@ -214,9 +195,20 @@ public class AppsManagementActivity extends AbstractGBActivity {
     }
 
     private void initViews() {
-        //https://stackoverflow.com/questions/4325639/android-calling-javascript-functions-in-webview
         webView = findViewById(R.id.webview);
-        webView.setWebViewClient(new WebViewClient());
+        LinearLayout permissionMissingAlert = findViewById(R.id.permission_missing_alert);
+        if (GBApplication.hasInternetAccess() && !GBApplication.hasDirectInternetAccess()) {
+            // Using the internethelper add-on app, check whether the Bangle.js app loader is allowed in settings
+            boolean appLoaderAllowed = GBApplication.getPrefs().getBoolean("pref_key_internethelper_allow_bangle_app_loader", false);
+            if (!appLoaderAllowed) {
+                webView.setVisibility(View.GONE);
+                permissionMissingAlert.setVisibility(View.VISIBLE);
+                return;
+            }
+        }
+        webView.setVisibility(View.VISIBLE);
+        permissionMissingAlert.setVisibility(View.GONE);
+        //https://stackoverflow.com/questions/4325639/android-calling-javascript-functions-in-webview
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDatabaseEnabled(true);
@@ -228,20 +220,10 @@ public class AppsManagementActivity extends AbstractGBActivity {
         webView.addJavascriptInterface(new WebViewInterface(this), "Android");
         webView.setWebContentsDebuggingEnabled(true); // FIXME
 
-        Prefs devicePrefs = new Prefs(GBApplication.getDeviceSpecificSharedPrefs(mGBDevice.getAddress()));
-        String url = devicePrefs.getString(PREF_BANGLEJS_WEBVIEW_URL, "").trim();
-        if (url.isEmpty()) url = "https://banglejs.com/apps/android.html";
-        webView.loadUrl(url);
-
-        webView.setWebViewClient(new WebViewClient(){
+        GBWebClient gbWebClient = new GBWebClient(InternetRequestType.BANGLE_APP_LOADER, mGBDevice){
+            @Override
             public void onPageFinished(WebView view, String weburl){
                 //webView.loadUrl("javascript:showToast('WebView in Espruino')");
-            }
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView vw, WebResourceRequest request) {
-                Intent intent = new Intent(Intent.ACTION_VIEW, request.getUrl());
-                vw.getContext().startActivity(intent);
-                return true;
             }
 
             @Override
@@ -249,8 +231,17 @@ public class AppsManagementActivity extends AbstractGBActivity {
                 Toast.makeText(AppsManagementActivity.this, "Error:" + description, Toast.LENGTH_SHORT).show();
                 view.loadUrl("about:blank");
             }
-        });
-        webView.setWebChromeClient(new WebChromeClient() {
+        };
+        webView.setWebViewClient(gbWebClient);
+
+        webView.addJavascriptInterface(new RequestInterceptorInterface(gbWebClient), "GBReqInt");
+
+        Prefs devicePrefs = new Prefs(GBApplication.getDeviceSpecificSharedPrefs(mGBDevice.getAddress()));
+        String url = devicePrefs.getString(PREF_BANGLEJS_WEBVIEW_URL, "").trim();
+        if (url.isEmpty()) url = "https://banglejs.com/apps/android.html";
+        webView.loadUrl(url);
+
+        webView.setWebChromeClient(new GBChromeClient() {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
                 request.grant(request.getResources());
@@ -282,6 +273,7 @@ public class AppsManagementActivity extends AbstractGBActivity {
 
         });
         webView.setDownloadListener(new DownloadListener() {
+            @Override
             public void onDownloadStart(String url, String userAgent,
                                         String contentDisposition, String mimetype,
                                         long contentLength) {
@@ -332,7 +324,7 @@ public class AppsManagementActivity extends AbstractGBActivity {
                 os.write(fileSaveData);
                 os.close();
             } catch (IOException e) {
-                e.printStackTrace();
+                LOG.warn("exception in onActivityResult", e);
             } finally {
                 try {
                     os.close();

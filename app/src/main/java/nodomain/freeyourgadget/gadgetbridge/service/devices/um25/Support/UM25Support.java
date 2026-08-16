@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -45,13 +46,10 @@ import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.devices.um25.Activity.DataActivity;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.BtLEAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.um25.Data.CaptureGroup;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.um25.Data.MeasurementData;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
-import nodomain.freeyourgadget.gadgetbridge.util.PendingIntentUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
 
 public class UM25Support extends UM25BaseSupport {
@@ -63,11 +61,13 @@ public class UM25Support extends UM25BaseSupport {
     public static final String EXTRA_KEY_MEASUREMENT_DATA = "EXTRA_MEASUREMENT_DATA";
     public static final int LOOP_DELAY = 500;
 
+    public static final int NOTIFICATION_ID_USB_CURRENT = new Random().nextInt();
+
     private final byte[] COMMAND_UPDATE = new byte[]{(byte) 0xF0};
     private final byte[] COMMAND_RESET_STATS = new byte[]{(byte) 0xF4};
     private final int PAYLOAD_LENGTH = 130;
 
-    private ByteBuffer buffer = ByteBuffer.allocate(PAYLOAD_LENGTH);
+    private final ByteBuffer buffer = ByteBuffer.allocate(PAYLOAD_LENGTH);
 
     ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1);
 
@@ -92,9 +92,9 @@ public class UM25Support extends UM25BaseSupport {
             if(!ACTION_RESET_STATS.equals(intent.getAction())){
                 return;
             }
-            new TransactionBuilder("reset stats")
-                    .write(getCharacteristic(UUID.fromString(UUID_CHAR)), COMMAND_RESET_STATS)
-                    .queue(getQueue());
+            createTransactionBuilder("reset stats")
+                    .write(UUID.fromString(UUID_CHAR), COMMAND_RESET_STATS)
+                    .queue();
         }
     };
 
@@ -117,35 +117,28 @@ public class UM25Support extends UM25BaseSupport {
         getDevice().setFirmwareVersion("1.0");
 
         return builder
-                .add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()))
-                .notify(getCharacteristic(UUID.fromString(UUID_CHAR)), true)
-                .add(new BtLEAction(null) {
-                    @Override
-                    public boolean expectsResult() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean run(BluetoothGatt gatt) {
-                        logger.debug("initialized, starting timers");
-                        LocalBroadcastManager.getInstance(getContext())
-                                .registerReceiver(
-                                        resetReceiver,
-                                        new IntentFilter(ACTION_RESET_STATS)
-                                );
-                        startLoop();
-                        return true;
-                    }
+                .setDeviceState(GBDevice.State.INITIALIZING)
+                .notify(UUID.fromString(UUID_CHAR), true)
+                .run(() -> {
+                    logger.debug("initialized, starting timers");
+                    LocalBroadcastManager.getInstance(getContext())
+                            .registerReceiver(
+                                    resetReceiver,
+                                    new IntentFilter(ACTION_RESET_STATS)
+                            );
+                    startLoop();
                 })
-                .add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+                .setDeviceState(GBDevice.State.INITIALIZED);
     }
 
     @Override
     public void dispose() {
-        super.dispose();
-        LocalBroadcastManager.getInstance(getContext())
-                .unregisterReceiver(resetReceiver);
-        executor.shutdown();
+        synchronized (ConnectionMonitor) {
+            super.dispose();
+            LocalBroadcastManager.getInstance(getContext())
+                    .unregisterReceiver(resetReceiver);
+            executor.shutdown();
+        }
     }
 
     private void startLoop(){
@@ -161,18 +154,18 @@ public class UM25Support extends UM25BaseSupport {
 
         logger.debug("sending read command");
         buffer.reset();
-        new TransactionBuilder("send read command")
-                .write(getCharacteristic(UUID.fromString(UUID_CHAR)), COMMAND_UPDATE)
-                .queue(getQueue());
+        createTransactionBuilder("send read command")
+                .write(UUID.fromString(UUID_CHAR), COMMAND_UPDATE)
+                .queue();
         logger.debug("sent command");
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
         if(!characteristic.getUuid().toString().equals(UUID_CHAR)) return false;
 
         try{
-            buffer.put(characteristic.getValue());
+            buffer.put(value);
 
             if(buffer.position() == PAYLOAD_LENGTH){
                 handlePayload(buffer);
@@ -212,15 +205,21 @@ public class UM25Support extends UM25BaseSupport {
             wasOverNotificationCurrent = false;
             Intent activityIntent = new Intent(getContext(), DataActivity.class);
             activityIntent.setPackage(BuildConfig.APPLICATION_ID);
+            Context context = getContext();
             Notification notification = new NotificationCompat.Builder(getContext(), GB.NOTIFICATION_CHANNEL_HIGH_PRIORITY_ID)
                     .setSmallIcon(R.drawable.ic_notification_low_battery)
                     .setContentTitle("USB current")
                     .setContentText("USB current below threshold")
-                    .setContentIntent(PendingIntentUtils.getActivity(getContext(), 0, activityIntent, PendingIntent.FLAG_CANCEL_CURRENT, false))
+                    .setContentIntent(PendingIntent.getActivity(
+                            context,
+                            0,
+                            activityIntent,
+                            PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                    ))
                     .build();
 
             GB.notify(
-                    GB.NOTIFICATION_ID_LOW_BATTERY,
+                    NOTIFICATION_ID_USB_CURRENT,
                     notification,
                     getContext()
             );

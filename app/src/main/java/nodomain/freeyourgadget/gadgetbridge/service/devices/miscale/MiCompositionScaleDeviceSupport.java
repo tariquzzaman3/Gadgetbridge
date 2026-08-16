@@ -35,20 +35,20 @@ import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInfo;
-import nodomain.freeyourgadget.gadgetbridge.devices.miscale.MiScaleSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.devices.MiScaleWeightSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.MiScaleWeightSample;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCharacteristic;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.IntentListener;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.DeviceInfo;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.DeviceInfoProfile;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-public class MiCompositionScaleDeviceSupport extends AbstractBTLEDeviceSupport {
+public class MiCompositionScaleDeviceSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(MiCompositionScaleDeviceSupport.class);
 
     private final DeviceInfoProfile<MiCompositionScaleDeviceSupport> deviceInfoProfile;
@@ -77,45 +77,43 @@ public class MiCompositionScaleDeviceSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     protected TransactionBuilder initializeDevice(final TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         LOG.debug("Requesting Device Info!");
         deviceInfoProfile.requestDeviceInfo(builder);
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
 
         // Weight and body composition
         builder.setCallback(this);
-        builder.notify(getCharacteristic(GattCharacteristic.UUID_CHARACTERISTIC_BODY_COMPOSITION_MEASUREMENT), true);
+        builder.notify(GattCharacteristic.UUID_CHARACTERISTIC_BODY_COMPOSITION_MEASUREMENT, true);
 
         return builder;
     }
 
     @Override
-    public boolean onCharacteristicChanged(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+    public boolean onCharacteristicChanged(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic, final byte[] data) {
+        if (super.onCharacteristicChanged(gatt, characteristic, data)) {
             return true;
         }
 
         final UUID characteristicUUID = characteristic.getUuid();
         if (characteristicUUID.equals(GattCharacteristic.UUID_CHARACTERISTIC_BODY_COMPOSITION_MEASUREMENT)) {
-            final byte[] data = characteristic.getValue();
-
             final byte flags = data[1];
             final boolean stabilized = testBit(flags, 5) && !testBit(flags, 7);
 
             if (stabilized) {
-                final int year = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 2);
-                final int month = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 4);
-                final int day = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 5);
-                final int hour = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 6);
-                final int minute = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 7);
-                final int second = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 8);
+                final int year = BLETypeConversions.toUint16(data, 2);
+                final int month = BLETypeConversions.toUnsigned(data, 4);
+                final int day = BLETypeConversions.toUnsigned(data, 5);
+                final int hour = BLETypeConversions.toUnsigned(data, 6);
+                final int minute = BLETypeConversions.toUnsigned(data, 7);
+                final int second = BLETypeConversions.toUnsigned(data, 8);
                 final Calendar c = GregorianCalendar.getInstance();
                 c.set(year, month - 1, day, hour, minute, second);
                 final Date date = c.getTime();
 
                 float weightKg = WeightMeasurement.weightToKg(
-                        characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 11),
+                        BLETypeConversions.toUint16(data, 11),
                         flags
                 );
                 handleWeightInfo(date, weightKg);
@@ -142,7 +140,7 @@ public class MiCompositionScaleDeviceSupport extends AbstractBTLEDeviceSupport {
         GB.toast(getContext().getString(R.string.weight_kg, weightKg), Toast.LENGTH_SHORT, GB.INFO);
 
         try (DBHandler db = GBApplication.acquireDB()) {
-            final MiScaleSampleProvider provider = new MiScaleSampleProvider(getDevice(), db.getDaoSession());
+            final MiScaleWeightSampleProvider provider = new MiScaleWeightSampleProvider(getDevice(), db.getDaoSession());
             final Long userId = DBHelper.getUser(db.getDaoSession()).getId();
             final Long deviceId = DBHelper.getDevice(getDevice(), db.getDaoSession()).getId();
 

@@ -17,7 +17,6 @@
 package nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.requests.misfit;
 
 import android.bluetooth.BluetoothGattCharacteristic;
-import android.util.Log;
 
 import java.nio.ByteBuffer;
 
@@ -30,8 +29,7 @@ public class GetCountdownSettingsRequest extends Request {
     }
 
     @Override
-    public void handleResponse(BluetoothGattCharacteristic characteristic) {
-        byte[] value = characteristic.getValue();
+    public void handleResponse(BluetoothGattCharacteristic characteristic, byte[] value) {
         if (value.length != 14) {
             return;
         }

@@ -1,4 +1,4 @@
-/*  Copyright (C) 2023-2024 José Rebelo
+/*  Copyright (C) 2023-2026 José Rebelo, Thomas Riedler
 
     This file is part of Gadgetbridge.
 
@@ -22,7 +22,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.Drawable;
 
-import androidx.annotation.Nullable;
+import androidx.annotation.NonNull;
 
 import org.slf4j.Logger;
 
@@ -33,6 +33,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import nodomain.freeyourgadget.gadgetbridge.BuildConfig;
@@ -43,11 +44,11 @@ import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationType;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsBitmapFormat;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.AbstractZeppOsService;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsTransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.util.BitmapUtil;
-import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.LimitedQueue;
 import nodomain.freeyourgadget.gadgetbridge.util.NotificationUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
@@ -78,6 +79,8 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
     public static final byte NOTIFICATION_CALL_STATE_START = 0x00;
     public static final byte NOTIFICATION_CALL_STATE_END = 0x02;
 
+    private static final boolean FORCE_RELOAD_NOTIFICATION_ICON = false;
+
     private int version = -1;
     private boolean supportsPictures = false;
     private boolean supportsNotificationKey = false;
@@ -102,11 +105,10 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
     }
 
     @Override
-    public void initialize(final TransactionBuilder builder) {
-        requestCapabilities(builder);
-    }
+    public void initialize(final ZeppOsTransactionBuilder builder) {
+        mNotificationReplyAction.clear();
+        mNotificationPictures.clear();
 
-    public void requestCapabilities(final TransactionBuilder builder) {
         write(builder, NOTIFICATION_CMD_CAPABILITIES_REQUEST);
     }
 
@@ -126,15 +128,22 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
                     LOG.warn("Unsupported notification service version {}", version);
                 }
                 if (version >= 4) {
+                    // GTR 4:    02 05 64:00 01 01 05 00:01:02:03:04:05 01 01
+                    // Active 2: 02 05 64:00 01 00                      01 01 01
                     final short unk1 = buf.getShort(); // 100
                     final byte unk2 = buf.get(); // 1
-                    final byte unk3 = buf.get(); // 1
-                    final short unk4count = buf.getShort();
-                    buf.get(new byte[unk4count]);
+                    final byte hastList = buf.get(); // 0/1
+                    if (hastList != 0) {
+                        final short numItems = buf.getShort();
+                        buf.get(new byte[numItems]);
+                    }
                 }
                 if (version >= 5) {
                     supportsPictures = buf.get() != 0;
                     supportsNotificationKey = buf.get() != 0;
+                    if (buf.hasRemaining()) {
+                        final byte unk3 = buf.get();
+                    }
                 }
                 LOG.info("Notification service version={}, supportsPictures={}", version, supportsPictures);
                 break;
@@ -231,7 +240,7 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
                         height
                 );
 
-                sendNotificationPicture(packageName, notificationId, pictureFormat, width);
+                sendNotificationPicture(packageName, notificationId, pictureFormat, width, height);
                 return;
             }
             default:
@@ -247,8 +256,6 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
         final ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
         try {
-            final TransactionBuilder builder = new TransactionBuilder("send notification");
-
             baos.write(NOTIFICATION_CMD_SEND);
 
             // ID
@@ -277,12 +284,12 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
 
             // TODO put this behind a setting?
             baos.write(callSpec.number != null ? 0x01 : 0x00); // reply from watch
-
-            write(builder, baos.toByteArray());
-            builder.queue(getSupport().getQueue());
         } catch (final Exception e) {
             LOG.error("Failed to send call", e);
+            return;
         }
+
+        write("send notification", baos.toByteArray());
     }
 
     public void sendNotification(final NotificationSpec notificationSpec) {
@@ -298,8 +305,6 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
         // TODO Check real limit for notificationMaxLength / respect across all fields
 
         try {
-            final TransactionBuilder builder = new TransactionBuilder("send notification");
-
             baos.write(NOTIFICATION_CMD_SEND);
             baos.write(BLETypeConversions.fromUint32(notificationSpec.getId()));
             if (notificationSpec.type == NotificationType.GENERIC_SMS) {
@@ -311,6 +316,11 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
 
             // app package
             if (notificationSpec.sourceAppId != null) {
+                if (FORCE_RELOAD_NOTIFICATION_ICON) {
+                    // prefix the package name with a uuid to force an icon reload
+                    // it's removed when fetching the package icon
+                    baos.write(UUID.randomUUID().toString().getBytes());
+                }
                 baos.write(notificationSpec.sourceAppId.getBytes(StandardCharsets.UTF_8));
             } else {
                 // Send the GB package name, otherwise the last notification icon will
@@ -343,14 +353,10 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
                 for (int i = 0; i < notificationSpec.attachedActions.size(); i++) {
                     final NotificationSpec.Action action = notificationSpec.attachedActions.get(i);
 
-                    switch (action.type) {
-                        case NotificationSpec.Action.TYPE_WEARABLE_REPLY:
-                        case NotificationSpec.Action.TYPE_SYNTECTIC_REPLY_PHONENR:
-                            hasReply = true;
-                            mNotificationReplyAction.add(notificationSpec.getId(), action.handle);
-                            break;
-                        default:
-                            break;
+                    if (action.isReply()) {
+                        hasReply = true;
+                        mNotificationReplyAction.add(notificationSpec.getId(), action.handle);
+                        break;
                     }
                 }
             }
@@ -371,12 +377,12 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
                 }
                 baos.write(0);
             }
-
-            write(builder, baos.toByteArray());
-            builder.queue(getSupport().getQueue());
         } catch (final Exception e) {
             LOG.error("Failed to send notification", e);
+            return;
         }
+
+        write("send notification", baos.toByteArray());
     }
 
     public void deleteNotification(final int id) {
@@ -448,20 +454,27 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
     }
 
     private void sendIconForPackage(final String packageName, final byte iconFormat, final int width, final int height) {
-        final BitmapFormat format = BitmapFormat.fromCode(iconFormat);
+        final ZeppOsBitmapFormat format = ZeppOsBitmapFormat.fromCode(iconFormat);
         if (format == null) {
             LOG.error("Unknown icon bitmap format code {}", String.format("0x%02x", iconFormat));
             return;
         }
 
-        final Drawable icon = NotificationUtils.getAppIcon(getContext(), packageName);
+        final Drawable icon = NotificationUtils.getAppIcon(
+                getContext(),
+                FORCE_RELOAD_NOTIFICATION_ICON ? packageName.substring(36) : packageName
+        );
         if (icon == null) {
             LOG.warn("Failed to get icon for {}", packageName);
             return;
         }
 
         final Bitmap bmp = BitmapUtil.toBitmap(icon);
-        final byte[] tga = encodeBitmap(bmp, format, width, height);
+        final byte[] tga = format.encode(bmp, width, height);
+        if (tga == null) {
+            LOG.error("Failed to encode icon to tga");
+            return;
+        }
 
         final String url = String.format(
                 Locale.ROOT,
@@ -473,11 +486,24 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
         );
         final String filename = String.format("logo_%s.tga", packageName.replace(".", "_"));
 
-        sendFile(url, filename, tga, false, success -> ackNotificationAfterIconSent(packageName, success));
+        //try {
+        //    final GBDevice device = getSupport().getDevice();
+        //    final File exportDirectory = device.getDeviceCoordinator().getWritableExportDirectory(device);
+        //    final File targetDir = new File(exportDirectory, "notificationIcons");
+        //    targetDir.mkdirs();
+        //    final File outputFile = new File(targetDir, filename);
+        //    final OutputStream outputStream = new FileOutputStream(outputFile);
+        //    outputStream.write(tga);
+        //    outputStream.close();
+        //} catch (final Exception e) {
+        //    LOG.error("Failed to dump bytes to storage", e);
+        //}
+
+        sendFile(url, filename, tga, success -> ackNotificationAfterIconSent(packageName, success));
     }
 
-    private void sendNotificationPicture(final String packageName, final int notificationId, final byte pictureFormat, final int width) {
-        final BitmapFormat format = BitmapFormat.fromCode(pictureFormat);
+    private void sendNotificationPicture(final String packageName, final int notificationId, final byte pictureFormat, final int requestWidth, final int requestHeight) {
+        final ZeppOsBitmapFormat format = ZeppOsBitmapFormat.fromCode(pictureFormat);
         if (format == null) {
             LOG.error("Unknown picture bitmap format code {}", String.format("0x%02x", pictureFormat));
             ackNotificationAfterPictureSent(packageName, notificationId, false);
@@ -498,30 +524,71 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
             return;
         }
 
-        // FIXME: On the GTR 4, the band sends 358 on the url, but the actual image has 368 width
-        //  if sent as requested, it gets all corrupted...
-        final int targetWidth = width + 10;
-        final int targetHeight = (int) Math.round(bmp.getHeight() * ((double) targetWidth / bmp.getWidth()));
-        final byte[] tga = encodeBitmap(bmp, format, targetWidth, targetHeight);
+        TargetDimensions targetDimensions = getTargetDimensions(requestWidth, requestHeight, bmp.getWidth(), bmp.getHeight());
+
+        final byte[] tga = format.encode(bmp, targetDimensions.targetWidth(), targetDimensions.targetHeight());
+        if (tga == null) {
+            LOG.warn("Failed to encode tga from {}", picturePath);
+            ackNotificationAfterPictureSent(packageName, notificationId, false);
+            return;
+        }
 
         final String url = String.format(
                 Locale.ROOT,
                 "notification://content_image?app_id=%s&uid=%d&width=%d&height=%d&format=%s",
                 packageName,
                 notificationId,
-                width,
-                targetHeight,
+                targetDimensions.notificationWidth(),
+                targetDimensions.targetHeight(),
                 format
         );
         final String filename = String.format(Locale.ROOT, "picture_%d.tga", notificationId);
 
-        sendFile(url, filename, tga, true, success -> ackNotificationAfterPictureSent(packageName, notificationId, success));
+        sendFile(url, filename, tga, success -> ackNotificationAfterPictureSent(packageName, notificationId, success));
+    }
+
+    @NonNull
+    private static TargetDimensions getTargetDimensions(int requestWidth, int requestHeight, int bmpWidth, int bmpHeight) {
+        final boolean is_portrait = bmpHeight > bmpWidth;
+
+        // max height for portrait mode as observed on a Balance 2 XT
+        final int maxHeight = 632;
+        final int requestMaxHeight = Math.min(requestHeight, maxHeight);
+
+        int targetHeight;
+        int targetWidth;
+        int notificationWidth;
+        if (is_portrait && (requestMaxHeight > 0)) {
+            targetHeight = requestMaxHeight;
+            // rounding factor found by testing on snooped data
+            notificationWidth = (requestMaxHeight * 1408) / bmpHeight * bmpWidth / 1408;
+        }
+        else {
+            notificationWidth = requestWidth;
+            // rounding factor found by testing on snooped data
+            targetHeight = bmpHeight * 500 / bmpWidth * requestWidth / 500;
+        }
+        // According to testing, the target width is the smallest multiple of 16 >= notificationWidth
+        // (lower 4 bits are zero)
+        targetWidth = nextMultipleOfSixteen(notificationWidth);
+        return new TargetDimensions(targetHeight, targetWidth, notificationWidth);
+    }
+
+    private record TargetDimensions(int targetHeight, int targetWidth, int notificationWidth) {
+    }
+
+    /**
+     * Returns the next greater multiple of 16, or the number itself if it is already a multiple of 16
+     * @param number    some positive number
+     * @return          smallest multiple of 16 >= number
+     */
+    private static int nextMultipleOfSixteen(final int number) {
+        return ((number - 1) | 0x0F ) + 1;
     }
 
     private void sendFile(final String url,
                           final String filename,
                           final byte[] bytes,
-                          final boolean compress,
                           final Consumer<Boolean> uploadFinishCallback) {
         if (getSupport().getMTU() < 247) {
             LOG.warn("Sending files requires high MTU, current MTU is {}", getSupport().getMTU());
@@ -533,7 +600,7 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
                 filename,
                 bytes,
                 true,
-                new ZeppOsFileTransferService.Callback() {
+                new ZeppOsFileTransferService.UploadCallback() {
                     @Override
                     public void onFileUploadFinish(final boolean success) {
                         LOG.info("Finished sending '{}' to '{}', success={}", filename, url, success);
@@ -544,57 +611,9 @@ public class ZeppOsNotificationService extends AbstractZeppOsService {
                     public void onFileUploadProgress(final int progress) {
                         LOG.trace("File send progress: {}", progress);
                     }
-
-                    @Override
-                    public void onFileDownloadFinish(final String url, final String filename, final byte[] data) {
-                        LOG.warn("Receiver unexpected file: url={} filename={} length={}", url, filename, data.length);
-                    }
                 }
         );
 
         LOG.info("Queueing file send '{}' to '{}'", filename, url);
-    }
-
-    private static byte[] encodeBitmap(final Bitmap bmp, final BitmapFormat format, final int width, final int height) {
-        // Without the expected tga id and format string they seem to get corrupted,
-        // but the encoding seems to actually be the same...?
-        // The TGA needs to have this ID, or the band does not accept it
-        final byte[] tgaIdBytes = new byte[46];
-        System.arraycopy(format.getTgaId().getBytes(StandardCharsets.UTF_8), 0, tgaIdBytes, 0, 5);
-
-        return BitmapUtil.convertToTgaRGB565(bmp, width, height, tgaIdBytes);
-    }
-
-    private enum BitmapFormat {
-        TGA_RGB565_GCNANOLITE(0x04, "SOMHP"),
-        TGA_RGB565_DAVE2D(0x08, "SOMH6"),
-        ;
-
-        private final byte code;
-        private final String tgaId;
-
-        BitmapFormat(final int code, final String tgaId) {
-            this.code = (byte) code;
-            this.tgaId = tgaId;
-        }
-
-        public byte getCode() {
-            return code;
-        }
-
-        public String getTgaId() {
-            return tgaId;
-        }
-
-        @Nullable
-        public static BitmapFormat fromCode(final byte code) {
-            for (final BitmapFormat format : BitmapFormat.values()) {
-                if (format.code == code) {
-                    return format;
-                }
-            }
-
-            return null;
-        }
     }
 }

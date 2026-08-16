@@ -48,7 +48,7 @@ public class Prefs {
 
     public String getString(String key, String defaultValue) {
         String value = preferences.getString(key, defaultValue);
-        if (value == null || "".equals(value)) {
+        if (value == null || value.isEmpty()) {
             return defaultValue;
         }
         return value;
@@ -151,7 +151,7 @@ public class Prefs {
         } catch (Exception ex) {
             try {
                 String value = preferences.getString(key, String.valueOf(defaultValue));
-                if ("".equals(value)) {
+                if (value.isEmpty()) {
                     return defaultValue;
                 }
                 return Boolean.parseBoolean(value);
@@ -172,7 +172,7 @@ public class Prefs {
      */
     public List<String> getList(final String key, final List<String> defaultValue, final String separatorRegex) {
         final String stringValue = preferences.getString(key, null);
-        if (stringValue == null) {
+        if (stringValue == null || stringValue.isEmpty()) {
             return defaultValue;
         }
         return Arrays.asList(stringValue.split(separatorRegex));

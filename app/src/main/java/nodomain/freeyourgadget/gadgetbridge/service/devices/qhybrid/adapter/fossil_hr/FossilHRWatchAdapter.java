@@ -18,12 +18,15 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.adapter.fossil_hr;
 
+import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_CALENDAR_MAX_DESC_LENGTH;
+import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_CALENDAR_MAX_TITLE_LENGTH;
+import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_CALENDAR_SYNC_EVENTS_AMOUNT;
+import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_CALENDAR_TARGET_APP;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.requests.fossil.configuration.ConfigurationPutRequest.FitnessConfigItem;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.requests.fossil.configuration.ConfigurationPutRequest.InactivityWarningItem;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.requests.fossil.configuration.ConfigurationPutRequest.UnitsConfigItem;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.requests.fossil.configuration.ConfigurationPutRequest.VibrationStrengthConfigItem;
 import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.requests.fossil_hr.music.MusicControlRequest.MUSIC_PHONE_REQUEST;
-import static nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.requests.fossil_hr.music.MusicControlRequest.MUSIC_WATCH_REQUEST;
 import static nodomain.freeyourgadget.gadgetbridge.util.BitmapUtil.convertDrawableToBitmap;
 import static nodomain.freeyourgadget.gadgetbridge.util.GB.NOTIFICATION_CHANNEL_ID;
 import static nodomain.freeyourgadget.gadgetbridge.util.StringUtils.shortenPackageName;
@@ -52,6 +55,7 @@ import android.os.Messenger;
 import android.os.RemoteException;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.res.ResourcesCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
@@ -77,8 +81,12 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -96,30 +104,34 @@ import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventAppInfo;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventCallControl;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventFindPhone;
-import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventMusicControl;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventNotificationControl;
+import nodomain.freeyourgadget.gadgetbridge.devices.HybridHRSpo2SampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.qhybrid.CommuteActionsActivity;
 import nodomain.freeyourgadget.gadgetbridge.devices.qhybrid.FossilFileReader;
 import nodomain.freeyourgadget.gadgetbridge.devices.qhybrid.FossilHRInstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.devices.qhybrid.HybridHRActivitySampleProvider;
-import nodomain.freeyourgadget.gadgetbridge.devices.qhybrid.HybridHRSpo2SampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.qhybrid.NotificationHRConfiguration;
+import nodomain.freeyourgadget.gadgetbridge.devices.qhybrid.QHybridConstants;
+import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummary;
+import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummaryDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
-import nodomain.freeyourgadget.gadgetbridge.entities.User;
 import nodomain.freeyourgadget.gadgetbridge.entities.HybridHRActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HybridHRSpo2Sample;
+import nodomain.freeyourgadget.gadgetbridge.entities.User;
 import nodomain.freeyourgadget.gadgetbridge.externalevents.NotificationListener;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceApp;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
+import nodomain.freeyourgadget.gadgetbridge.model.DistanceUnit;
 import nodomain.freeyourgadget.gadgetbridge.model.GenericItem;
+import nodomain.freeyourgadget.gadgetbridge.model.ItemWithDetails;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NavigationInfoSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.model.Weather;
 import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.pebble.webview.CurrentPosition;
+import nodomain.freeyourgadget.gadgetbridge.model.weather.Weather;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.QHybridSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.adapter.fossil.FossilWatchAdapter;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.qhybrid.file.FileHandle;
@@ -181,6 +193,9 @@ import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.UriHelper;
 import nodomain.freeyourgadget.gadgetbridge.util.Version;
+import nodomain.freeyourgadget.gadgetbridge.util.calendar.CalendarEvent;
+import nodomain.freeyourgadget.gadgetbridge.util.calendar.CalendarManager;
+import nodomain.freeyourgadget.gadgetbridge.webview.CurrentPosition;
 
 public class FossilHRWatchAdapter extends FossilWatchAdapter {
     public static final int MESSAGE_WHAT_VOICE_DATA_RECEIVED = 0;
@@ -203,7 +218,6 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         super(deviceSupport);
     }
 
-    private boolean saveRawActivityFiles = false;
     private boolean notifiedAboutMissingNavigationApp = false;
 
     HashMap<String, Bitmap> appIconCache = new HashMap<>();
@@ -215,16 +229,18 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
 
     private Version cleanFirmwareVersion = null;
 
+    private final Set<CalendarEvent> lastSync = new HashSet<>();
+
     ServiceConnection voiceServiceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
-            GB.log("attached to voice service", GB.INFO, null);
+            LOG.info("attached to voice service");
             voiceMessenger = new Messenger(service);
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
-            GB.log("detached from voice service", GB.INFO, null);
+            LOG.info("detached from voice service");
             voiceMessenger = null;
         }
     };
@@ -315,7 +331,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         queueWrite(new CheckDeviceNeedsConfirmationRequest() {
             @Override
             public void onResult(boolean needsConfirmation) {
-                GB.log("needs confirmation: " + needsConfirmation, GB.INFO, null);
+                LOG.info("needs confirmation: {}", needsConfirmation);
                 if (needsConfirmation) {
                     final Timer timer = new Timer();
                     GB.toast(getContext().getString(R.string.fossil_hr_confirm_connection), Toast.LENGTH_SHORT, GB.INFO);
@@ -344,13 +360,13 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         queueWrite(new CheckDevicePairingRequest() {
             @Override
             public void onResult(boolean pairingStatus) {
-                GB.log("watch pairing status: " + pairingStatus, GB.INFO, null);
+                LOG.info("watch pairing status: {}", pairingStatus);
                 if (!pairingStatus) {
                     queueWrite(new PerformDevicePairingRequest() {
                         @Override
                         public void onResult(boolean pairingSuccess) {
                             isFinished = true;
-                            GB.log("watch pairing result: " + pairingSuccess, GB.INFO, null);
+                            LOG.info("watch pairing result: {}", pairingSuccess);
                             if (pairingSuccess) {
                                 GB.toast(getContext().getString(R.string.fossil_hr_pairing_successful), Toast.LENGTH_LONG, GB.ERROR);
                             } else {
@@ -393,7 +409,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
 
         flags |= Service.BIND_AUTO_CREATE;
 
-        GB.log("binding to voice service...", GB.INFO, null);
+        LOG.info("binding to voice service...");
 
         getContext().bindService(
                 voiceIntent,
@@ -414,7 +430,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         }catch (IllegalArgumentException e){
             serviceEnabled = false;
             respondToAlexa("voice service not found on phone", true);
-            GB.toast("voice service not found", Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast("voice service not found", Toast.LENGTH_LONG, GB.ERROR, e);
         }
 
         if(!serviceEnabled){
@@ -434,12 +450,11 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         }
     }
 
-    private void handleVoiceStatusCharacteristic(BluetoothGattCharacteristic characteristic){
-        byte[] value = characteristic.getValue();
+    private void handleVoiceStatusCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value){
         handleVoiceStatus(value[0]);
     }
 
-    private void handleVoiceDataCharacteristic(BluetoothGattCharacteristic characteristic){
+    private void handleVoiceDataCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value){
         if(voiceMessenger == null){
             return;
         }
@@ -448,13 +463,13 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                 MESSAGE_WHAT_VOICE_DATA_RECEIVED
         );
         Bundle dataBundle = new Bundle(1);
-        dataBundle.putByteArray("VOICE_DATA", characteristic.getValue());
+        dataBundle.putByteArray("VOICE_DATA", value);
         dataBundle.putString("VOICE_ENCODING", "OPUS");
         message.setData(dataBundle);
         try {
             voiceMessenger.send(message);
         } catch (RemoteException e) {
-            GB.log("error sending voice data to service", GB.ERROR, e);
+            LOG.error("error sending voice data to service", e);
             GB.toast("error sending voice data to service", Toast.LENGTH_LONG, GB.ERROR);
             voiceMessenger = null;
             detachFromVoiceService();
@@ -463,16 +478,16 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
         switch (characteristic.getUuid().toString()){
             case "010541ae-efe8-11c0-91c0-105d1a1155f0":
-                handleVoiceStatusCharacteristic(characteristic);
+                handleVoiceStatusCharacteristic(characteristic, value);
                 return true;
             case "842d2791-0d20-4ce4-1ada-105d1a1155f0":
-                handleVoiceDataCharacteristic(characteristic);
+                handleVoiceDataCharacteristic(characteristic, value);
                 return true;
         }
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, value);
     }
 
     private void initializeAfterWatchConfirmation(boolean authenticated) {
@@ -493,6 +508,8 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         // dunno if there is any point in doing this at start since when no watch is connected the QHybridSupport will not receive any intents anyway
 
         updateBuiltinAppsInCache();
+
+        onSendCalendar();
 
         queueWrite(new SetDeviceStateRequest(GBDevice.State.INITIALIZED));
     }
@@ -544,20 +561,10 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         }
     }
 
-    private void setVibrationStrengthFromConfig() {
-        Prefs prefs = new Prefs(getDeviceSpecificPreferences());
-        int vibrationStrengh = prefs.getInt(DeviceSettingsPreferenceConst.PREF_VIBRATION_STRENGH_PERCENTAGE, 2);
-        if (vibrationStrengh > 0) {
-            vibrationStrengh = (vibrationStrengh + 1) * 25; // Seems 0,50,75,100 are working...
-        }
-        setVibrationStrength((short) (vibrationStrengh));
-    }
-
     private void setUnitsConfig() {
-        Prefs prefs = GBApplication.getPrefs();
-        String unit = prefs.getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM, GBApplication.getContext().getString(R.string.p_unit_metric));
+        final DistanceUnit distanceUnit = GBApplication.getPrefs().getDistanceUnit();
         int value = 8; // dont know what this bit means but it was set for me before tampering
-        if (!unit.equals("metric")) {
+        if (distanceUnit != DistanceUnit.METRIC) {
             value |= (4 | 1); // temperature and distance
         }
         queueWrite(
@@ -661,7 +668,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                 }
             }
         } catch (IOException | RuntimeException e) {
-            GB.log("error opening background file", GB.ERROR, e);
+            LOG.error("error opening background file", e);
             GB.toast("error opening background file", Toast.LENGTH_LONG, GB.ERROR);
         }
     }
@@ -677,7 +684,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                 FileOutputStream fos = new FileOutputStream(getBackgroundFile(), false);
                 fos.write(pixels);
             } catch (IOException e) {
-                GB.log("error saving background", GB.ERROR, e);
+                LOG.error("error saving background", e);
                 GB.toast("error persistent saving background", Toast.LENGTH_LONG, GB.ERROR);
             }
         }
@@ -779,9 +786,19 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
     }
 
     public void setInstalledApplications(List<ApplicationInformation> installedApplications) {
+        final List<GBDeviceApp> systemApps = Collections.singletonList(
+                new GBDeviceApp(
+                        UUID.nameUUIDFromBytes("workoutApp".getBytes(StandardCharsets.UTF_8)),
+                        "workoutApp",
+                        "",
+                        "",
+                        GBDeviceApp.Type.APP_ACTIVITYTRACKER
+                )
+        );
+
         this.installedApplications = installedApplications;
         GBDeviceEventAppInfo appInfoEvent = new GBDeviceEventAppInfo();
-        appInfoEvent.apps = new GBDeviceApp[installedApplications.size()];
+        appInfoEvent.apps = new GBDeviceApp[installedApplications.size() + systemApps.size()];
         for (int i = 0; i < installedApplications.size(); i++) {
             String appName = installedApplications.get(i).getAppName();
             String appVersion = installedApplications.get(i).getAppVersion();
@@ -792,8 +809,28 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
             } else {
                 appType = GBDeviceApp.Type.WATCHFACE;
             }
-            appInfoEvent.apps[i] = new GBDeviceApp(appUUID, appName, "(unknown)", appVersion, appType);
+
+            final GBDeviceApp app = new GBDeviceApp(appUUID, appName, "(unknown)", appVersion, appType);
+            if (getDeviceSupport().getDevice().getType() == DeviceType.FOSSILQHYBRID) {
+                if ((app.getType() == GBDeviceApp.Type.WATCHFACE) && (!QHybridConstants.HYBRIDHR_WATCHFACE_VERSION.equals(appVersion))) {
+                    app.setUpToDate(false);
+                }
+                try {
+                    if ((app.getType() == GBDeviceApp.Type.APP_GENERIC) && ((new Version(app.getVersion())).smallerThan(new Version(QHybridConstants.KNOWN_WAPP_VERSIONS.get(app.getName()))))) {
+                        app.setUpToDate(false);
+                    }
+                } catch (final IllegalArgumentException e) {
+                    LOG.warn("Couldn't read app version", e);
+                }
+            }
+
+            appInfoEvent.apps[i] = app;
         }
+
+        for (int i = installedApplications.size(), j = 0; i < appInfoEvent.apps.length && j < systemApps.size(); i++, j++) {
+            appInfoEvent.apps[i] = systemApps.get(j);
+        }
+
         getDeviceSupport().evaluateGBDeviceEvent(appInfoEvent);
     }
 
@@ -1125,13 +1162,13 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                 @Override
                 protected void handleAuthenticationResult(boolean success) {
                     if (success) {
-                        GB.log("success auth", GB.INFO, null);
+                        LOG.info("success auth");
                         queueWrite((FossilRequest) request, true);
                     }
                 }
             });
         } catch (IllegalAccessException e) {
-            GB.toast("error getting key: " + e.getMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
+            GB.toast("error getting key: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
@@ -1164,7 +1201,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                 }
             });
         } catch (IllegalAccessException e) {
-            GB.toast("error getting key: " + e.getMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
+            GB.toast("error getting key: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
             this.handleAuthenticationResult(false);
         }
     }
@@ -1201,7 +1238,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                     this
             ));
         } catch (BufferOverflowException e) {
-            GB.log("musicInfo: " + musicSpec, GB.ERROR, e);
+            LOG.error("musicInfo: {}", musicSpec, e);
         }
     }
 
@@ -1241,34 +1278,44 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                             Device device = DBHelper.getDevice(getDeviceSupport().getDevice(), dbHandler.getDaoSession());
                             Long deviceId = device.getId();
                             ActivityFileParser parser = new ActivityFileParser();
-                            Map.Entry<ArrayList<ActivityEntry>, ArrayList<HybridHRSpo2Sample>> parsedEntries = parser.parseFile(fileData);
+                            parser.parseFile(fileData);
                             // Activities
-                            ArrayList<ActivityEntry> entries = parsedEntries.getKey();
+                            ArrayList<ActivityEntry> entries = parser.getActivitySamples();
                             HybridHRActivitySampleProvider provider = new HybridHRActivitySampleProvider(getDeviceSupport().getDevice(), dbHandler.getDaoSession());
                             HybridHRActivitySample[] samples = new HybridHRActivitySample[entries.size()];
                             for (int i = 0; i < entries.size(); i++) {
                                 samples[i] = entries.get(i).toDAOActivitySample(userId, deviceId);
                             }
-                            provider.addGBActivitySamples(samples);
+                            provider.addGBActivitySamples(Arrays.asList(samples));
                             // SpO2, should be empty for an unsupported device
-                            ArrayList<HybridHRSpo2Sample> spo2Samples = parsedEntries.getValue();
+                            ArrayList<HybridHRSpo2Sample> spo2Samples = parser.getSpo2Samples();
                             HybridHRSpo2SampleProvider spo2Provider = new HybridHRSpo2SampleProvider(getDeviceSupport().getDevice(), dbHandler.getDaoSession());
                             for (HybridHRSpo2Sample sample : spo2Samples) {
                                 sample.setDevice(device);
                                 sample.setUser(user);
                             }
                             spo2Provider.addSamples(spo2Samples);
+                            // Workout summaries
+                            ArrayList<BaseActivitySummary> workoutSummaries = parser.getWorkoutSummaries();
+                            LOG.debug("WORKOUT SUMMARIES FOUND: {}", workoutSummaries);
+                            BaseActivitySummaryDao summaryDao = provider.getSession().getBaseActivitySummaryDao();
+                            for (BaseActivitySummary summary : workoutSummaries) {
+                                summary.setDevice(device);
+                                summary.setUser(user);
+                                summaryDao.insert(summary);
+                            }
 
                             if (saveRawActivityFiles) {
-                                writeFile(String.valueOf(System.currentTimeMillis()), fileData);
+                                writeFile("activity_hr", String.valueOf(System.currentTimeMillis()), fileData);
                             }
+
                             queueWrite(new FileDeleteRequest(fileHandle));
                             GB.updateTransferNotification(null, "", false, 100, getContext());
                             GB.signalActivityDataFinish(getDeviceSupport().getDevice());
                             LOG.debug("Synchronized activity data");
                         } catch (Exception ex) {
-                            GB.toast(getContext(), "Error saving steps data: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
-                            LOG.error("Error saving steps data: ", ex);
+                            GB.toast(getContext(), "Error saving activity data: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+                            LOG.error("Error saving activity data: ", ex);
                             GB.updateTransferNotification(null, "Data transfer failed", false, 0, getContext());
                         }
                         getDeviceSupport().getDevice().unsetBusyTask();
@@ -1289,21 +1336,6 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                 getDeviceSupport().getDevice().sendDeviceUpdateIntent(getContext());
             }
         });
-    }
-
-    private void writeFile(String fileName, byte[] value) {
-        File activityDir = new File(getContext().getExternalFilesDir(null), "activity_hr");
-        activityDir.mkdir();
-        File f = new File(activityDir, fileName);
-        try {
-            f.createNewFile();
-            FileOutputStream fos = new FileOutputStream(f);
-            fos.write(value);
-            fos.close();
-            GB.toast("saved file data", Toast.LENGTH_SHORT, GB.INFO);
-        } catch (IOException e) {
-            GB.log("file error", GB.ERROR, e);
-        }
     }
 
     private void syncSettings() {
@@ -1339,7 +1371,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                 try {
                     Drawable icon = null;
                     if (notificationSpec.iconId != 0) {
-                        Context sourcePackageContext = getContext().createPackageContext(sourceAppId, 0);
+                        Context sourcePackageContext = getContext().createPackageContext(notificationSpec.iconPackageId, 0);
                         icon = ResourcesCompat.getDrawable(sourcePackageContext.getResources(), notificationSpec.iconId, null);
                     }
                     if (icon == null) {
@@ -1474,10 +1506,10 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
     @Override
     public void onSendWeather(WeatherSpec weatherSpec) {
         boolean isNight = false;
-        if (weatherSpec.sunRise != 0 && weatherSpec.sunSet != 0) {
-            isNight = weatherSpec.sunRise * 1000L > System.currentTimeMillis() || weatherSpec.sunSet * 1000L < System.currentTimeMillis();
+        if (weatherSpec.getSunRise() != 0 && weatherSpec.getSunSet() != 0) {
+            isNight = weatherSpec.getSunRise() * 1000L > System.currentTimeMillis() || weatherSpec.getSunSet() * 1000L < System.currentTimeMillis();
         } else {
-            Location location = weatherSpec.getLocation();
+            Location location = weatherSpec.getLocationObject();
             if (location == null) {
                 location = new CurrentPosition().getLastKnownLocation();
             }
@@ -1503,8 +1535,8 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                                     .put("weatherInfo", new JSONObject()
                                             .put("alive", ts + 60 * 60)
                                             .put("unit", "c") // FIXME: do not hardcode
-                                            .put("temp", weatherSpec.currentTemp - 273)
-                                            .put("cond_id", getIconForConditionCode(weatherSpec.currentConditionCode, isNight))
+                                            .put("temp", weatherSpec.getCurrentTemp() - 273)
+                                            .put("cond_id", getIconForConditionCode(weatherSpec.getCurrentConditionCode(), isNight))
                                     )
                             )
                     );
@@ -1514,16 +1546,16 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
             JSONArray forecastWeekArray = new JSONArray();
             final String[] weekdays = {"", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
             Calendar cal = Calendar.getInstance();
-            cal.setTimeInMillis(weatherSpec.timestamp * 1000L);
+            cal.setTimeInMillis(weatherSpec.getTimestamp() * 1000L);
             int i = 0;
-            for (WeatherSpec.Daily forecast : weatherSpec.forecasts) {
+            for (WeatherSpec.Daily forecast : weatherSpec.getForecasts()) {
                 cal.add(Calendar.DATE, 1);
                 int dayOfWeek = cal.get(Calendar.DAY_OF_WEEK);
                 forecastWeekArray.put(new JSONObject()
                         .put("day", weekdays[dayOfWeek])
-                        .put("cond_id", getIconForConditionCode(forecast.conditionCode, false))
-                        .put("high", forecast.maxTemp - 273)
-                        .put("low", forecast.minTemp - 273)
+                        .put("cond_id", getIconForConditionCode(forecast.getConditionCode(), false))
+                        .put("high", forecast.getMaxTemp() - 273)
+                        .put("low", forecast.getMinTemp() - 273)
                 );
                 if (++i == 3) break; // max 3
             }
@@ -1546,15 +1578,15 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                                     .put("weatherApp._.config.locations", new JSONArray()
                                             .put(new JSONObject()
                                                     .put("alive", ts + 60 * 60)
-                                                    .put("city", weatherSpec.location)
+                                                    .put("city", weatherSpec.getLocation())
                                                     .put("unit", "c") // FIXME: do not hardcode
-                                                    .put("temp", weatherSpec.currentTemp - 273)
-                                                    .put("high", weatherSpec.todayMaxTemp - 273)
-                                                    .put("low", weatherSpec.todayMinTemp - 273)
-                                                    .put("rain", weatherSpec.precipProbability)
-                                                    .put("uv", Math.round(weatherSpec.uvIndex))
-                                                    .put("message", weatherSpec.currentCondition)
-                                                    .put("cond_id", getIconForConditionCode(weatherSpec.currentConditionCode, isNight))
+                                                    .put("temp", weatherSpec.getCurrentTemp() - 273)
+                                                    .put("high", weatherSpec.getTodayMaxTemp() - 273)
+                                                    .put("low", weatherSpec.getTodayMinTemp() - 273)
+                                                    .put("rain", weatherSpec.getPrecipProbability())
+                                                    .put("uv", Math.round(weatherSpec.getUvIndex()))
+                                                    .put("message", weatherSpec.getCurrentCondition())
+                                                    .put("cond_id", getIconForConditionCode(weatherSpec.getCurrentConditionCode(), isNight))
                                                     .put("forecast_day", forecastDayArray)
                                                     .put("forecast_week", forecastWeekArray)
                                             )
@@ -1578,7 +1610,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                     .put("set", new JSONObject()
                         .put("widgetChanceOfRain._.config.info", new JSONObject()
                             .put("alive", ts + 60 * 15)
-                            .put("rain", weatherSpec.precipProbability)
+                            .put("rain", weatherSpec.getPrecipProbability())
                         )
                     )
                 );
@@ -1598,7 +1630,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                     .put("set", new JSONObject()
                         .put("widgetUV._.config.info", new JSONObject()
                             .put("alive", ts + 60 * 15)
-                            .put("uv", Math.round(weatherSpec.uvIndex))
+                            .put("uv", Math.round(weatherSpec.getUvIndex()))
                         )
                     )
                 );
@@ -1609,14 +1641,87 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         }
     }
 
+    public void onSendCalendar() {
+        if (!getDeviceSpecificPreferences().getBoolean("sync_calendar", false)) {
+            LOG.debug("Ignoring calendar sync request, sync is disabled");
+            return;
+        }
+
+        int maxItems = Integer.parseInt(getDeviceSpecificPreferences().getString(PREF_CALENDAR_SYNC_EVENTS_AMOUNT, "5"));
+        int titleLength = Integer.parseInt(getDeviceSpecificPreferences().getString(PREF_CALENDAR_MAX_TITLE_LENGTH, "40"));
+        int descLength = Integer.parseInt(getDeviceSpecificPreferences().getString(PREF_CALENDAR_MAX_DESC_LENGTH, "40"));
+        String targetApp = getDeviceSpecificPreferences().getString(PREF_CALENDAR_TARGET_APP, "customWatchFace");
+
+        final CalendarManager upcomingEvents = new CalendarManager(getContext(), getDeviceSupport().getDevice().getAddress());
+        final List<CalendarEvent> calendarEvents = upcomingEvents.getCalendarEventList();
+
+        final Set<CalendarEvent> thisSync = new HashSet<>();
+        int nEvents = 0;
+
+        for (final CalendarEvent calendarEvent : calendarEvents) {
+            if (++nEvents > maxItems) {
+                LOG.warn("Syncing only first {} events of {}", maxItems, calendarEvents.size());
+                break;
+            }
+            thisSync.add(calendarEvent);
+        }
+
+        if (thisSync.equals(lastSync)) {
+            LOG.debug("Already synced this set of events, won't send to device");
+            return;
+        }
+
+        lastSync.clear();
+        lastSync.addAll(thisSync);
+
+        List<CalendarEvent> sortedEventList = new ArrayList<>(thisSync);
+        Collections.sort(sortedEventList, Comparator.comparingLong(CalendarEvent::getBegin));
+
+        LOG.debug("Syncing {} calendar events", sortedEventList.size());
+
+        try {
+            JSONArray items = new JSONArray();
+            for(CalendarEvent event : sortedEventList) {
+                JSONArray reminders = new JSONArray();
+                for (long reminder : event.getRemindersAbsoluteTs()) {
+                    reminders.put(reminder / 1000);
+                }
+                String title = event.getTitle();
+                if (title != null && title.length() > titleLength)
+                    title = event.getTitle().substring(0, titleLength);
+                String desc = event.getDescription();
+                if (desc != null && desc.length() > descLength)
+                    desc = event.getDescription().substring(0, descLength);
+                items.put(new JSONObject()
+                        .put("id", event.getId())
+                        .put("title", title)
+                        .put("desc", desc)
+                        .put("start", event.getBeginSeconds())
+                        .put("end", event.getEndSeconds())
+                        .put("reminders", reminders)
+                );
+            }
+            JSONObject calendarObj = new JSONObject()
+                    .put("res", new JSONObject()
+                            .put("set", new JSONObject()
+                                    .put(targetApp + "._.config.events", items)
+                            )
+                    );
+
+            queueWrite(new JsonPutRequest(calendarObj, this));
+        } catch (JSONException e) {
+            LOG.error("Error sending calendar events: ", e);
+        }
+    }
+
     @Override
     public void factoryReset() {
         queueWrite(new FactoryResetRequest());
     }
 
     @Override
-    public void onTestNewFunction() {
-        setVibrationStrengthFromConfig();
+    public void onTestNewFunction(@Nullable Bundle options) {
+        onSendCalendar();
     }
 
     public byte[] getSecretKey() throws IllegalAccessException {
@@ -1810,7 +1915,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                 saveRawActivityFiles = getDeviceSpecificPreferences().getBoolean("save_raw_activity_files", false);
                 break;
             }
-            case SettingsActivity.PREF_MEASUREMENT_SYSTEM:
+            case SettingsActivity.PREF_UNIT_DISTANCE:
                 setUnitsConfig();
                 break;
             case DeviceSettingsPreferenceConst.PREF_HYBRID_HR_ACTIVITY_RECOGNITION_RUNNING_ENABLED:
@@ -1837,10 +1942,8 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
     }
 
     @Override
-    public void handleHeartRateCharacteristic(BluetoothGattCharacteristic characteristic) {
-        super.handleHeartRateCharacteristic(characteristic);
-
-        byte[] value = characteristic.getValue();
+    public void handleHeartRateCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
+        super.handleHeartRateCharacteristic(characteristic, value);
 
         int heartRate = value[1];
 
@@ -1848,10 +1951,8 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
     }
 
     @Override
-    protected void handleBackgroundCharacteristic(BluetoothGattCharacteristic characteristic) {
-        super.handleBackgroundCharacteristic(characteristic);
-
-        byte[] value = characteristic.getValue();
+    protected void handleBackgroundCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
+        super.handleBackgroundCharacteristic(characteristic, value);
 
         byte requestType = value[1];
 
@@ -1863,8 +1964,6 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
             } else if (value[7] == 0x03) {
                 handleQuickReplyRequest(value);
             }
-        } else if (requestType == (byte) 0x05) {
-            handleMusicRequest(value);
         } else if (requestType == (byte) 0x01) {
             int eventId = value[2];
             LOG.info("got event id " + eventId);
@@ -1911,7 +2010,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                     }
                 } else if (request.has("weatherInfo") || request.has("weatherApp._.config.locations")) {
                     LOG.info("Got weatherInfo request");
-                    WeatherSpec weatherSpec = Weather.getInstance().getWeatherSpec();
+                    WeatherSpec weatherSpec = Weather.getWeatherSpec();
                     if (weatherSpec != null) {
                         onSendWeather(weatherSpec);
                     } else {
@@ -1919,7 +2018,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                     }
                 } else if (request.has("widgetChanceOfRain._.config.info")) {
                     LOG.info("Got widgetChanceOfRain request");
-                    WeatherSpec weatherSpec = Weather.getInstance().getWeatherSpec();
+                    WeatherSpec weatherSpec = Weather.getWeatherSpec();
                     if (weatherSpec != null) {
                         onSendChanceOfRain(weatherSpec);
                     } else {
@@ -1927,7 +2026,7 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                     }
                 } else if (request.has("widgetUV._.config.info")) {
                     LOG.info("Got widgetUV request");
-                    WeatherSpec weatherSpec = Weather.getInstance().getWeatherSpec();
+                    WeatherSpec weatherSpec = Weather.getWeatherSpec();
                     if (weatherSpec != null) {
                         onSendUVIndex(weatherSpec);
                     } else {
@@ -2042,47 +2141,6 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
         queueWrite(new QuickReplyConfirmationPutRequest(callId));
     }
 
-    private void handleMusicRequest(byte[] value) {
-        byte command = value[3];
-        LOG.info("got music command: " + command);
-        MUSIC_WATCH_REQUEST request = MUSIC_WATCH_REQUEST.fromCommandByte(command);
-
-        GBDeviceEventMusicControl deviceEventMusicControl = new GBDeviceEventMusicControl();
-        deviceEventMusicControl.event = GBDeviceEventMusicControl.Event.PLAY;
-
-        // TODO add skipping/seeking
-
-        switch (request) {
-            case MUSIC_REQUEST_PLAY_PAUSE: {
-                queueWrite(new MusicControlRequest(MUSIC_PHONE_REQUEST.MUSIC_REQUEST_PLAY_PAUSE));
-                deviceEventMusicControl.event = GBDeviceEventMusicControl.Event.PLAYPAUSE;
-                break;
-            }
-            case MUSIC_REQUEST_NEXT: {
-                queueWrite(new MusicControlRequest(MUSIC_PHONE_REQUEST.MUSIC_REQUEST_NEXT));
-                deviceEventMusicControl.event = GBDeviceEventMusicControl.Event.NEXT;
-                break;
-            }
-            case MUSIC_REQUEST_PREVIOUS: {
-                queueWrite(new MusicControlRequest(MUSIC_PHONE_REQUEST.MUSIC_REQUEST_PREVIOUS));
-                deviceEventMusicControl.event = GBDeviceEventMusicControl.Event.PREVIOUS;
-                break;
-            }
-            case MUSIC_REQUEST_LOUDER: {
-                queueWrite(new MusicControlRequest(MUSIC_PHONE_REQUEST.MUSIC_REQUEST_LOUDER));
-                deviceEventMusicControl.event = GBDeviceEventMusicControl.Event.VOLUMEUP;
-                break;
-            }
-            case MUSIC_REQUEST_QUITER: {
-                queueWrite(new MusicControlRequest(MUSIC_PHONE_REQUEST.MUSIC_REQUEST_QUITER));
-                deviceEventMusicControl.event = GBDeviceEventMusicControl.Event.VOLUMEDOWN;
-                break;
-            }
-        }
-
-        getDeviceSupport().evaluateGBDeviceEvent(deviceEventMusicControl);
-    }
-
     @Override
     public void setCommuteMenuMessage(String message, boolean finished) {
         queueWrite(new SetCommuteMenuMessage(message, finished, this));
@@ -2110,8 +2168,8 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
 
     public void onSetNavigationInfo(NavigationInfoSpec navigationInfoSpec) {
         SharedPreferences prefs = getDeviceSpecificPreferences();
-        String installedAppsJson = getDeviceSupport().getDevice().getDeviceInfo("INSTALLED_APPS").getDetails();
-        if (installedAppsJson == null || !installedAppsJson.contains("navigationApp")) {
+        ItemWithDetails installedAppsJson = getDeviceSupport().getDevice().getDeviceInfo("INSTALLED_APPS");
+        if (installedAppsJson == null || !installedAppsJson.getDetails().contains("navigationApp")) {
             if (!notifiedAboutMissingNavigationApp) {
                 notifiedAboutMissingNavigationApp = true;
                 NotificationCompat.Builder ncomp = new NotificationCompat.Builder(getContext(), NOTIFICATION_CHANNEL_ID)
@@ -2130,10 +2188,10 @@ public class FossilHRWatchAdapter extends FossilWatchAdapter {
                     .put("push", new JSONObject()
                             .put("set", new JSONObject()
                                     .put("navigationApp._.config.info", new JSONObject()
-                                            .put("distance", navigationInfoSpec.distanceToTurn)
-                                            .put("eta", navigationInfoSpec.ETA)
-                                            .put("instruction", navigationInfoSpec.instruction)
-                                            .put("nextAction", navigationInfoSpec.nextAction)
+                                            .put("distance", navigationInfoSpec.getDistanceToTurn())
+                                            .put("eta", navigationInfoSpec.getETA())
+                                            .put("instruction", navigationInfoSpec.getInstruction())
+                                            .put("nextAction", navigationInfoSpec.getNextAction())
                                             .put("autoFg", prefs.getBoolean("fossil_hr_nav_auto_foreground", true))
                                             .put("vibrate", prefs.getBoolean("fossil_hr_nav_vibrate", true))
                                     )

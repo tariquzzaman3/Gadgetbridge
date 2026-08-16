@@ -23,14 +23,11 @@ import androidx.annotation.NonNull;
 import java.util.List;
 import java.util.Map;
 
-import nodomain.freeyourgadget.gadgetbridge.GBException;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettings;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettingsCustomizer;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSpecificSettingsScreen;
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLClassicDeviceCoordinator;
-import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.BatteryConfig;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
@@ -41,18 +38,13 @@ import nodomain.freeyourgadget.gadgetbridge.service.devices.oppo.commands.TouchC
 
 public abstract class OppoHeadphonesCoordinator extends AbstractBLClassicDeviceCoordinator {
     @Override
-    protected void deleteDevice(@NonNull final GBDevice gbDevice, @NonNull final Device device, @NonNull final DaoSession session) throws GBException {
-
-    }
-
-    @Override
     public String getManufacturer() {
         return "Oppo";
     }
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return OppoHeadphonesSupport.class;
     }
 
@@ -62,12 +54,7 @@ public abstract class OppoHeadphonesCoordinator extends AbstractBLClassicDeviceC
     }
 
     @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_nothingear_disabled;
-    }
-
-    @Override
-    public int getBatteryCount() {
+    public int getBatteryCount(final GBDevice device) {
         return 3;
     }
 
@@ -89,13 +76,61 @@ public abstract class OppoHeadphonesCoordinator extends AbstractBLClassicDeviceC
         settings.addRootScreen(DeviceSpecificSettingsScreen.CALLS_AND_NOTIFICATIONS);
         settings.addSubScreen(DeviceSpecificSettingsScreen.CALLS_AND_NOTIFICATIONS, R.xml.devicesettings_headphones);
 
+        if (this.supportsLdac(device) || this.supportsAnc(device)) {
+            settings.addRootScreen(DeviceSpecificSettingsScreen.AUDIO);
+            if (this.supportsLdac(device)) {
+                settings.addSubScreen(DeviceSpecificSettingsScreen.AUDIO, R.xml.devicesettings_ldac_toggle);
+            }
+            if (this.supportsAnc(device)) {
+                settings.addSubScreen(DeviceSpecificSettingsScreen.AUDIO, R.xml.devicesettings_onemore_noise_control_selector);
+                settings.addSubScreen(DeviceSpecificSettingsScreen.TOUCH_OPTIONS, R.xml.devicesettings_oppo_headphones_touch_options_anc);
+            }
+        }
+
+        if (this.supportsMultipoint(device) || this.supportsGameMode(device)) {
+            settings.addRootScreen(DeviceSpecificSettingsScreen.CONNECTION);
+            if (this.supportsMultipoint(device)) {
+                settings.addSubScreen(DeviceSpecificSettingsScreen.CONNECTION, R.xml.devicesettings_oppo_headphones_multipoint);
+            }
+            if (this.supportsGameMode(device)) {
+                settings.addSubScreen(DeviceSpecificSettingsScreen.CONNECTION, R.xml.devicesettings_oppo_headphones_game_mode);
+            }
+        }
+
         return settings;
     }
 
     @Override
     public DeviceSpecificSettingsCustomizer getDeviceSpecificSettingsCustomizer(final GBDevice device) {
-        return new OppoHeadphonesSettingsCustomizer(getTouchOptions());
+        return new OppoHeadphonesSettingsCustomizer(
+            getTouchOptions(),
+            supportsLdac(device),
+            supportsMultipoint(device),
+            supportsGameMode(device),
+            supportsAnc(device)
+        );
     }
 
     protected abstract Map<Pair<TouchConfigSide, TouchConfigType>, List<TouchConfigValue>> getTouchOptions();
+
+    @Override
+    public final DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.EARBUDS;
+    }
+
+    public boolean supportsLdac(@NonNull GBDevice device) {
+        return false;
+    }
+
+    public boolean supportsMultipoint(@NonNull GBDevice device) {
+        return false;
+    }
+
+    public boolean supportsGameMode(@NonNull GBDevice device) {
+        return false;
+    }
+
+    public boolean supportsAnc(@NonNull GBDevice device) {
+        return false;
+    }
 }

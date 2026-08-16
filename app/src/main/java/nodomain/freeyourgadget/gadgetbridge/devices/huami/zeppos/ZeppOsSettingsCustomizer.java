@@ -25,6 +25,7 @@ import androidx.preference.EditTextPreference;
 import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,9 +54,11 @@ import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
 public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
     private static final Logger LOG = LoggerFactory.getLogger(ZeppOsSettingsCustomizer.class);
+    private final GBDevice device;
 
     public ZeppOsSettingsCustomizer(final GBDevice device, final List<HuamiVibrationPatternNotificationType> vibrationPatternNotificationTypes) {
         super(device, vibrationPatternNotificationTypes);
+        this.device = device;
     }
 
     @Override
@@ -104,7 +107,7 @@ public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
         }
 
         // Hide all config groups that may not be mapped directly to a preference
-        final Map<String, List<String>> configScreens = new HashMap<String, List<String>>() {{
+        final Map<String, List<String>> configScreens = new HashMap<>() {{
             put(DeviceSettingsPreferenceConst.PREF_SCREEN_NIGHT_MODE, Arrays.asList(
                     ZeppOsConfigService.ConfigArg.NIGHT_MODE_MODE.name(),
                     ZeppOsConfigService.ConfigArg.NIGHT_MODE_SCHEDULED_START.name(),
@@ -201,6 +204,15 @@ public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
             );
         }
 
+        // Hide workout detection categories for devices without display (e.g., Helio Strap)
+        final ZeppOsCoordinator coordinator = (ZeppOsCoordinator) device.getDeviceCoordinator();
+        if (!coordinator.supportsWorkoutDetectionCategories()) {
+            final Preference workoutCategoriesPref = handler.findPreference("workout_detection_categories");
+            if (workoutCategoriesPref != null) {
+                workoutCategoriesPref.setVisible(false);
+            }
+        }
+
         // Hides the headers if none of the preferences under them are available
         hidePrefIfNoneVisible(handler, DeviceSettingsPreferenceConst.PREF_HEADER_APPS, Arrays.asList(
                 LoyaltyCardsSettingsConst.PREF_KEY_LOYALTY_CARDS
@@ -229,11 +241,17 @@ public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
                 DeviceSettingsPreferenceConst.PREF_USER_FITNESS_GOAL_NOTIFICATION
         ));
         hidePrefIfNoneVisible(handler, DeviceSettingsPreferenceConst.PREF_HEADER_WORKOUT, Arrays.asList(
-                DeviceSettingsPreferenceConst.PREF_HEADER_GPS,
+                DeviceSettingsPreferenceConst.PREF_SCREEN_GPS,
                 DeviceSettingsPreferenceConst.PREF_WORKOUT_START_ON_PHONE,
                 DeviceSettingsPreferenceConst.PREF_WORKOUT_SEND_GPS_TO_BAND,
                 DeviceSettingsPreferenceConst.PREF_HEADER_WORKOUT_DETECTION,
                 DeviceSettingsPreferenceConst.PREF_WORKOUT_KEEP_SCREEN_ON
+        ));
+        hidePrefIfNoneVisible(handler, DeviceSettingsPreferenceConst.PREF_HEADER_GPS, Arrays.asList(
+                DeviceSettingsPreferenceConst.PREF_GPS_MODE_PRESET,
+                DeviceSettingsPreferenceConst.PREF_GPS_BAND,
+                DeviceSettingsPreferenceConst.PREF_GPS_COMBINATION,
+                DeviceSettingsPreferenceConst.PREF_GPS_SATELLITE_SEARCH
         ));
         hidePrefIfNoneVisible(handler, DeviceSettingsPreferenceConst.PREF_HEADER_AGPS, Arrays.asList(
                 DeviceSettingsPreferenceConst.PREF_AGPS_EXPIRY_REMINDER_ENABLED,
@@ -244,6 +262,28 @@ public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
 
         setupGpsPreference(handler, prefs);
         setupButtonClickPreferences(handler);
+
+        // For devices without display (like Helio Strap): they have continuous HR monitoring by default
+        // Hide the preferences that can't be changed - the actual values come from the device on connection
+        if (!coordinator.hasDisplay()) {
+            // Hide the entire "All-day heart rate monitoring" category (contains only the interval preference)
+            final Preference allDayHrCategory = handler.findPreference("pref_key_header_heartrate_allday");
+            if (allDayHrCategory != null) {
+                allDayHrCategory.setVisible(false);
+            }
+
+            // Hide activity monitoring preference
+            final Preference heartRateActivityMonitoring = handler.findPreference(DeviceSettingsPreferenceConst.PREF_HEARTRATE_ACTIVITY_MONITORING);
+            if (heartRateActivityMonitoring != null) {
+                heartRateActivityMonitoring.setVisible(false);
+            }
+        }
+
+        // Since we populate the values dynamically, we need to sort it here
+        final Preference languagePref = handler.findPreference("language");
+        if (languagePref != null) {
+            DeviceSettingsUtils.sortListPreference((ListPreference) languagePref, true);
+        }
     }
 
     @Override
@@ -322,7 +362,9 @@ public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
             };
 
             handler.addPreferenceHandlerFor(DeviceSettingsPreferenceConst.PREF_GPS_MODE_PRESET, onGpsPresetUpdated);
-            onGpsPresetUpdated.onPreferenceChange(prefGpsPreset, prefGpsPreset.getValue());
+            if (!StringUtils.isBlank(prefGpsPreset.getValue())) {
+                onGpsPresetUpdated.onPreferenceChange(prefGpsPreset, prefGpsPreset.getValue());
+            }
         }
 
         // The gps combination can only be chosen if the gps band is single band
@@ -375,9 +417,9 @@ public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
                 handler.findPreference(DeviceSettingsPreferenceConst.FTP_SERVER_START),
                 handler.findPreference(DeviceSettingsPreferenceConst.FTP_SERVER_STOP),
                 // TODO: These are temporary for debugging and will be removed
-                handler.findPreference("zepp_os_alexa_btn_trigger"),
-                handler.findPreference("zepp_os_alexa_btn_send_simple"),
-                handler.findPreference("zepp_os_alexa_btn_send_complex")
+                handler.findPreference("zepp_os_assistant_btn_trigger"),
+                handler.findPreference("zepp_os_assistant_btn_send_simple"),
+                handler.findPreference("zepp_os_assistant_btn_send_complex")
         );
 
         for (final Preference btn : wifiFtpButtons) {
@@ -403,8 +445,7 @@ public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
         }
 
         for (final String prefKey : supportedPref) {
-            final boolean deviceHasConfig = prefs.getBoolean(DeviceSettingsUtils.getPrefKnownConfig(prefKey), false);
-            if (deviceHasConfig) {
+            if (supportsConfig(prefs, prefKey)) {
                 // This preference is supported, don't hide
                 return;
             }
@@ -412,6 +453,10 @@ public class ZeppOsSettingsCustomizer extends HuamiSettingsCustomizer {
 
         // None of the configs were supported by the device, hide this preference
         pref.setVisible(false);
+    }
+
+    private boolean supportsConfig(final Prefs prefs, final String prefKey) {
+        return prefs.getBoolean(DeviceSettingsUtils.getPrefKnownConfig(prefKey), false);
     }
 
     private void enforceMinMax(final DeviceSpecificSettingsHandler handler, final Prefs prefs, final ZeppOsConfigService.ConfigArg config) {

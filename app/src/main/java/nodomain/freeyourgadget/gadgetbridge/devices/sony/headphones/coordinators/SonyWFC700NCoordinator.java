@@ -16,13 +16,18 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.coordinators;
 
+import androidx.annotation.NonNull;
+
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCapabilities;
 import nodomain.freeyourgadget.gadgetbridge.devices.sony.headphones.SonyHeadphonesCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public class SonyWFC700NCoordinator extends SonyHeadphonesCoordinator {
 
@@ -31,9 +36,10 @@ public class SonyWFC700NCoordinator extends SonyHeadphonesCoordinator {
         return Pattern.compile(".*WF-C700N.*");
     }
 
+    @NonNull
     @Override
-    public List<SonyHeadphonesCapabilities> getCapabilities() {
-        return Arrays.asList(
+    public Set<SonyHeadphonesCapabilities> getDefaultCapabilities() {
+        return new HashSet<>(Arrays.asList(
                 SonyHeadphonesCapabilities.BatteryDual2,
                 SonyHeadphonesCapabilities.BatteryCase,
                 SonyHeadphonesCapabilities.AmbientSoundControl2,
@@ -46,7 +52,7 @@ public class SonyWFC700NCoordinator extends SonyHeadphonesCoordinator {
                 // AutoOff is supported, but current Payload is incorrect.
                 // Available options in Sony App: 15min, 30min, 1h, 3h, off
                 // TODO: SonyHeadphonesCapabilities.AutomaticPowerOffByTime
-        );
+        ));
     }
 
     @Override
@@ -60,7 +66,7 @@ public class SonyWFC700NCoordinator extends SonyHeadphonesCoordinator {
     }
 
     @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_galaxy_buds_disabled;
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.EARBUDS;
     }
 }

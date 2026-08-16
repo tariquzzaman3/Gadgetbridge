@@ -17,6 +17,8 @@
 
 package nodomain.freeyourgadget.gadgetbridge.service.devices.tlw64;
 
+import static org.apache.commons.lang3.math.NumberUtils.min;
+
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.text.format.DateFormat;
@@ -35,7 +37,6 @@ import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.SettingsActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
@@ -49,18 +50,15 @@ import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.DistanceUnit;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceBusyAction;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.serial.GBDeviceProtocol;
 import nodomain.freeyourgadget.gadgetbridge.util.AlarmUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-import static org.apache.commons.lang3.math.NumberUtils.min;
-
-public class TLW64Support extends AbstractBTLEDeviceSupport {
+public class TLW64Support extends AbstractBTLESingleDeviceSupport {
 
     private static final Logger LOG = LoggerFactory.getLogger(TLW64Support.class);
 
@@ -68,7 +66,7 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
     private final GBDeviceEventVersionInfo versionCmd = new GBDeviceEventVersionInfo();
     public BluetoothGattCharacteristic ctrlCharacteristic = null;
     public BluetoothGattCharacteristic notifyCharacteristic = null;
-    private List<TLW64ActivitySample> samples = new ArrayList<>();
+    private final List<TLW64ActivitySample> samples = new ArrayList<>();
     private byte crc = 0;
     private int firstTimestamp = 0;
 
@@ -81,7 +79,7 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
         LOG.info("Initializing");
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         ctrlCharacteristic = getCharacteristic(TLW64Constants.UUID_CHARACTERISTIC_CONTROL);
         notifyCharacteristic = getCharacteristic(TLW64Constants.UUID_CHARACTERISTIC_NOTIFY);
@@ -96,7 +94,7 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
         builder.write(ctrlCharacteristic, new byte[]{TLW64Constants.CMD_BATTERY});
         builder.write(ctrlCharacteristic, new byte[]{TLW64Constants.CMD_FIRMWARE_VERSION});
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
 
         LOG.info("Initialization Done");
 
@@ -109,13 +107,12 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] data) {
+        if (super.onCharacteristicChanged(gatt, characteristic, data)) {
             return true;
         }
 
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
         if (data.length == 0)
             return true;
 
@@ -188,9 +185,9 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
         try {
             TransactionBuilder builder = performInitialized("setTime");
             setTime(builder);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
-            GB.toast(getContext(), "Error setting time: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error setting time: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
@@ -249,7 +246,7 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
                 };
                 builder.write(ctrlCharacteristic, alarmMessage);
             }
-            builder.queue(getQueue());
+            builder.queue();
             if (anyAlarmEnabled) {
                 GB.toast(getContext(), getContext().getString(R.string.user_feedback_miband_set_alarms_ok), Toast.LENGTH_SHORT, GB.INFO);
             } else {
@@ -285,9 +282,9 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
                         TLW64Constants.CMD_FACTORY_RESET,
                 };
                 builder.write(ctrlCharacteristic, msg);
-                builder.queue(getQueue());
+                builder.queue();
             } catch (IOException e) {
-                GB.toast(getContext(), "Error during factory reset: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+                GB.toast(getContext(), "Error during factory reset: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
             }
         }
     }
@@ -313,7 +310,7 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
                     (byte) 0x01
             };
             builder.write(ctrlCharacteristic, msg);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             LOG.warn("Unable to set vibration", e);
         }
@@ -340,8 +337,8 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
                 (byte) 0x00,   // 1 - display distance in kilometers, 2 - in miles
                 (byte) 0x00    // 1 - display 24-hour clock, 2 - for 12-hour with AM/PM
         };
-        String units = GBApplication.getPrefs().getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM, getContext().getString(R.string.p_unit_metric));
-        if (units.equals(getContext().getString(R.string.p_unit_metric))) {
+        final DistanceUnit distanceUnit = GBApplication.getPrefs().getDistanceUnit();
+        if (distanceUnit == DistanceUnit.METRIC) {
             displayBytes[1] = 1;
         } else {
             displayBytes[1] = 2;
@@ -440,9 +437,9 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
                     (byte) iconId
             };
             builder.write(ctrlCharacteristic, msg);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
-            GB.toast(getContext(), "Error showing icon: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error showing icon: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
@@ -468,9 +465,9 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
             msg[1] = (byte) type;
             builder.write(ctrlCharacteristic, msg);
 
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
-            GB.toast(getContext(), "Error showing notificaton: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error showing notificaton: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
@@ -482,7 +479,7 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
                     TLW64Constants.NOTIFICATION_STOP
             };
             builder.write(ctrlCharacteristic, msg);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             LOG.warn("Unable to stop notification", e);
         }
@@ -494,15 +491,15 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
         firstTimestamp = 0;
         try {
             TransactionBuilder builder = performInitialized("fetchActivityData");
-            builder.add(new SetDeviceBusyAction(getDevice(), getContext().getString(R.string.busy_task_fetch_activity_data), getContext()));
+            builder.setBusyTask(R.string.busy_task_fetch_activity_data);
             byte[] msg = new byte[]{
                     type,
                     (byte) 0xfa
             };
             builder.write(ctrlCharacteristic, msg);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
-            GB.toast(getContext(), "Error fetching activity data: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error fetching activity data: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
@@ -547,7 +544,7 @@ public class TLW64Support extends AbstractBTLEDeviceSupport {
                         }
                     }
                 } catch (Exception ex) {
-                    GB.toast(getContext(), "Error saving activity data: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+                    GB.toast(getContext(), "Error saving activity data: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
                     GB.updateTransferNotification(null, "Data transfer failed", false, 0, getContext());
                 }
             }

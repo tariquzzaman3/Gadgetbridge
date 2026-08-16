@@ -1,3 +1,20 @@
+/*  Copyright (C) 2024-2025 Linos Giannopoulos, Thomas Kuehne
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
+
 package nodomain.freeyourgadget.gadgetbridge.service.devices.idasen;
 
 import android.bluetooth.BluetoothGatt;
@@ -18,19 +35,19 @@ import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.devices.idasen.IdasenConstants;
 
-public class IdasenDeviceSupport extends AbstractBTLEDeviceSupport {
+public class IdasenDeviceSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(IdasenDeviceSupport.class);
+    private static final AtomicLong THREAD_COUNTER = new AtomicLong(0L);
 
     public static final String COMMAND_UP = "nodomain.freeyourgadget.gadgetbridge.idasen.command.UP";
     public static final String COMMAND_DOWN = "nodomain.freeyourgadget.gadgetbridge.idasen.command.DOWN";
@@ -94,14 +111,14 @@ public class IdasenDeviceSupport extends AbstractBTLEDeviceSupport {
                         // needs to get from the lowest to the highest point.
                         int cutOff = 100;
                         do {
-                            TransactionBuilder builder = new TransactionBuilder("height");
+                            TransactionBuilder builder = createTransactionBuilder("height");
 
                             builder.write(characteristic, setHeightRequest);
-                            builder.queue(getQueue());
+                            builder.queue();
                             try {
                                 Thread.sleep(300);
                             } catch (InterruptedException e) {
-                                GB.log("error", GB.ERROR, e);
+                                LOG.error("error", e);
                             }
                             cutOff--;
                         } while (deskSpeed != 0F && cutOff != 0);
@@ -109,7 +126,7 @@ public class IdasenDeviceSupport extends AbstractBTLEDeviceSupport {
                         if (cutOff == 0) {
                             LOG.warn("desk controller did not reach the desired height in time");
                         }
-                    }).start();
+                    }, "IdasenDeviceSupport_" + THREAD_COUNTER.getAndIncrement()).start();
                     break;
             }
         }
@@ -122,52 +139,52 @@ public class IdasenDeviceSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public void dispose() {
-        super.dispose();
-        LocalBroadcastManager.getInstance(getContext()).unregisterReceiver(commandReceiver);
+        synchronized (ConnectionMonitor) {
+            super.dispose();
+            LocalBroadcastManager.getInstance(getContext()).unregisterReceiver(commandReceiver);
+        }
     }
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
-        builder.notify(getCharacteristic(IdasenConstants.CHARACTERISTIC_HEIGHT), true);
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
+        builder.notify(IdasenConstants.CHARACTERISTIC_HEIGHT, true);
         sendCommand("dpg", IdasenConstants.CHARACTERISTIC_DPG, IdasenConstants.CMD_DPG_WAKEUP_PREP);
         sendCommand("dpg", IdasenConstants.CHARACTERISTIC_DPG, IdasenConstants.CMD_DPG_WAKEUP);
         sendCommand("dpg", IdasenConstants.CHARACTERISTIC_COMMAND, IdasenConstants.CMD_WAKEUP);
         initBroadcast();
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
         return builder;
     }
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic,
+                                        BluetoothGattCharacteristic characteristic, byte[] value,
                                         int status) {
 
         if (characteristic.getUuid().equals(IdasenConstants.CHARACTERISTIC_HEIGHT)) {
-            getDeskValues(characteristic);
+            getDeskValues(value);
             announceDeskValues();
             return true;
         }
-        return super.onCharacteristicRead(gatt, characteristic, status);
+        return super.onCharacteristicRead(gatt, characteristic, value, status);
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
 
         if (characteristic.getUuid().equals(IdasenConstants.CHARACTERISTIC_HEIGHT)) {
-            getDeskValues(characteristic);
+            getDeskValues(value);
             announceDeskValues();
             return true;
         }
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, value);
     }
 
     private void readCharacteristic(String taskName, UUID charac) {
-        BluetoothGattCharacteristic characteristic = getCharacteristic(charac);
-
-        TransactionBuilder builder = new TransactionBuilder(taskName);
-        builder.read(characteristic);
-        builder.queue(getQueue());
+        TransactionBuilder builder = createTransactionBuilder(taskName);
+        builder.read(charac);
+        builder.queue();
     }
 
     private void initBroadcast() {
@@ -182,8 +199,7 @@ public class IdasenDeviceSupport extends AbstractBTLEDeviceSupport {
         broadcastManager.registerReceiver(commandReceiver, filter);
     }
 
-    private void getDeskValues(BluetoothGattCharacteristic characteristic) {
-        byte[] value = characteristic.getValue();
+    private void getDeskValues(byte[] value) {
         final ByteBuffer buf = ByteBuffer.wrap(value).order(ByteOrder.LITTLE_ENDIAN);
         int hh = BLETypeConversions.toUnsigned(buf.getShort());
         deskHeight = (float) IdasenConstants.MIN_HEIGHT + hh / 10000F;
@@ -198,11 +214,11 @@ public class IdasenDeviceSupport extends AbstractBTLEDeviceSupport {
     }
 
     private void sendCommand(String taskName, UUID charac,  byte[] contents) {
-        TransactionBuilder builder = new TransactionBuilder(taskName);
+        TransactionBuilder builder = createTransactionBuilder(taskName);
         BluetoothGattCharacteristic characteristic = getCharacteristic(charac);
         if (characteristic != null) {
             builder.write(characteristic, contents);
-            builder.queue(getQueue());
+            builder.queue();
         }
     }
 }

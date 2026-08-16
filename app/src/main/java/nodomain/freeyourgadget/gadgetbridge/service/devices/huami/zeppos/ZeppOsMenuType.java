@@ -25,7 +25,7 @@ public class ZeppOsMenuType {
      * These somewhat match the ones in HuamiMenuType, but not all. The band sends and
      * receives those as 8-digit upper case hex strings.
      */
-    public static final Map<String, String> displayItemNameLookup = new HashMap<String, String>() {{
+    public static final Map<String, String> displayItemNameLookup = new HashMap<>() {{
         put("00000001", "personal_activity_intelligence");
         put("00000002", "hr");
         put("00000003", "workout");
@@ -71,12 +71,31 @@ public class ZeppOsMenuType {
         put("0000004B", "map");
         put("0000004C", "zepp_pay");
         put("0000004D", "heart_rate_push");
+        put("00000052", "audio_control");
+        put("00000053", "golf");
+        put("00000056", "bio_charge");
         put("00000100", "alexa");
         put("00000101", "offline_voice");
         put("00000102", "flashlight");
+        put("000FFD39", "hrv");
+        put("000FC452", "bluetooth_scale_assistant");
+        put("000F425B", "calculator");
+        put("000F5D0A", "running_calculator");
+        put("000F4258", "real_time_heart_rate");
+        put("000F4263", "watch_storage_space");
+        put("000F4259", "water_time");
+        put("000F636F", "diary");
+        put("000F63A5", "calorie_intake_record");
+        put("000F653B", "meditation");
+        put("0010132C", "breathing2");
+        put("00100446", "worldclock2");
+        put("00100F0A", "takephoto2");
+        put("0010660A", "zepp_flow");
+        put("0010953E", "zepp_flow2");
+        put("000FFD3C", "jet_lag_manager");
     }};
 
-    public static final Map<String, String> shortcutsNameLookup = new HashMap<String, String>() {{
+    public static final Map<String, String> shortcutsNameLookup = new HashMap<>() {{
         put("00000001", "hr");
         put("00000002", "weather");
         put("00000003", "pai");
@@ -111,10 +130,13 @@ public class ZeppOsMenuType {
         put("00000029", "body_composition");
         put("0000002A", "readiness");
         put("0000002B", "zepp_pay");
+        put("0000002D", "bio_charge");
+        put("00100446", "worldclock2");
+        put("0010132C", "breathing2");
         put("000FFD39", "hrv");
     }};
 
-    public static final Map<String, String> controlCenterNameLookup = new HashMap<String, String>() {{
+    public static final Map<String, String> controlCenterNameLookup = new HashMap<>() {{
         put("00000000", "flashlight");
         put("00000001", "brightness");
         put("00000002", "lockscreen");
@@ -128,6 +150,7 @@ public class ZeppOsMenuType {
         put("0000000A", "bluetooth");
         put("0000000B", "wifi");
         put("0000000D", "calendar");
+        put("00000010", "music");
         put("00000012", "alarm");
         put("00000013", "settings");
         put("00000014", "buzzer_intensity");
@@ -138,5 +161,10 @@ public class ZeppOsMenuType {
         put("00000019", "eject_water");
         put("0000001A", "headphone");
         put("0000001B", "night_display");
+        put("0000001C", "always_on_display");
+        put("0000001E", "flashlight2");
+        put("0000001D", "text_size");
+        put("0000001F", "sos_flashlight");
+        put("00000020", "mute");
     }};
 }

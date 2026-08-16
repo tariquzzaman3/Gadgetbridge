@@ -18,6 +18,10 @@
 package nodomain.freeyourgadget.gadgetbridge.util;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -42,6 +46,8 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
  * Some utility methods for dealing with Alarms.
  */
 public class AlarmUtils {
+    private static final Logger LOG = LoggerFactory.getLogger(AlarmUtils.class);
+
     /**
      * Creates an auto-generated (not user-configurable), non-recurring alarm. This alarm
      * may not be stored in the database. Some features are not available (e.g. device id, user id).
@@ -52,20 +58,19 @@ public class AlarmUtils {
      */
     public static nodomain.freeyourgadget.gadgetbridge.model.Alarm createSingleShot(int index, boolean smartWakeup, boolean snooze, Calendar calendar) {
         // TODO: add interval setting?
-        return new Alarm(-1, -1, index, true, smartWakeup, null, snooze, Alarm.ALARM_ONCE, calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE), false, GBApplication.getContext().getString(R.string.quick_alarm), GBApplication.getContext().getString(R.string.quick_alarm_description));
+        return new Alarm(-1, -1, index, true, smartWakeup, null, snooze, Alarm.ALARM_ONCE, calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE), false, GBApplication.getContext().getString(R.string.quick_alarm), GBApplication.getContext().getString(R.string.quick_alarm_description), 0, true);
     }
 
     /**
      * Creates a default Alarm
-     * @param device
-     * @param position
      */
+    @Nullable
     public static Alarm createDefaultAlarm(GBDevice gbDevice, int position) {
         try (DBHandler db = GBApplication.acquireDB()) {
             DaoSession daoSession = db.getDaoSession();
             return createDefaultAlarm(daoSession, gbDevice, position);
         } catch (Exception e) {
-            GB.log("Error accessing database", GB.ERROR, e);
+            LOG.error("Error accessing database", e);
             return null;
         }
     }
@@ -78,12 +83,12 @@ public class AlarmUtils {
     public static Alarm createDefaultAlarm(DaoSession daoSession, GBDevice gbDevice, int position) {
         Device device = DBHelper.getDevice(gbDevice, daoSession);
         User user = DBHelper.getUser(daoSession);
-        return new Alarm(device.getId(), user.getId(), position, false, false, null, false, 0, 6, 30, false, null, null);
+        return new Alarm(device.getId(), user.getId(), position, false, false, null, false, 0, 6, 30, false, null, null, 0, true);
     }
 
     /**
      * Creates  a Calendar object representing the time of the given alarm (not taking the
-     * day/date into account.
+     * day/date into account).
      * @param alarm
      * @return
      */
@@ -128,6 +133,7 @@ public class AlarmUtils {
      * @deprecated use {@link DBHelper#getAlarms(GBDevice)} instead
      */
     @NonNull
+    @Deprecated
     public static List<Alarm> readAlarmsFromPrefs(GBDevice gbDevice) {
         Prefs prefs = GBApplication.getPrefs();
         Set<String> stringAlarms = prefs.getStringSet(MiBandConst.PREF_MIBAND_ALARMS, new HashSet<String>());
@@ -143,7 +149,7 @@ public class AlarmUtils {
             Collections.sort(alarms, AlarmUtils.createComparator());
             return alarms;
         } catch (Exception e) {
-            GB.log("Error accessing database", GB.ERROR, e);
+            LOG.error("Error accessing database", e);
             return Collections.emptyList();
         }
     }
@@ -157,7 +163,7 @@ public class AlarmUtils {
         int hour = Integer.parseInt(tokens[4]);
         int minute = Integer.parseInt(tokens[5]);
 
-        return new Alarm(device.getId(), user.getId(), index, enabled, smartWakeup, null, false, repetition, hour, minute, false, null, null);
+        return new Alarm(device.getId(), user.getId(), index, enabled, smartWakeup, null, false, repetition, hour, minute, false, null, null, 0, true);
     }
 
     private static Comparator<Alarm> createComparator() {
@@ -175,8 +181,7 @@ public class AlarmUtils {
 
     public static List<Alarm> mergeOneshotToDeviceAlarms(GBDevice gbDevice, Alarm oneshot, int position) {
         List<Alarm> all_alarms = new ArrayList<>();
-        try {
-            DBHandler db = GBApplication.acquireDB();
+        try (DBHandler db = GBApplication.acquireDB()) {
             DaoSession daoSession = db.getDaoSession();
             Device device = DBHelper.getDevice(gbDevice, daoSession);
             User user = DBHelper.getUser(daoSession);
@@ -185,9 +190,8 @@ public class AlarmUtils {
             oneshot.setUserId(user.getId());
             daoSession.insertOrReplace(oneshot);
             all_alarms = DBHelper.getAlarms(gbDevice);
-            GBApplication.releaseDB();
         } catch (Exception e) {
-            GB.log("error storing one shot quick alarm", GB.ERROR, e);
+            LOG.error("error storing one shot quick alarm", e);
         }
         return all_alarms;
     }

@@ -53,6 +53,7 @@ import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.casio.CasioSupport;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
+import nodomain.freeyourgadget.gadgetbridge.util.language.impl.FlattenToAsciiTransliterator;
 
 import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_DISCONNECTNOTIF_NOSHED;
 
@@ -114,10 +115,12 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
 
     @Override
     public void dispose() {
-        LOG.info("Dispose");
-        close();
+        synchronized (ConnectionMonitor) {
+            LOG.info("Dispose");
+            close();
 
-        super.dispose();
+            super.dispose();
+        }
     }
 
     private void close() {
@@ -206,8 +209,8 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
 
         BluetoothGattService llService = mBtGatt.getService(CasioConstants.LINK_LOSS_SERVICE);
         BluetoothGattCharacteristic charact = llService.getCharacteristic(CasioConstants.ALERT_LEVEL_CHARACTERISTIC_UUID);
-        builder.write(charact, value);
-        builder.wait(mCasioSleepTime);
+        builder.writeLegacy(charact, value);
+        builder.sleep(mCasioSleepTime);
     }
 
     private void addCharacteristics() {
@@ -221,7 +224,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
     public boolean enableNotifications(TransactionBuilder builder, boolean enable) {
         for(BluetoothGattCharacteristic charact : mCasioCharacteristics) {
             builder.notify(charact, enable);
-            builder.wait(mCasioSleepTime);
+            builder.sleep(mCasioSleepTime);
         }
         return true;
     }
@@ -229,8 +232,8 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
     public void readTxPowerLevel() {
         try {
             TransactionBuilder builder = performInitialized("readTxPowerLevel");
-            builder.read(getCharacteristic(CasioConstants.TX_POWER_LEVEL_CHARACTERISTIC_UUID));
-            builder.queue(getQueue());
+            builder.read(CasioConstants.TX_POWER_LEVEL_CHARACTERISTIC_UUID);
+            builder.queue();
         } catch (IOException e) {
             LOG.warn("readTxPowerLevel failed: " + e.getMessage());
         }
@@ -242,7 +245,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
         BluetoothGattCharacteristic charact = getCharacteristic(CasioConstants.CURRENT_TIME_CHARACTERISTIC_UUID);
         if(charact != null) {
             charact.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-            builder.write(charact, arr);
+            builder.writeLegacy(charact, arr);
         }
         else {
             LOG.warn("Characteristic not found: CURRENT_TIME_CHARACTERISTIC_UUID");
@@ -257,7 +260,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
         byte byte1 = (byte)(dstOffset / 15);
         BluetoothGattCharacteristic charact = getCharacteristic(CasioConstants.LOCAL_TIME_CHARACTERISTIC_UUID);
         if(charact != null) {
-            builder.write(charact, new byte[]{byte0, byte1});
+            builder.writeLegacy(charact, new byte[]{byte0, byte1});
         }
         else {
             LOG.warn("Characteristic not found: LOCAL_TIME_CHARACTERISTIC_UUID");
@@ -274,7 +277,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
 
         BluetoothGattCharacteristic charact = getCharacteristic(CasioConstants.CASIO_VIRTUAL_SERVER_FEATURES);
         if(charact != null) {
-            builder.write(charact, new byte[]{byte0, 0x00});
+            builder.writeLegacy(charact, new byte[]{byte0, 0x00});
         }
         else {
             LOG.warn("Characteristic not found: CASIO_VIRTUAL_SERVER_FEATURES");
@@ -294,14 +297,12 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
                 }
                 mHandlerThread = new CasioGB6900HandlerThread(getDevice(), getContext(), this);
                 mHandlerThread.start();
-                gbDevice.setState(GBDevice.State.INITIALIZED);
-                gbDevice.sendDeviceUpdateIntent(getContext());
+                gbDevice.setUpdateState(GBDevice.State.INITIALIZED, getContext());
                 handled = true;
                 break;
             default:
                 LOG.warn("handleInitResponse: Error initializing device, received unexpected value: " + data);
-                gbDevice.setState(GBDevice.State.NOT_CONNECTED);
-                gbDevice.sendDeviceUpdateIntent(getContext());
+                gbDevice.setUpdateState(GBDevice.State.NOT_CONNECTED, getContext());
                 handled = true;
                 break;
         }
@@ -317,7 +318,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
                 {
                     TransactionBuilder builder = createTransactionBuilder("writeCasioCurrentTime");
                     writeCasioCurrentTime(builder);
-                    performConnected(builder.getTransaction());
+                    builder.queueConnected();
                     handled = true;
                 } catch (IOException e) {
                     LOG.warn("handleTimeRequests::writeCasioCurrentTime failed: " + e.getMessage());
@@ -328,7 +329,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
                 {
                     TransactionBuilder builder = createTransactionBuilder("writeCasioLocalTimeInformation");
                     writeCasioLocalTimeInformation(builder);
-                    performConnected(builder.getTransaction());
+                    builder.queueConnected();
                     handled = true;
                 } catch (IOException e) {
                     LOG.warn("handleTimeRequests::writeCasioLocalTimeInformation failed: " + e.getMessage());
@@ -343,7 +344,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
         {
             TransactionBuilder builder = createTransactionBuilder("writeCasioVirtualServerFeature");
             writeCasioVirtualServerFeature(builder);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             LOG.warn("handleServerFeatureRequests failed: " + e.getMessage());
         }
@@ -379,10 +380,10 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic, int status) {
+                                        BluetoothGattCharacteristic characteristic, byte[] data,
+                                        int status) {
 
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
 
         if(data.length == 0)
             return true;
@@ -395,7 +396,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
             LOG.info(str.toString());
         }
         else {
-            return super.onCharacteristicRead(gatt, characteristic, status);
+            return super.onCharacteristicRead(gatt, characteristic, data, status);
         }
 
         return true;
@@ -403,11 +404,11 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] data) {
         boolean handled = false;
 
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
         if (data.length == 0)
             return true;
 
@@ -443,7 +444,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
 
         if(!handled) {
             LOG.info("Unhandled characteristic change: " + characteristicUUID + " code: " + String.format("0x%1x ...", data[0]));
-            return super.onCharacteristicChanged(gatt, characteristic);
+            return super.onCharacteristicChanged(gatt, characteristic, data);
         }
         return true;
     }
@@ -453,18 +454,17 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
             return;
         try {
             TransactionBuilder builder = performInitialized("showNotification");
-            int len;
 
-            byte[] titleBytes = title.getBytes(StandardCharsets.US_ASCII);
-            len = titleBytes.length > 18 ? 18 : titleBytes.length;
+            final byte[] titleBytes = FlattenToAsciiTransliterator.flatten(title).getBytes(StandardCharsets.US_ASCII);
+            final int len = Math.min(titleBytes.length, 18);
             byte[] msg = new byte[2 + len];
             msg[0] = icon;
             msg[1] = 1;
             System.arraycopy(titleBytes, 0, msg, 2, len);
 
-            builder.write(getCharacteristic(CasioConstants.ALERT_CHARACTERISTIC_UUID), msg);
-            LOG.info("Showing notification, title: " + title + " message (not sent): " + message);
-            builder.queue(getQueue());
+            builder.writeLegacy(getCharacteristic(CasioConstants.ALERT_CHARACTERISTIC_UUID), msg);
+            LOG.info("Showing notification, title: {} message (not sent): {}", title, message);
+            builder.queue();
         } catch (IOException e) {
             LOG.warn("showNotification failed: " + e.getMessage());
         }
@@ -512,7 +512,7 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
             TransactionBuilder builder = performInitialized("SetTime");
             writeCasioLocalTimeInformation(builder);
             writeCasioCurrentTime(builder);
-            builder.queue(getQueue());
+            builder.queue();
         } catch(IOException e) {
             LOG.warn("onSetTime failed: " + e.getMessage());
         }
@@ -563,8 +563,8 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
             arr[1] = 10;
             arr[2] = 1;
             System.arraycopy(bInfo, 0, arr, 3, len);
-            builder.write(getCharacteristic(CasioConstants.MORE_ALERT_FOR_LONG_UUID), arr);
-            builder.queue(getQueue());
+            builder.writeLegacy(getCharacteristic(CasioConstants.MORE_ALERT_FOR_LONG_UUID), arr);
+            builder.queue();
         } catch (IOException e) {
             LOG.warn("sendMusicInfo failed: " + e.getMessage());
         }
@@ -596,9 +596,9 @@ public class CasioGB6900DeviceSupport extends CasioSupport {
 
                 BluetoothGattService service = mBtGatt.getService(CasioConstants.IMMEDIATE_ALERT_SERVICE_UUID);
                 BluetoothGattCharacteristic charact = service.getCharacteristic(CasioConstants.ALERT_LEVEL_CHARACTERISTIC_UUID);
-                builder.write(charact, value);
+                builder.writeLegacy(charact, value);
                 LOG.info("onFindDevice sent");
-                builder.queue(getQueue());
+                builder.queue();
             } catch (IOException e) {
                 LOG.warn("showNotification failed: " + e.getMessage());
             }

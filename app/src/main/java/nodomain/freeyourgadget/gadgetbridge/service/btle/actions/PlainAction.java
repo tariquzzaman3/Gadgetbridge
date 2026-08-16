@@ -1,4 +1,4 @@
-/*  Copyright (C) 2015-2024 Carsten Pfeiffer
+/*  Copyright (C) 2015-2026 Carsten Pfeiffer
 
     This file is part of Gadgetbridge.
 
@@ -16,11 +16,14 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.btle.actions;
 
+import androidx.annotation.NonNull;
+
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BtLEAction;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCharacteristic;
 
 /**
  * An abstract non-BTLE action. It performs no bluetooth operation,
- * does not have a BluetoothGattCharacteristic instance and expects no result.
+ * does not have a {@link GattCharacteristic} instance and expects no result.
  */
 public abstract class PlainAction extends BtLEAction {
 
@@ -33,8 +36,9 @@ public abstract class PlainAction extends BtLEAction {
         return false;
     }
 
+    @NonNull
     @Override
     public String toString() {
-        return getCreationTime() + ": " + getClass().getSimpleName();
+        return getCreationTime() + " " + getClass().getSimpleName();
     }
 }

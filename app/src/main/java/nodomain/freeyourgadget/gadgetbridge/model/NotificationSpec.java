@@ -24,9 +24,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class NotificationSpec {
     public int flags;
     private static final AtomicInteger c = new AtomicInteger((int) (System.currentTimeMillis()/1000));
-    private int id;
+    private final int id;
     public String key;
-    public long when;
+    public final long when;
     public String sender;
     public String phoneNumber;
     public String title;
@@ -34,6 +34,8 @@ public class NotificationSpec {
     public String body;
     public NotificationType type;
     public String sourceName;
+    public String channelId;
+    public String category;
     public String[] cannedReplies;
     /**
      * Wearable actions that were attached to the incoming notifications and will be passed to the gadget (includes the "reply" action)
@@ -48,11 +50,12 @@ public class NotificationSpec {
      */
     public int iconId;
 
-    public String picturePath;
     /**
-     * The color that should be assigned to this notification when displayed on a Pebble
+     * The package that owns the notification icon resource.
      */
-    public byte pebbleColor;
+    public String iconPackageId;
+
+    public String picturePath;
 
     public int dndSuppressed;
 
@@ -61,11 +64,15 @@ public class NotificationSpec {
     }
 
     public NotificationSpec(int id) {
+        this(id, System.currentTimeMillis());
+    }
+
+    public NotificationSpec(int id, long when) {
         if (id != -1)
             this.id = id;
         else
             this.id = c.incrementAndGet();
-        this.when = System.currentTimeMillis();
+        this.when = when;
     }
 
     public int getId() {
@@ -81,9 +88,15 @@ public class NotificationSpec {
         public static final int TYPE_SYNTECTIC_DISMISS_ALL = 4;
         public static final int TYPE_SYNTECTIC_MUTE = 5;
         public static final int TYPE_SYNTECTIC_OPEN = 6;
+        public static final int TYPE_CUSTOM_SIMPLE = 7;
+        public static final int TYPE_CUSTOM_REPLY = 8;
 
         public int type = TYPE_UNDEFINED;
         public long handle;
         public String title;
+
+        public boolean isReply() {
+            return type == TYPE_WEARABLE_REPLY || type == TYPE_SYNTECTIC_REPLY_PHONENR || type == TYPE_CUSTOM_REPLY;
+        }
     }
 }

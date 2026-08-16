@@ -46,6 +46,8 @@ public class CasioGB6900HandlerThread extends GBDeviceIoThread {
 
     @Override
     public void run() {
+        LOG.debug("started thread {} for {}", getName(), gbDevice.getAddress());
+
         mQuit = false;
 
         long waitTime = TX_PERIOD * 1000;
@@ -56,7 +58,7 @@ public class CasioGB6900HandlerThread extends GBDeviceIoThread {
                     try {
                         waitObject.wait(waitTime);
                     } catch (InterruptedException e) {
-                        e.printStackTrace();
+                        LOG.warn("exception in run", e);
                     }
                 }
             }
@@ -81,7 +83,7 @@ public class CasioGB6900HandlerThread extends GBDeviceIoThread {
             now = GregorianCalendar.getInstance();
             waitTime = mTxTime.getTimeInMillis() - now.getTimeInMillis();
         }
-
+        LOG.debug("finished thread {}", getName());
     }
 
     public void requestTxPowerLevel() {

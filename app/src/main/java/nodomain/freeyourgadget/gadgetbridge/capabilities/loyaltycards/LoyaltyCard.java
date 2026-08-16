@@ -16,12 +16,14 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.capabilities.loyaltycards;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.apache.commons.lang3.builder.CompareToBuilder;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.nio.charset.Charset;
 import java.util.Currency;
 import java.util.Date;
 import java.util.Locale;
@@ -45,6 +47,8 @@ public class LoyaltyCard implements Serializable, Comparable<LoyaltyCard> {
     @Nullable
     private final Integer color;
 
+    private final String barcodeEncoding;
+
     private final boolean starred;
     private final boolean archived;
     private final long lastUsed;
@@ -58,6 +62,7 @@ public class LoyaltyCard implements Serializable, Comparable<LoyaltyCard> {
                        final String cardId,
                        @Nullable final String barcodeId,
                        @Nullable final BarcodeFormat barcodeFormat,
+                       final String barcodeEncoding,
                        @Nullable final Integer color,
                        final boolean starred,
                        final boolean archived,
@@ -71,6 +76,7 @@ public class LoyaltyCard implements Serializable, Comparable<LoyaltyCard> {
         this.cardId = cardId;
         this.barcodeId = barcodeId;
         this.barcodeFormat = barcodeFormat;
+        this.barcodeEncoding = barcodeEncoding;
         this.color = color;
         this.starred = starred;
         this.archived = archived;
@@ -115,6 +121,10 @@ public class LoyaltyCard implements Serializable, Comparable<LoyaltyCard> {
         return barcodeFormat;
     }
 
+    public Charset getBarcodeEncoding() {
+        return Charset.forName(barcodeEncoding);
+    }
+
     @Nullable
     public Integer getColor() {
         return color;
@@ -132,6 +142,7 @@ public class LoyaltyCard implements Serializable, Comparable<LoyaltyCard> {
         return lastUsed;
     }
 
+    @NonNull
     @Override
     public String toString() {
         return String.format(
@@ -139,6 +150,25 @@ public class LoyaltyCard implements Serializable, Comparable<LoyaltyCard> {
                 "LoyaltyCard{id=%s, name=%s, cardId=%s}",
                 id, name, cardId
         );
+    }
+
+    public String toStringFull() {
+        return "LoyaltyCard{" +
+                "id=" + id +
+                ", name='" + name + '\'' +
+                ", note='" + note + '\'' +
+                ", expiry=" + expiry +
+                ", balance=" + balance +
+                ", balanceType=" + balanceType +
+                ", cardId='" + cardId + '\'' +
+                ", barcodeId='" + barcodeId + '\'' +
+                ", barcodeFormat=" + barcodeFormat +
+                ", color=" + color +
+                ", barcodeEncoding='" + barcodeEncoding + '\'' +
+                ", starred=" + starred +
+                ", archived=" + archived +
+                ", lastUsed=" + lastUsed +
+                '}';
     }
 
     @Override

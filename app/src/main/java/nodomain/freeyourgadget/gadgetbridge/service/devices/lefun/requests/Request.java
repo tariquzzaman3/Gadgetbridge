@@ -63,11 +63,9 @@ public abstract class Request extends AbstractBTLEOperation<LefunDeviceSupport> 
 
     @Override
     protected void doPerform() throws IOException {
-        BluetoothGattCharacteristic characteristic = getSupport()
-                .getCharacteristic(LefunConstants.UUID_CHARACTERISTIC_LEFUN_WRITE);
-        builder.write(characteristic, createRequest());
+        builder.write(LefunConstants.UUID_CHARACTERISTIC_LEFUN_WRITE, createRequest());
         if (isSelfQueue())
-            getSupport().performConnected(builder.getTransaction());
+            builder.queueConnected();
     }
 
     /**
@@ -91,6 +89,7 @@ public abstract class Request extends AbstractBTLEOperation<LefunDeviceSupport> 
      *
      * @return the class name
      */
+    @Override
     public String getName() {
         Class thisClass = getClass();
         while (thisClass.isAnonymousClass()) thisClass = thisClass.getSuperclass();

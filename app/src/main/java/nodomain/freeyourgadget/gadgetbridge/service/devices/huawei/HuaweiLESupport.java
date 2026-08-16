@@ -1,4 +1,4 @@
-/*  Copyright (C) 2024 Damien Gaignon, Martin.JM
+/*  Copyright (C) 2024-2026 Damien Gaignon, Martin.JM
 
     This file is part of Gadgetbridge.
 
@@ -22,7 +22,11 @@ import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.Context;
 import android.location.Location;
 import android.net.Uri;
+import android.os.Bundle;
 
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,19 +37,19 @@ import java.util.UUID;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventCameraRemote;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiConstants;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceMusic;
 import nodomain.freeyourgadget.gadgetbridge.model.CalendarEventSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.CannedMessagesSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.Contact;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
+import nodomain.freeyourgadget.gadgetbridge.model.NavigationInfoSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 
-public class HuaweiLESupport extends AbstractBTLEDeviceSupport {
+public class HuaweiLESupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(HuaweiLESupport.class);
 
     private final HuaweiSupportProvider supportProvider;
@@ -57,13 +61,14 @@ public class HuaweiLESupport extends AbstractBTLEDeviceSupport {
         addSupportedService(GattService.UUID_SERVICE_DEVICE_INFORMATION);
         addSupportedService(GattService.UUID_SERVICE_HUMAN_INTERFACE_DEVICE);
         addSupportedService(HuaweiConstants.UUID_SERVICE_HUAWEI_SERVICE);
+        addSupportedService(HuaweiConstants.UUID_SERVICE_HONOR_SERVICE);
         supportProvider = new HuaweiSupportProvider(this);
     }
 
     @Override
     public void setContext(GBDevice gbDevice, BluetoothAdapter btAdapter, Context context) {
         super.setContext(gbDevice, btAdapter, context);
-        supportProvider.setContext(context);
+        supportProvider.setContext(gbDevice, context);
     }
 
     @Override
@@ -78,8 +83,8 @@ public class HuaweiLESupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-        supportProvider.onCharacteristicChanged(characteristic);
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] data) {
+        supportProvider.onCharacteristicChanged(characteristic, data);
         return true;
     }
 
@@ -106,6 +111,11 @@ public class HuaweiLESupport extends AbstractBTLEDeviceSupport {
     @Override
     public void onNotification(NotificationSpec notificationSpec) {
         supportProvider.onNotification(notificationSpec);
+    }
+
+    @Override
+    public void onDeleteNotification(int id) {
+        supportProvider.onDeleteNotification(id);
     }
 
     @Override
@@ -145,8 +155,8 @@ public class HuaweiLESupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
-    public void onSendWeather(ArrayList<WeatherSpec> weatherSpecs) {
-        supportProvider.onSendWeather(weatherSpecs);
+    public void onSendWeather() {
+        supportProvider.onSendWeather();
     }
 
     @Override
@@ -155,8 +165,8 @@ public class HuaweiLESupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
-    public void onInstallApp(Uri uri) {
-        supportProvider.onInstallApp(uri);
+    public void onInstallApp(Uri uri, @NonNull final Bundle options) {
+        supportProvider.onInstallApp(uri, options);
     }
 
     @Override
@@ -198,11 +208,14 @@ public class HuaweiLESupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public void dispose() {
-        supportProvider.dispose();
-        super.dispose();
+        synchronized (ConnectionMonitor) {
+            supportProvider.dispose();
+            super.dispose();
+        }
     }
 
-    public void onTestNewFunction() {
+    @Override
+    public void onTestNewFunction(@Nullable Bundle options) {
         supportProvider.onTestNewFunction();
     }
 
@@ -224,5 +237,20 @@ public class HuaweiLESupport extends AbstractBTLEDeviceSupport {
     @Override
     public void onMusicOperation(int operation, int playlistIndex, String playlistName, ArrayList<Integer> musicIds) {
         supportProvider.onMusicOperation(operation, playlistIndex, playlistName, musicIds);
+    }
+
+    @Override
+    public void onSetCannedMessages(final CannedMessagesSpec cannedMessagesSpec) {
+        supportProvider.onSetCannedMessages(cannedMessagesSpec);
+    }
+
+    @Override
+    public void onFindDevice(boolean start) {
+        supportProvider.onFindDevice(start);
+    }
+
+    @Override
+    public void onSetNavigationInfo(NavigationInfoSpec navigationInfoSpec) {
+        supportProvider.onSetNavigationInfo(navigationInfoSpec);
     }
 }

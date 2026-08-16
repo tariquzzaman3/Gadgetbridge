@@ -1,12 +1,29 @@
+/*  Copyright (C) 2024 Me7c7
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.activities.charts;
 
 import android.graphics.Color;
-import android.os.Build;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
+
+import androidx.core.content.ContextCompat;
 
 import com.github.mikephil.charting.charts.Chart;
 import com.github.mikephil.charting.charts.LineChart;
@@ -29,12 +46,12 @@ import java.util.Locale;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.HeartRateUtils;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.TimeSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.TemperatureSample;
+import nodomain.freeyourgadget.gadgetbridge.model.TemperatureUnit;
 import nodomain.freeyourgadget.gadgetbridge.util.Accumulator;
 
 public class TemperatureDailyFragment extends AbstractChartFragment<TemperatureDailyFragment.TemperatureChartData> {
@@ -53,16 +70,15 @@ public class TemperatureDailyFragment extends AbstractChartFragment<TemperatureD
     private TextView tempMaximum;
     private LineChart tempLineChart;
 
+    private final TemperatureUnit temperatureUnit = GBApplication.getPrefs().getTemperatureUnit();
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View rootView = inflater.inflate(R.layout.fragment_temperature, container, false);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            rootView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-                getChartsHost().enableSwipeRefresh(scrollY == 0);
-            });
-        }
+        rootView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+            getChartsHost().enableSwipeRefresh(scrollY == 0);
+        });
 
         dateView = rootView.findViewById(R.id.temp_date_view);
         tempLineChart = rootView.findViewById(R.id.temp_line_chart);
@@ -86,7 +102,7 @@ public class TemperatureDailyFragment extends AbstractChartFragment<TemperatureD
     protected void init() {
         CHART_TEXT_COLOR = GBApplication.getSecondaryTextColor(requireContext());
         DESCRIPTION_COLOR = LEGEND_TEXT_COLOR = GBApplication.getTextColor(requireContext());
-        TEMPERATURE_COLOR = GBApplication.getSecondaryTextColor(requireContext());
+        TEMPERATURE_COLOR = ContextCompat.getColor(requireContext(), R.color.chart_temperature);
     }
 
     @Override
@@ -124,21 +140,25 @@ public class TemperatureDailyFragment extends AbstractChartFragment<TemperatureD
         x.setAxisMinimum(0f);
         x.setAxisMaximum(86400f);
 
+        final boolean isMetric = temperatureUnit == TemperatureUnit.CELSIUS;
+        final float defaultAxisMinimum = isMetric ? 30f : celsiusToFahrenheit(30f);
+        final float defaultAxisMaximum = isMetric ? 45f : celsiusToFahrenheit(45f);
+
         YAxis y = tempLineChart.getAxisLeft();
         y.setDrawGridLines(false);
         y.setDrawTopYLabelEntry(true);
         y.setTextColor(CHART_TEXT_COLOR);
         y.setEnabled(true);
-        y.setAxisMaximum(HeartRateUtils.getInstance().getMaxHeartRate());
-        y.setAxisMinimum(HeartRateUtils.getInstance().getMinHeartRate());
+        y.setAxisMaximum(defaultAxisMaximum);
+        y.setAxisMinimum(defaultAxisMinimum);
 
         YAxis yAxisRight = tempLineChart.getAxisRight();
         yAxisRight.setDrawGridLines(false);
         yAxisRight.setDrawLabels(true);
         yAxisRight.setDrawTopYLabelEntry(true);
         yAxisRight.setTextColor(CHART_TEXT_COLOR);
-        yAxisRight.setAxisMaximum(HeartRateUtils.getInstance().getMaxHeartRate());
-        yAxisRight.setAxisMinimum(HeartRateUtils.getInstance().getMinHeartRate());
+        yAxisRight.setAxisMaximum(defaultAxisMaximum);
+        yAxisRight.setAxisMinimum(defaultAxisMinimum);
 
         refresh();
     }
@@ -177,11 +197,14 @@ public class TemperatureDailyFragment extends AbstractChartFragment<TemperatureD
         for (int i =0; i < samples.size(); i++) {
             TemperatureSample sample = samples.get(i);
             int timestamp_in_seconds = (int) (sample.getTimestamp() / 1000L);
-            lineEntries.add(new Entry(tsTranslation.shorten(timestamp_in_seconds), sample.getTemperature()));
-            accumulator.add(sample.getTemperature());
+            final float temperatureValue = temperatureUnit == TemperatureUnit.CELSIUS ?
+                    sample.getTemperature() :
+                    (float) ((sample.getTemperature() * 1.8) + 32);
+            lineEntries.add(new Entry(tsTranslation.shorten(timestamp_in_seconds), temperatureValue));
+            accumulator.add(temperatureValue);
         }
 
-        LineDataSet dataSet = new LineDataSet(lineEntries, "Heart Rate");
+        LineDataSet dataSet = new LineDataSet(lineEntries, "Temperature");
         dataSet.setLineWidth(1.5f);
         dataSet.setMode(LineDataSet.Mode.HORIZONTAL_BEZIER);
         dataSet.setCubicIntensity(0.1f);
@@ -195,18 +218,20 @@ public class TemperatureDailyFragment extends AbstractChartFragment<TemperatureD
         final double minimum = accumulator.getCount() > 0 ? accumulator.getMin() : -1;
         final double maximum = accumulator.getCount() > 0 ? accumulator.getMax() : -1;
 
-        tempAverage.setText(average > 0 ? String.format(Locale.ROOT, "%.1f", average) : "-");
-        tempMinimum.setText(minimum > 0 ? String.format(Locale.ROOT, "%.1f", minimum) : "-");
-        tempMaximum.setText(maximum > 0 ? String.format(Locale.ROOT, "%.1f", maximum) : "-");
+        final String unit = getString(temperatureUnit == TemperatureUnit.CELSIUS ? R.string.unit_celsius : R.string.unit_fahrenheit);
+        tempAverage.setText(average > 0 ? String.format(Locale.ROOT, "%.1f %s", average, unit) : "-");
+        tempMinimum.setText(minimum > 0 ? String.format(Locale.ROOT, "%.1f %s", minimum, unit) : "-");
+        tempMaximum.setText(maximum > 0 ? String.format(Locale.ROOT, "%.1f %s", maximum, unit) : "-");
 
+        final int axisGap = (temperatureUnit == TemperatureUnit.CELSIUS ? 3 : 6);
         if (minimum > 0) {
-            long axisMin = Math.max(Math.round(minimum) - 3, 0);
+            long axisMin = Math.max(Math.round(minimum) - axisGap, 0);
             tempLineChart.getAxisLeft().setAxisMinimum(axisMin);
             tempLineChart.getAxisRight().setAxisMinimum(axisMin);
         }
         if (maximum > 0) {
-            tempLineChart.getAxisLeft().setAxisMaximum(Math.round(maximum) + 3);
-            tempLineChart.getAxisRight().setAxisMaximum(Math.round(maximum) + 3);
+            tempLineChart.getAxisLeft().setAxisMaximum(Math.round(maximum) + axisGap);
+            tempLineChart.getAxisRight().setAxisMaximum(Math.round(maximum) + axisGap);
         }
 
         tempLineChart.getXAxis().setValueFormatter(new SampleXLabelFormatter(tsTranslation, "HH:mm"));
@@ -222,6 +247,10 @@ public class TemperatureDailyFragment extends AbstractChartFragment<TemperatureD
             tempLineChart.getAxisLeft().addLimitLine(averageLine);
         }
 
+    }
+
+    public static float celsiusToFahrenheit(final float celsius) {
+        return ((celsius * (9f/5f)) + 32f);
     }
 
     protected static class TemperatureChartData extends ChartsData {

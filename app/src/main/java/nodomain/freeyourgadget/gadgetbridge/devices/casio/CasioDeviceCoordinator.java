@@ -26,8 +26,7 @@ import android.os.ParcelUuid;
 import androidx.annotation.NonNull;
 
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLEDeviceCoordinator;
-
-import nodomain.freeyourgadget.gadgetbridge.devices.casio.CasioConstants;
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 
 public abstract class CasioDeviceCoordinator extends AbstractBLEDeviceCoordinator {
     @NonNull
@@ -41,5 +40,15 @@ public abstract class CasioDeviceCoordinator extends AbstractBLEDeviceCoordinato
     @Override
     public String getManufacturer() {
         return "Casio";
+    }
+
+    @Override
+    public DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceKind.WATCH;
+    }
+
+    @Override
+    public boolean supportsConnectionPriority() {
+        return false;
     }
 }

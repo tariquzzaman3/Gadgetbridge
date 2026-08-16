@@ -1,4 +1,22 @@
+/*  Copyright (C) 2024 Me7c7
+
+    This file is part of Gadgetbridge.
+
+    Gadgetbridge is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Gadgetbridge is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.huawei;
+
+import androidx.annotation.NonNull;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,6 +30,7 @@ public class HuaweiMusicUtils {
         public short count = 0;
         public byte[] hashCode = null;
 
+        @NonNull
         @Override
         public String toString() {
             final StringBuffer sb = new StringBuffer("PageStruct{");
@@ -46,6 +65,7 @@ public class HuaweiMusicUtils {
             return (formatIdx >= 0 && formatIdx < formats.length)?formats[formatIdx]:null;
         }
 
+        @NonNull
         @Override
         public String toString() {
             final StringBuffer sb = new StringBuffer("FormatRestrictions{");
@@ -69,6 +89,7 @@ public class HuaweiMusicUtils {
         public int unknown = 0; // TODO: not sure
         public List<FormatRestrictions> formatsRestrictions = null;
 
+        @NonNull
         @Override
         public String toString() {
             final StringBuffer sb = new StringBuffer("MusicCapabilities{");

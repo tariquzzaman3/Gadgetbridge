@@ -42,10 +42,9 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
@@ -54,6 +53,7 @@ import nodomain.freeyourgadget.gadgetbridge.activities.DashboardFragment;
 import nodomain.freeyourgadget.gadgetbridge.activities.HeartRateUtils;
 import nodomain.freeyourgadget.gadgetbridge.activities.charts.StepAnalysis;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
+import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummary;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
@@ -93,6 +93,11 @@ public class DashboardTodayWidget extends AbstractDashboardWidget {
         args.putSerializable(ARG_DASHBOARD_DATA, dashboardData);
         fragment.setArguments(args);
         return fragment;
+    }
+
+    @Override
+    protected boolean isSupportedBy(final GBDevice device) {
+        return device.getDeviceCoordinator().supportsActivityTracking(device);
     }
 
     @Override
@@ -143,6 +148,7 @@ public class DashboardTodayWidget extends AbstractDashboardWidget {
         Prefs prefs = GBApplication.getPrefs();
         boolean upsideDown24h = prefs.getBoolean("dashboard_widget_today_24h_upside_down", false);
         boolean showYesterday = prefs.getBoolean("dashboard_widget_today_show_yesterday", false);
+        boolean dimYesterday = prefs.getBoolean("dashboard_widget_today_dim_yesterday", true);
 
         // Prepare circular chart
         long currentDayStart = dashboardData.timeTo - 86400;
@@ -179,11 +185,11 @@ public class DashboardTodayWidget extends AbstractDashboardWidget {
         boolean normalClock = DateFormat.is24HourFormat(GBApplication.getContext());
         Map<Integer, String> hours = new HashMap<Integer, String>() {
             {
-                put(0, normalClock ? (mode_24h ? "0" : "12") : "12pm");
+                put(0, normalClock ? (mode_24h ? "0" : "12") : (mode_24h ? "12am" : "12pm"));
                 put(3, "3");
                 put(6, normalClock ? "6" : "6am");
                 put(9, "9");
-                put(12, normalClock ? (mode_24h ? "12" : "0") : "12am");
+                put(12, normalClock ? (mode_24h ? "12" : "0") : (mode_24h ? "12pm" : "12am"));
                 put(15, normalClock ? "15" : "3");
                 put(18, normalClock ? "18" : "6pm");
                 put(21, normalClock ? "21" : "9");
@@ -271,56 +277,56 @@ public class DashboardTodayWidget extends AbstractDashboardWidget {
                 if (activity.activityKind == ActivityKind.NOT_MEASURED) {
                     paint.setStrokeWidth(barWidth / 3f);
                     paint.setColor(color_worn);
-                    if (showYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
+                    if (showYesterday && dimYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
                         paint.setAlpha(64);
                     }
                     canvas.drawArc(margin, margin, width - margin, height - margin, start_angle, sweep_angle, false, paint);
                 } else if (activity.activityKind == ActivityKind.NOT_WORN) {
                     paint.setStrokeWidth(barWidth / 3f);
                     paint.setColor(color_not_worn);
-                    if (showYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
+                    if (showYesterday && dimYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
                         paint.setAlpha(64);
                     }
                     canvas.drawArc(margin, margin, width - margin, height - margin, start_angle, sweep_angle, false, paint);
                 } else if (activity.activityKind == ActivityKind.LIGHT_SLEEP || activity.activityKind == ActivityKind.SLEEP_ANY) {
                     paint.setStrokeWidth(barWidth);
                     paint.setColor(color_light_sleep);
-                    if (showYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
+                    if (showYesterday && dimYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
                         paint.setAlpha(64);
                     }
                     canvas.drawArc(margin, margin, width - margin, height - margin, start_angle, sweep_angle, false, paint);
                 } else if (activity.activityKind == ActivityKind.REM_SLEEP) {
                     paint.setStrokeWidth(barWidth);
                     paint.setColor(color_rem_sleep);
-                    if (showYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
+                    if (showYesterday && dimYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
                         paint.setAlpha(64);
                     }
                     canvas.drawArc(margin, margin, width - margin, height - margin, start_angle, sweep_angle, false, paint);
                 } else if (activity.activityKind == ActivityKind.DEEP_SLEEP) {
                     paint.setStrokeWidth(barWidth);
                     paint.setColor(color_deep_sleep);
-                    if (showYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
+                    if (showYesterday && dimYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
                         paint.setAlpha(64);
                     }
                     canvas.drawArc(margin, margin, width - margin, height - margin, start_angle, sweep_angle, false, paint);
                 } else if (activity.activityKind == ActivityKind.AWAKE_SLEEP) {
                     paint.setStrokeWidth(barWidth);
                     paint.setColor(color_awake_sleep);
-                    if (showYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
+                    if (showYesterday && dimYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
                         paint.setAlpha(64);
                     }
                     canvas.drawArc(margin, margin, width - margin, height - margin, start_angle, sweep_angle, false, paint);
                 } else if (activity.activityKind == ActivityKind.EXERCISE) {
                     paint.setStrokeWidth(barWidth);
                     paint.setColor(color_exercise);
-                    if (showYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
+                    if (showYesterday && dimYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
                         paint.setAlpha(64);
                     }
                     canvas.drawArc(margin, margin, width - margin, height - margin, start_angle, sweep_angle, false, paint);
                 } else {
                     paint.setStrokeWidth(barWidth);
                     paint.setColor(color_activity);
-                    if (showYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
+                    if (showYesterday && dimYesterday && dayIsToday && activity.timeFrom < currentDayStart) {
                         paint.setAlpha(64);
                     }
                     canvas.drawArc(margin, margin, width - margin, height - margin, start_angle, sweep_angle, false, paint);
@@ -379,8 +385,11 @@ public class DashboardTodayWidget extends AbstractDashboardWidget {
         todayChart.setImageBitmap(todayBitmap);
     }
 
+    @Override
     protected void fillData() {
         if (todayView == null) return;
+
+        LOG.trace("Starting fillData for {}", getClass().getSimpleName());
 
         Prefs prefs = GBApplication.getPrefs();
         if (prefs.getBoolean("dashboard_widget_today_show_yesterday", false)) {
@@ -396,7 +405,7 @@ public class DashboardTodayWidget extends AbstractDashboardWidget {
             @Override
             public void run() {
                 FillDataAsyncTask myAsyncTask = new FillDataAsyncTask();
-                myAsyncTask.execute();
+                myAsyncTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
             }
         });
     }
@@ -542,16 +551,18 @@ public class DashboardTodayWidget extends AbstractDashboardWidget {
             List<ActivitySample> allActivitySamples = new ArrayList<>();
             List<ActivitySession> stepSessions = new ArrayList<>();
             List<BaseActivitySummary> activitySummaries = null;
-            try (DBHandler dbHandler = GBApplication.acquireDB()) {
+            try (DBHandler dbHandler = GBApplication.acquireDbReadOnly()) {
+                final List<Long> deviceIds = new LinkedList<>();
                 for (GBDevice dev : devices) {
-                    if ((dashboardData.showAllDevices || dashboardData.showDeviceList.contains(dev.getAddress())) && dev.getDeviceCoordinator().supportsActivityTracking()) {
+                    if ((dashboardData.showAllDevices || dashboardData.showDeviceList.contains(dev.getAddress())) && dev.getDeviceCoordinator().supportsActivityTracking(dev)) {
                         List<? extends ActivitySample> activitySamples = DashboardUtils.getAllSamples(dbHandler, dev, dashboardData);
                         allActivitySamples.addAll(activitySamples);
                         StepAnalysis stepAnalysis = new StepAnalysis();
-                        stepSessions.addAll(stepAnalysis.calculateStepSessions(activitySamples));
+                        stepSessions.addAll(stepAnalysis.calculateStepSessions(activitySamples, Collections.emptyList()));
+                        deviceIds.add(DBHelper.getDevice(dev, dbHandler.getDaoSession()).getId());
                     }
                 }
-                activitySummaries = DashboardUtils.getWorkoutSamples(dbHandler, dashboardData);
+                activitySummaries = deviceIds.isEmpty() ? new ArrayList<>() : DashboardUtils.getWorkoutSamples(dbHandler, dashboardData, deviceIds);
             } catch (Exception e) {
                 LOG.warn("Could not retrieve activity amounts: ", e);
             }

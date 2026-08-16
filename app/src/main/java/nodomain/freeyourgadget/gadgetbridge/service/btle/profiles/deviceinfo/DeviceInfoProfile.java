@@ -23,15 +23,21 @@ import android.content.Intent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEvent;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventUpdateDeviceInfo;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInfo;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCharacteristic;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.AbstractBleProfile;
 
-public class DeviceInfoProfile<T extends AbstractBTLEDeviceSupport> extends AbstractBleProfile<T> {
+public class DeviceInfoProfile<T extends AbstractBTLESingleDeviceSupport> extends AbstractBleProfile<T> {
     private static final Logger LOG = LoggerFactory.getLogger(DeviceInfoProfile.class);
 
     private static final String ACTION_PREFIX = DeviceInfoProfile.class.getName() + "_";
@@ -57,48 +63,48 @@ public class DeviceInfoProfile<T extends AbstractBTLEDeviceSupport> extends Abst
     }
 
     public void requestDeviceInfo(final TransactionBuilder builder) {
-        builder.read(getCharacteristic(UUID_CHARACTERISTIC_MANUFACTURER_NAME_STRING))
-                .read(getCharacteristic(UUID_CHARACTERISTIC_MODEL_NUMBER_STRING))
-                .read(getCharacteristic(UUID_CHARACTERISTIC_SERIAL_NUMBER_STRING))
-                .read(getCharacteristic(UUID_CHARACTERISTIC_HARDWARE_REVISION_STRING))
-                .read(getCharacteristic(UUID_CHARACTERISTIC_FIRMWARE_REVISION_STRING))
-                .read(getCharacteristic(UUID_CHARACTERISTIC_SOFTWARE_REVISION_STRING))
-                .read(getCharacteristic(UUID_CHARACTERISTIC_SYSTEM_ID))
-                .read(getCharacteristic(UUID_CHARACTERISTIC_IEEE_11073_20601_REGULATORY_CERTIFICATION_DATA_LIST))
-                .read(getCharacteristic(UUID_CHARACTERISTIC_PNP_ID));
+        builder.read(UUID_CHARACTERISTIC_MANUFACTURER_NAME_STRING)
+                .read(UUID_CHARACTERISTIC_MODEL_NUMBER_STRING)
+                .read(UUID_CHARACTERISTIC_SERIAL_NUMBER_STRING)
+                .read(UUID_CHARACTERISTIC_HARDWARE_REVISION_STRING)
+                .read(UUID_CHARACTERISTIC_FIRMWARE_REVISION_STRING)
+                .read(UUID_CHARACTERISTIC_SOFTWARE_REVISION_STRING)
+                .read(UUID_CHARACTERISTIC_SYSTEM_ID)
+                .read(UUID_CHARACTERISTIC_IEEE_11073_20601_REGULATORY_CERTIFICATION_DATA_LIST)
+                .read(UUID_CHARACTERISTIC_PNP_ID);
     }
 
     @Override
-    public boolean onCharacteristicRead(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic, final int status) {
+    public boolean onCharacteristicRead(final BluetoothGatt gatt, final BluetoothGattCharacteristic characteristic, final byte[] value, final int status) {
         final UUID charUuid = characteristic.getUuid();
 
         if (status == BluetoothGatt.GATT_SUCCESS) {
             if (charUuid.equals(UUID_CHARACTERISTIC_MANUFACTURER_NAME_STRING)) {
-                handleManufacturerName(characteristic);
+                handleManufacturerName(value);
                 return true;
             } else if (charUuid.equals(UUID_CHARACTERISTIC_MODEL_NUMBER_STRING)) {
-                handleModelNumber(characteristic);
+                handleModelNumber(value);
                 return true;
             } else if (charUuid.equals(UUID_CHARACTERISTIC_SERIAL_NUMBER_STRING)) {
-                handleSerialNumber(characteristic);
+                handleSerialNumber(value);
                 return true;
             } else if (charUuid.equals(UUID_CHARACTERISTIC_HARDWARE_REVISION_STRING)) {
-                handleHardwareRevision(characteristic);
+                handleHardwareRevision(value);
                 return true;
             } else if (charUuid.equals(UUID_CHARACTERISTIC_FIRMWARE_REVISION_STRING)) {
-                handleFirmwareRevision(characteristic);
+                handleFirmwareRevision(value);
                 return true;
             } else if (charUuid.equals(UUID_CHARACTERISTIC_SOFTWARE_REVISION_STRING)) {
-                handleSoftwareRevision(characteristic);
+                handleSoftwareRevision(value);
                 return true;
             } else if (charUuid.equals(UUID_CHARACTERISTIC_SYSTEM_ID)) {
-                handleSystemId(characteristic);
+                handleSystemId(value);
                 return true;
             } else if (charUuid.equals(UUID_CHARACTERISTIC_IEEE_11073_20601_REGULATORY_CERTIFICATION_DATA_LIST)) {
-                handleRegulatoryCertificationData(characteristic);
+                handleRegulatoryCertificationData(value);
                 return true;
             } else if (charUuid.equals(UUID_CHARACTERISTIC_PNP_ID)) {
-                handlePnpId(characteristic);
+                handlePnpId(value);
                 return true;
             }
         } else {
@@ -117,70 +123,94 @@ public class DeviceInfoProfile<T extends AbstractBTLEDeviceSupport> extends Abst
         return false;
     }
 
-    private void handleManufacturerName(final BluetoothGattCharacteristic characteristic) {
-        String name = characteristic.getStringValue(0).trim();
+    private void handleManufacturerName(final byte[] value) {
+        String name = BLETypeConversions.getStringValue(value, 0).trim();
         deviceInfo.setManufacturerName(name);
         notify(createIntent(deviceInfo));
     }
 
-    private void handleModelNumber(final BluetoothGattCharacteristic characteristic) {
-        String modelNumber = characteristic.getStringValue(0).trim();
+    private void handleModelNumber(final byte[] value) {
+        String modelNumber = BLETypeConversions.getStringValue(value, 0).trim();
         deviceInfo.setModelNumber(modelNumber);
         notify(createIntent(deviceInfo));
     }
 
-    private void handleSerialNumber(final BluetoothGattCharacteristic characteristic) {
-        String serialNumber = characteristic.getStringValue(0).trim();
+    private void handleSerialNumber(final byte[] value) {
+        String serialNumber = BLETypeConversions.getStringValue(value, 0).trim();
         deviceInfo.setSerialNumber(serialNumber);
         notify(createIntent(deviceInfo));
     }
 
-    private void handleHardwareRevision(final BluetoothGattCharacteristic characteristic) {
-        String hardwareRevision = characteristic.getStringValue(0).trim();
+    private void handleHardwareRevision(final byte[] value) {
+        String hardwareRevision = BLETypeConversions.getStringValue(value, 0).trim();
         deviceInfo.setHardwareRevision(hardwareRevision);
         notify(createIntent(deviceInfo));
     }
 
-    private void handleFirmwareRevision(final BluetoothGattCharacteristic characteristic) {
-        String firmwareRevision = characteristic.getStringValue(0).trim();
+    private void handleFirmwareRevision(final byte[] value) {
+        String firmwareRevision = BLETypeConversions.getStringValue(value, 0).trim();
         deviceInfo.setFirmwareRevision(firmwareRevision);
         notify(createIntent(deviceInfo));
     }
 
-    private void handleSoftwareRevision(final BluetoothGattCharacteristic characteristic) {
-        String softwareRevision = characteristic.getStringValue(0).trim();
+    private void handleSoftwareRevision(final byte[] value) {
+        String softwareRevision = BLETypeConversions.getStringValue(value, 0).trim();
         deviceInfo.setSoftwareRevision(softwareRevision);
         notify(createIntent(deviceInfo));
     }
 
-    private void handleSystemId(final BluetoothGattCharacteristic characteristic) {
-        String systemId = characteristic.getStringValue(0).trim();
+    private void handleSystemId(final byte[] value) {
+        String systemId = BLETypeConversions.getStringValue(value, 0).trim();
         deviceInfo.setSystemId(systemId);
         notify(createIntent(deviceInfo));
     }
 
-    private void handleRegulatoryCertificationData(final BluetoothGattCharacteristic characteristic) {
+    private void handleRegulatoryCertificationData(final byte[] value) {
         // TODO: regulatory certification data list not supported yet
 //        String regulatoryCertificationData = characteristic.getStringValue(0).trim();
 //        deviceInfo.setRegulatoryCertificationDataList(regulatoryCertificationData);
 //        notify(createIntent(deviceInfo));
     }
 
-    private void handlePnpId(final BluetoothGattCharacteristic characteristic) {
-        byte[] value = characteristic.getValue();
-        if (value.length == 7) {
-//            int vendorSource
-//
-//            deviceInfo.setPnpId(pnpId);
-            notify(createIntent(deviceInfo));
-        } else {
-            // TODO: LOG warning
-        }
+    private void handlePnpId(final byte[] value) {
+        deviceInfo.setPnpId(value);
+        notify(createIntent(deviceInfo));
     }
 
     private Intent createIntent(final DeviceInfo deviceInfo) {
         final Intent intent = new Intent(ACTION_DEVICE_INFO);
         intent.putExtra(EXTRA_DEVICE_INFO, deviceInfo); // TODO: broadcast a clone of the info
         return intent;
+    }
+
+    public static List<GBDeviceEvent> toDeviceEvents(final DeviceInfo deviceInfo) {
+        final GBDeviceEventVersionInfo versionCmd = new GBDeviceEventVersionInfo();
+        final List<GBDeviceEvent> events = new ArrayList<>(1);
+        events.add(versionCmd);
+
+        if (deviceInfo.getHardwareRevision() != null) {
+            versionCmd.hwVersion = deviceInfo.getHardwareRevision();
+        }
+
+        if (deviceInfo.getFirmwareRevision() != null) {
+            versionCmd.fwVersion = deviceInfo.getFirmwareRevision();
+            versionCmd.fwVersion2 = deviceInfo.getSoftwareRevision();
+        } else if (deviceInfo.getSoftwareRevision() != null) {
+            versionCmd.fwVersion = deviceInfo.getSoftwareRevision();
+        }
+
+        if (deviceInfo.getManufacturerName() != null) {
+            events.add(new GBDeviceEventUpdateDeviceInfo("MANUFACTURER: ", deviceInfo.getManufacturerName()));
+        }
+
+        if (deviceInfo.getModelNumber() != null) {
+            events.add(new GBDeviceEventUpdateDeviceInfo("MODEL: ", deviceInfo.getModelNumber()));
+        }
+
+        if (deviceInfo.getSerialNumber() != null) {
+            events.add(new GBDeviceEventUpdateDeviceInfo("SERIAL: ", deviceInfo.getSerialNumber()));
+        }
+
+        return events;
     }
 }

@@ -16,13 +16,15 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.huawei;
 
+import androidx.annotation.Nullable;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
-import java.util.Arrays;
 
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiFileDownloadManager;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiSupportProvider;
@@ -215,7 +217,7 @@ public class HuaweiTruSleepParser {
 
             byte tag = buffer.get();
 
-            ArrayList<Short> al = new ArrayList<Short>();
+            ArrayList<Short> al = new ArrayList<>();
             if (tag == TAG_COMPRESSION_RAW) {
                 if (buffer.remaining() < countShort * 2)
                     throw new IllegalArgumentException("Not enough elements in buffer");
@@ -256,7 +258,7 @@ public class HuaweiTruSleepParser {
 
             byte tag = buffer.get();
 
-            ArrayList<Short> al = new ArrayList<Short>();
+            ArrayList<Short> al = new ArrayList<>();
             if (tag == TAG_COMPRESSION_RAW) {
                 if (buffer.remaining() < countShort * 2)
                     throw new IllegalArgumentException("Not enough elements in buffer");
@@ -395,7 +397,7 @@ public class HuaweiTruSleepParser {
             LOG.debug("TruSleepDataAcc {} : {}", startTime, String.format("%04x", i.flags));
         }
         for (HuaweiTruSleepParser.TruSleepDataPpg i : ppg) {
-            java.util.Date startTime = new java.util.Date((long) i.startTime);
+            java.util.Date startTime = new java.util.Date(i.startTime);
             LOG.debug("TruSleepDataPpg {} : {}", startTime, String.format("%04x", i.flags));
         }
     }
@@ -441,6 +443,7 @@ public class HuaweiTruSleepParser {
         public void syncComplete(byte[] statusData, byte[] sleepData) { }
         @Override
         public void downloadException(HuaweiFileDownloadManager.HuaweiFileDownloadException e) {
+            super.downloadException(e);
             if (e.fileRequest == null) {
                 LOG.error("Failed to download TruSleep file: {}", e.toString());
                 syncComplete(statusData, sleepData);
@@ -457,7 +460,7 @@ public class HuaweiTruSleepParser {
         }
 
         @Override
-        public void downloadComplete(HuaweiFileDownloadManager.FileRequest fileRequest) {
+        public void downloadComplete(HuaweiFileDownloadManager.FileRequest fileRequest, @Nullable File localRawFile) {
             if (fileRequest.getFileType() == HuaweiFileDownloadManager.FileType.SLEEP_STATE) {
                 statusData = fileRequest.getData();
                 statusSynced = true;

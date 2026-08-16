@@ -1,8 +1,8 @@
-/*  Copyright (C) 2015-2024 Alberto, Andreas Böhler, Andreas Shimokawa,
+/*  Copyright (C) 2015-2026 Alberto, Andreas Böhler, Andreas Shimokawa,
     Arjan Schrijver, Carsten Pfeiffer, criogenic, Daniel Dakhno, Daniele Gobbetti,
     Davis Mosenkovs, Frank Slezak, Gabriele Monaco, Gordon Williams, ivanovlev,
     José Rebelo, Julien Pivotto, Kasha, mvn23, Petr Vaněk, Roi Greenberg,
-    Sebastian Kranz, Steffen Liebergeld
+    Sebastian Kranz, Steffen Liebergeld, Thomas Kuehne
 
     This file is part of Gadgetbridge.
 
@@ -20,6 +20,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.impl;
 
+import static nodomain.freeyourgadget.gadgetbridge.util.JavaExtensions.coalesce;
+
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -29,11 +31,18 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.ContactsContract;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.activities.appmanager.config.DynamicAppConfig;
 import nodomain.freeyourgadget.gadgetbridge.capabilities.loyaltycards.LoyaltyCard;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventCameraRemote;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
@@ -47,17 +56,15 @@ import nodomain.freeyourgadget.gadgetbridge.model.MusicStateSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NavigationInfoSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.Reminder;
-import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.WorldClock;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceCommunicationService;
 import nodomain.freeyourgadget.gadgetbridge.util.RtlUtils;
 
-import static nodomain.freeyourgadget.gadgetbridge.util.JavaExtensions.coalesce;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-
+/**
+ * Fires an intent with an action to be called on the DeviceSupport class, to be handled by DeviceCommunicationService.
+ * The intents created here must be handled in {@link nodomain.freeyourgadget.gadgetbridge.service.DeviceActionHandler}
+ * accordingly.
+ */
 public class GBDeviceService implements DeviceService {
     protected final Context mContext;
     private final GBDevice mDevice;
@@ -80,11 +87,11 @@ public class GBDeviceService implements DeviceService {
     };
     private static final Logger LOG = LoggerFactory.getLogger(GBDeviceService.class);
 
-    public GBDeviceService(Context context) {
+    public GBDeviceService(@NonNull Context context) {
         this(context, null);
     }
 
-    public GBDeviceService(Context context, GBDevice device) {
+    public GBDeviceService(@NonNull Context context, GBDevice device) {
         mContext = context;
         mDevice = device;
         mServiceClass = DeviceCommunicationService.class;
@@ -95,6 +102,8 @@ public class GBDeviceService implements DeviceService {
         return new GBDeviceService(mContext, device);
     }
 
+    @Nullable
+    @Override
     public GBDevice getDevice() {
         return mDevice;
     }
@@ -103,7 +112,7 @@ public class GBDeviceService implements DeviceService {
         return new Intent(mContext, mServiceClass);
     }
 
-    protected void invokeService(Intent intent) {
+    protected void invokeService(@NonNull Intent intent) {
 
         if (RtlUtils.rtlSupport()) {
             for (String extra : transliterationExtras) {
@@ -119,7 +128,7 @@ public class GBDeviceService implements DeviceService {
         try {
             mContext.startService(intent);
         } catch (IllegalStateException e) {
-            LOG.error("IllegalStateException during startService ("+intent.getAction()+")");
+            LOG.error("IllegalStateException during startService ({})", intent.getAction(), e);
         }
     }
 
@@ -158,7 +167,7 @@ public class GBDeviceService implements DeviceService {
     }
 
     @Override
-    public void onNotification(NotificationSpec notificationSpec) {
+    public void onNotification(@NonNull NotificationSpec notificationSpec) {
         String messagePrivacyMode = GBApplication.getPrefs().getString("pref_message_privacy_mode",
                 GBApplication.getContext().getString(R.string.p_message_privacy_mode_off));
         boolean hideMessageDetails = messagePrivacyMode.equals(GBApplication.getContext().getString(R.string.p_message_privacy_mode_complete));
@@ -176,11 +185,13 @@ public class GBDeviceService implements DeviceService {
                 .putExtra(EXTRA_NOTIFICATION_TYPE, notificationSpec.type)
                 .putExtra(EXTRA_NOTIFICATION_ACTIONS, notificationSpec.attachedActions)
                 .putExtra(EXTRA_NOTIFICATION_SOURCENAME, notificationSpec.sourceName)
-                .putExtra(EXTRA_NOTIFICATION_PEBBLE_COLOR, notificationSpec.pebbleColor)
                 .putExtra(EXTRA_NOTIFICATION_SOURCEAPPID, notificationSpec.sourceAppId)
                 .putExtra(EXTRA_NOTIFICATION_ICONID, notificationSpec.iconId)
+                .putExtra(EXTRA_NOTIFICATION_ICONPACKAGEID, notificationSpec.iconPackageId)
                 .putExtra(NOTIFICATION_PICTURE_PATH, notificationSpec.picturePath)
-                .putExtra(EXTRA_NOTIFICATION_DNDSUPPRESSED, notificationSpec.dndSuppressed);
+                .putExtra(EXTRA_NOTIFICATION_DNDSUPPRESSED, notificationSpec.dndSuppressed)
+                .putExtra(EXTRA_NOTIFICATION_CHANNEL_ID, notificationSpec.channelId)
+                .putExtra(EXTRA_NOTIFICATION_CATEGORY, notificationSpec.category);
         invokeService(intent);
     }
 
@@ -214,7 +225,7 @@ public class GBDeviceService implements DeviceService {
         } else if (currentPrivacyMode.equals(context.getString(R.string.p_call_privacy_mode_complete))) {
             callSpec.number = null;
             callSpec.name = null;
-        } else if (currentPrivacyMode.equals(context.getString(R.string.p_call_privacy_mode_number))){
+        } else if (currentPrivacyMode.equals(context.getString(R.string.p_call_privacy_mode_number))) {
             callSpec.name = coalesce(callSpec.name, getContactDisplayNameByNumber(callSpec.number));
             if (callSpec.name != null && !callSpec.name.equals(callSpec.number)) {
                 callSpec.number = null;
@@ -228,13 +239,17 @@ public class GBDeviceService implements DeviceService {
                 .putExtra(EXTRA_CALL_DISPLAYNAME, callSpec.name)
                 .putExtra(EXTRA_CALL_SOURCENAME, callSpec.sourceName)
                 .putExtra(EXTRA_CALL_SOURCEAPPID, callSpec.sourceAppId)
+                .putExtra(EXTRA_CALL_KEY, callSpec.key)
+                .putExtra(EXTRA_CALL_CHANNELID, callSpec.channelId)
+                .putExtra(EXTRA_CALL_CATEGORY, callSpec.category)
+                .putExtra(EXTRA_CALL_ISVOIP, callSpec.isVoip)
                 .putExtra(EXTRA_CALL_COMMAND, callSpec.command)
                 .putExtra(EXTRA_CALL_DNDSUPPRESSED, callSpec.dndSuppressed);
         invokeService(intent);
     }
 
     @Override
-    public void onSetCannedMessages(CannedMessagesSpec cannedMessagesSpec) {
+    public void onSetCannedMessages(@NonNull CannedMessagesSpec cannedMessagesSpec) {
         Intent intent = createIntent().setAction(ACTION_SETCANNEDMESSAGES)
                 .putExtra(EXTRA_CANNEDMESSAGES_TYPE, cannedMessagesSpec.type)
                 .putExtra(EXTRA_CANNEDMESSAGES, cannedMessagesSpec.cannedMessages);
@@ -242,7 +257,7 @@ public class GBDeviceService implements DeviceService {
     }
 
     @Override
-    public void onSetMusicState(MusicStateSpec stateSpec) {
+    public void onSetMusicState(@NonNull MusicStateSpec stateSpec) {
         Intent intent = createIntent().setAction(ACTION_SETMUSICSTATE)
                 .putExtra(EXTRA_MUSIC_REPEAT, stateSpec.repeat)
                 .putExtra(EXTRA_MUSIC_RATE, stateSpec.playRate)
@@ -295,7 +310,7 @@ public class GBDeviceService implements DeviceService {
     }
 
     @Override
-    public void onSetMusicInfo(MusicSpec musicSpec) {
+    public void onSetMusicInfo(@NonNull MusicSpec musicSpec) {
         Intent intent = createIntent().setAction(ACTION_SETMUSICINFO)
                 .putExtra(EXTRA_MUSIC_ARTIST, musicSpec.artist)
                 .putExtra(EXTRA_MUSIC_ALBUM, musicSpec.album)
@@ -307,19 +322,22 @@ public class GBDeviceService implements DeviceService {
     }
 
     @Override
-    public void onSetNavigationInfo(NavigationInfoSpec navigationInfoSpec) {
+    public void onSetNavigationInfo(@NonNull NavigationInfoSpec navigationInfoSpec) {
         Intent intent = createIntent().setAction(ACTION_SETNAVIGATIONINFO)
-                .putExtra(EXTRA_NAVIGATION_INSTRUCTION, navigationInfoSpec.instruction)
-                .putExtra(EXTRA_NAVIGATION_NEXT_ACTION, navigationInfoSpec.nextAction)
-                .putExtra(EXTRA_NAVIGATION_DISTANCE_TO_TURN, navigationInfoSpec.distanceToTurn)
-                .putExtra(EXTRA_NAVIGATION_ETA, navigationInfoSpec.ETA);
+                .putExtra(EXTRA_NAVIGATION_INSTRUCTION, navigationInfoSpec.getInstruction())
+                .putExtra(EXTRA_NAVIGATION_NEXT_ACTION, navigationInfoSpec.getNextAction())
+                .putExtra(EXTRA_NAVIGATION_DISTANCE_TO_TURN, navigationInfoSpec.getDistanceToTurn())
+                .putExtra(EXTRA_NAVIGATION_DISTANCE_TO_TARGET, navigationInfoSpec.getDistanceToTarget())
+                .putExtra(EXTRA_NAVIGATION_ETA, navigationInfoSpec.getETA())
+                .putExtra(EXTRA_NAVIGATION_COMPLETION_PERCENT, navigationInfoSpec.getCompletionPercent());
         invokeService(intent);
     }
 
     @Override
-    public void onInstallApp(Uri uri) {
+    public void onInstallApp(Uri uri, @NonNull final Bundle options) {
         Intent intent = createIntent().setAction(ACTION_INSTALL)
-                .putExtra(EXTRA_URI, uri);
+                .putExtra(EXTRA_URI, uri)
+                .putExtra(EXTRA_OPTIONS, options);
         invokeService(intent);
     }
 
@@ -352,14 +370,31 @@ public class GBDeviceService implements DeviceService {
     }
 
     @Override
-    public void onAppConfiguration(UUID uuid, String config, Integer id) {
+    public void onAppConfiguration(UUID appUuid, String config, Integer id) {
         Intent intent = createIntent().setAction(ACTION_APP_CONFIGURE)
-                .putExtra(EXTRA_APP_UUID, uuid)
+                .putExtra(EXTRA_APP_UUID, appUuid)
                 .putExtra(EXTRA_APP_CONFIG, config);
 
         if (id != null) {
             intent.putExtra(EXTRA_APP_CONFIG_ID, id);
         }
+        invokeService(intent);
+    }
+
+    @Override
+    public void onAppConfigRequest(final UUID uuid) {
+        Intent intent = createIntent().setAction(ACTION_APP_CONFIG_REQUEST)
+                .putExtra(EXTRA_APP_UUID, uuid);
+
+        invokeService(intent);
+    }
+
+    @Override
+    public void onAppConfigSet(final UUID uuid, final ArrayList<DynamicAppConfig> configs) {
+        Intent intent = createIntent().setAction(ACTION_APP_CONFIG_SET)
+                .putExtra(EXTRA_APP_UUID, uuid)
+                .putParcelableArrayListExtra(EXTRA_APP_CONFIG, configs);
+
         invokeService(intent);
     }
 
@@ -400,7 +435,7 @@ public class GBDeviceService implements DeviceService {
     @Override
     public void onFindPhone(final boolean start) {
         Intent intent = createIntent().setAction(ACTION_PHONE_FOUND)
-                        .putExtra(EXTRA_FIND_START, start);
+                .putExtra(EXTRA_FIND_START, start);
         invokeService(intent);
     }
 
@@ -446,9 +481,10 @@ public class GBDeviceService implements DeviceService {
     }
 
     @Override
-    public void onAddCalendarEvent(CalendarEventSpec calendarEventSpec) {
+    public void onAddCalendarEvent(@NonNull CalendarEventSpec calendarEventSpec) {
         Intent intent = createIntent().setAction(ACTION_ADD_CALENDAREVENT)
                 .putExtra(EXTRA_CALENDAREVENT_ID, calendarEventSpec.id)
+                .putExtra(EXTRA_CALENDAREVENT_EVENT_ID, calendarEventSpec.eventId)
                 .putExtra(EXTRA_CALENDAREVENT_TYPE, calendarEventSpec.type)
                 .putExtra(EXTRA_CALENDAREVENT_TIMESTAMP, calendarEventSpec.timestamp)
                 .putExtra(EXTRA_CALENDAREVENT_DURATION, calendarEventSpec.durationInSeconds)
@@ -457,8 +493,11 @@ public class GBDeviceService implements DeviceService {
                 .putExtra(EXTRA_CALENDAREVENT_TITLE, calendarEventSpec.title)
                 .putExtra(EXTRA_CALENDAREVENT_DESCRIPTION, calendarEventSpec.description)
                 .putExtra(EXTRA_CALENDAREVENT_CALNAME, calendarEventSpec.calName)
+                .putExtra(EXTRA_CALENDAREVENT_CALENDAR_COLOR, calendarEventSpec.calendarColor)
                 .putExtra(EXTRA_CALENDAREVENT_COLOR, calendarEventSpec.color)
-                .putExtra(EXTRA_CALENDAREVENT_LOCATION, calendarEventSpec.location);
+                .putExtra(EXTRA_CALENDAREVENT_LOCATION, calendarEventSpec.location)
+                .putExtra(EXTRA_CALENDAREVENT_STATUS, calendarEventSpec.location)
+                .putExtra(EXTRA_CALENDAREVENT_ATTENDING_STATUS, calendarEventSpec.location);
         invokeService(intent);
     }
 
@@ -466,12 +505,13 @@ public class GBDeviceService implements DeviceService {
     public void onDeleteCalendarEvent(byte type, long id) {
         Intent intent = createIntent().setAction(ACTION_DELETE_CALENDAREVENT)
                 .putExtra(EXTRA_CALENDAREVENT_TYPE, type)
+                // TODO: If swapping to EVENT_ID, change this here.
                 .putExtra(EXTRA_CALENDAREVENT_ID, id);
         invokeService(intent);
     }
 
     @Override
-    public void onSendConfiguration(String config) {
+    public void onSendConfiguration(@NonNull String config) {
         Intent intent = createIntent().setAction(ACTION_SEND_CONFIGURATION)
                 .putExtra(EXTRA_CONFIG, config);
         invokeService(intent);
@@ -485,15 +525,15 @@ public class GBDeviceService implements DeviceService {
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
         Intent intent = createIntent().setAction(ACTION_TEST_NEW_FUNCTION);
+        intent.putExtra(EXTRA_OPTIONS, options);
         invokeService(intent);
     }
 
     @Override
-    public void onSendWeather(ArrayList<WeatherSpec> weatherSpecs) {
-        Intent intent = createIntent().setAction(ACTION_SEND_WEATHER)
-                .putExtra(EXTRA_WEATHER, weatherSpecs);
+    public void onSendWeather() {
+        Intent intent = createIntent().setAction(ACTION_SEND_WEATHER);
         invokeService(intent);
     }
 
@@ -504,18 +544,21 @@ public class GBDeviceService implements DeviceService {
      * @return contact DisplayName, if found it
      */
     private String getContactDisplayNameByNumber(String number) {
+        if (number == null || number.isEmpty()) {
+            return number;
+        }
+
         Uri uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.ENTERPRISE_CONTENT_FILTER_URI, Uri.encode(number));
 
         String name = number;
 
-        if (number == null || number.equals("")) {
-            return name;
-        }
-
         try (Cursor contactLookup = mContext.getContentResolver().query(uri, null, null, null, null)) {
             if (contactLookup != null && contactLookup.getCount() > 0) {
                 contactLookup.moveToNext();
-                name = contactLookup.getString(contactLookup.getColumnIndex(ContactsContract.Data.DISPLAY_NAME));
+                int index = contactLookup.getColumnIndex(ContactsContract.Data.DISPLAY_NAME);
+                if (index >= 0) {
+                    name = contactLookup.getString(index);
+                }
             }
         } catch (SecurityException e) {
             // ignore, just return name below
@@ -579,10 +622,10 @@ public class GBDeviceService implements DeviceService {
     @Override
     public void onMusicOperation(int operation, int playlistIndex, String playlistName, ArrayList<Integer> musicIds) {
         Intent intent = createIntent().setAction(ACTION_REQUEST_MUSIC_OPERATION);
-        intent.putExtra("operation", operation);
-        intent.putExtra("playlistIndex", playlistIndex);
-        intent.putExtra("playlistName", playlistName);
-        intent.putExtra("musicIds", musicIds);
+        intent.putExtra(EXTRA_REQUEST_MUSIC_OPERATION, operation);
+        intent.putExtra(EXTRA_REQUEST_MUSIC_PLAY_LIST_INDEX, playlistIndex);
+        intent.putExtra(EXTRA_REQUEST_MUSIC_PLAY_LIST_NAME, playlistName);
+        intent.putExtra(EXTRA_REQUEST_MUSIC_MUSIC_IDS, musicIds);
         invokeService(intent);
     }
 }

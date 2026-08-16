@@ -12,8 +12,6 @@
     <string name="pref_header_charts">Настройки на Графиката</string>
     <string name="pref_title_charts_average">Показвай средни стойности</string>
     <string name="activity_prefs_charts">Настройки на графика</string>
-    <string name="activity_prefs_chart_max_heart_rate">Max сърдечен ритъм</string>
-    <string name="activity_prefs_chart_min_heart_rate">Min сърдечен ритъм</string>
     <string name="pref_title_charts_range">Обхват на Графиката</string>
     <string name="pref_charts_range_on">Обхвата е Месец</string>
     <string name="pref_charts_range_off">Обхвата е Седмица</string>
@@ -63,12 +61,10 @@
     <string name="appmanager_hrm_deactivate">Деактивиране на HRM</string>
     <string name="appmanager_weather_activate">Активиране на системното приложение за прогноза на времето</string>
     <string name="appmanager_weather_deactivate">Дективиране на системното приложение за прогноза на времето</string>
-    <string name="appmanager_weather_install_provider">Инсталиране на приложението за прогноза на времето</string>
     <string name="app_configure">Конфигуриране</string>
     <string name="app_move_to_top">Преместване горе</string>
     <string name="blacklist_all_for_notifications">Блокиране на всички известия</string>
     <string name="whitelist_all_for_notifications">Разрешаване на всички известия</string>
-    <string name="title_activity_calblacklist">Блокирани Календари</string>
     <string name="title_activity_fw_app_insaller">FW/App инсталатор</string>
     <string name="fw_upgrade_notice">Ще се инсталира %s.</string>
     <string name="fw_upgrade_notice_amazfitbip">Ще се инсталира %s firmware на вашия Amazfit Bip.
@@ -257,7 +253,6 @@
     <string name="pairing_already_bonded">Установена е връзка с/със %1$s (%2$s), свързване…</string>
     <string name="message_cannot_pair_no_mac">Липсва MAC адрес, не може да се установи връзка.</string>
     <string name="preferences_category_device_specific_settings">Специфични настройки за устройствата</string>
-    <string name="preferences_miband_settings">Mi Band / Amazfit настройки</string>
     <string name="male">Мъж</string>
     <string name="female">Жена</string>
     <string name="other">Друг</string>
@@ -350,8 +345,6 @@
     <string name="zetime_title_heart_rate_alarm">Сърдечен ритъм аларма</string>
     <string name="zetime_title_heart_rate_alarm_summary">Часовникът ще ви предупреди, когато сърдечният ритъм премине границите.</string>
     <string name="zetime_heart_rate_alarm_enable">Включване на алармата за сърдечния ритъм</string>
-    <string name="activity_prefs_alarm_max_heart_rate">Максимален сърдечен ритъм</string>
-    <string name="activity_prefs_alarm_min_heart_rate">Минимален сърдечен ритъм</string>
     <string name="zetime_analog_mode">Аналогов режим</string>
     <string name="zetime_analog_mode_hands">Само ръце</string>
     <string name="zetime_analog_mode_handsandsteps">Ръце и крачки</string>
@@ -465,8 +458,8 @@
     <string name="minutes_30">30 минути</string>
     <string name="liveactivity_live_activity">Активност в реално време</string>
     <string name="weeksteps_today_steps_description">Крачки днес, цел: %1$s</string>
-    <string name="lack_of_step">Недостиг на крачки: %1$d</string>
-    <string name="overstep">Крачки в повече: %1$d</string>
+    <string name="lack_of_step">Недостиг на крачки: %1$s</string>
+    <string name="overstep">Крачки в повече: %1$s</string>
     <string name="pref_summary_dont_ack_transfers">Ако данните за активност не са потвърени от устройството, те няма да се изчистят. Полезно е, когато GB се използва заедно с други приложения.</string>
     <string name="pref_summary_keep_data_on_device">Данните за активност ще се пазят на Mi Band дори след синхронизация. Полезно е, когато GB се използва заедно с други приложения.</string>
     <string name="weeksleepchart_sleep_a_week">Седмичен сън</string>
@@ -481,8 +474,8 @@
     <string name="title_activity_device_specific_settings">Специфични настройки за устройството</string>
     <string name="average">Средно: %1$s</string>
     <string name="mi2_prefs_button_press_broadcast_default_value" translatable="false">nodomain.freeyourgadget.gadgetbridge.ButtonPressed</string>
-    <string name="Cancel">Отказ</string>
-    <string name="Delete">Изтрий</string>
+    <string name="cancel">Отказ</string>
+    <string name="delete">Изтрий</string>
     <string name="abstract_chart_fragment_kind_deep_sleep">Дълбок сън</string>
     <string name="abstract_chart_fragment_kind_light_sleep">Лек сън</string>
     <string name="abstract_chart_fragment_kind_not_worn">Не е носен</string>
@@ -495,12 +488,9 @@
     <string name="activity_DB_ExportButton">Експорт на БД</string>
     <string name="activity_DB_test_export_message">Експортиране на БД…</string>
     <string name="activity_DB_test_export_button">Стартирай авто експортиране</string>
-    <string name="activity_db_management_autoexport_explanation">Локацията за експорт на БД е:</string>
-    <string name="activity_db_management_autoexport_label">АвтоЕкспорт</string>
     <string name="activity_db_management_empty_DB">ИзпразниБД</string>
     <string name="activity_db_management_empty_db_warning">Внимание! Ако натиснете този бутон БД ще се изтрие.</string>
     <string name="activity_db_management_exportimport_label">Експорт и Импорт</string>
-    <string name="activity_prefs_sleep_duration">Време за сън в часове</string>
     <string name="activity_summaries">Активности</string>
     <string name="activity_type_activity">Активност</string>
     <string name="activity_type_biking">Колоездене</string>
@@ -578,16 +568,6 @@
     <string name="prefs_hr_alarm_low">Долна граница</string>
     <string name="preferences_rtl_settings">От ляво на дясно</string>
     <string name="pref_screen_notification_profile_alarm_clock">Аларми</string>
-    <string name="p_unit_metric">метрични</string>
-    <string name="p_unit_imperial">инчови</string>
-    <string name="p_steps">крачки</string>
-    <string name="p_scheduled">разписание</string>
-    <string name="p_pebble_privacy_mode_off">изкл.</string>
-    <string name="p_on">вкл.</string>
-    <string name="p_off">изкл.</string>
-    <string name="p_menuitem_weather">прогноза</string>
-    <string name="p_menuitem_settings">настройки</string>
-    <string name="p_menuitem_notifications">известия</string>
     <string name="off">Изкл.</string>
     <string name="on">Вкл.</string>
     <string name="no_data">Няма данни</string>
@@ -598,4 +578,18 @@
     <string name="sonyswr12_settings_low_vibration_summary">Активирайте ниската интензивност на вибрациите на маншета</string>
     <string name="sonyswr12_settings_stamina_summary">Режимът за пестене на енергия изключва периодичното автоматично измерване на сърдечната честота, като по този начин увеличава работното време</string>
     <string name="sonyswr12_settings_alarm_interval_summary">Интелигентният алармен интервал е интервал преди инсталираната аларма. В този интервал устройството се опитва да открие най-леката фаза на сън за събуждане на потребителя</string>
+    <string name="about_activity_title_generic">Относно Gadgetbridge</string>
+    <string name="application_name_banglejs_main">Bangle.js Gadgetbridge</string>
+    <string name="title_activity_controlcenter_banglejs_main">Bangle.js Gadgetbridge</string>
+    <string name="about_activity_title_banglejs_main">Относно Bangle.js Gadgetbridge</string>
+    <string name="gadgetbridge_running_banglejs_main">Bangle.js върви</string>
+    <string name="application_name_banglejs_nightly">Bangle.js Gadgetbridge (Еженощно)</string>
+    <string name="title_activity_controlcenter_banglejs_nightly">Bangle.js Gadgetbridge (Еженощно)</string>
+    <string name="about_activity_title_banglejs_nightly">Относно Bangle.js Gadgetbridge (Еженощно)</string>
+    <string name="gadgetbridge_running_banglejs_nightly">Еженощен Bangle.js върви</string>
+    <string name="application_name_main_nightly">Gadgetbridge (Еженощно)</string>
+    <string name="title_activity_controlcenter_main_nightly">Gadgetbridge Еженощен</string>
+    <string name="about_activity_title_main_nightly">Относно Gadgetbridge Еженощен</string>
+    <string name="gadgetbridge_running_main_nightly">Еженощен GB върви</string>
+    <string name="application_name_main_nopebble">Gadgetbridge (Еженощен, без Pebble доставчик)</string>
 </resources>

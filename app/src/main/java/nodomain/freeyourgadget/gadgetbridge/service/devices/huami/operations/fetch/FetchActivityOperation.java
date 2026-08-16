@@ -19,6 +19,8 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.huami.operations.fe
 
 import android.widget.Toast;
 
+import androidx.annotation.StringRes;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,7 +43,7 @@ import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuamiExtendedActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.MiBandActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.User;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiFetcher;
 import nodomain.freeyourgadget.gadgetbridge.util.DateTimeUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
@@ -54,14 +56,15 @@ public class FetchActivityOperation extends AbstractRepeatingFetchOperation {
 
     private final int sampleSize;
 
-    public FetchActivityOperation(final HuamiSupport support) {
-        super(support, HuamiFetchDataType.ACTIVITY);
-        this.sampleSize = support.getActivitySampleSize();
+    public FetchActivityOperation(final HuamiFetcher fetcher) {
+        super(fetcher, HuamiFetchDataType.ACTIVITY);
+        this.sampleSize = fetcher.getActivitySampleSize();
     }
 
+    @StringRes
     @Override
-    protected String taskDescription() {
-        return getContext().getString(R.string.busy_task_fetch_activity_data);
+    public int taskDescription() {
+        return R.string.busy_task_fetch_activity_data;
     }
 
     @Override
@@ -116,7 +119,7 @@ public class FetchActivityOperation extends AbstractRepeatingFetchOperation {
 
                 timestamp.add(Calendar.MINUTE, 1);
             }
-            sampleProvider.addGBActivitySamples(samples.toArray(new MiBandActivitySample[0]));
+            sampleProvider.addGBActivitySamples(samples);
 
             timestamp.add(Calendar.MINUTE, -1);
 

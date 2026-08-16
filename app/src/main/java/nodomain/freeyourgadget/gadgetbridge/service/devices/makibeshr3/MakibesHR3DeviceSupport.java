@@ -72,13 +72,13 @@ import nodomain.freeyourgadget.gadgetbridge.model.BatteryState;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceService;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.serial.GBDeviceProtocol;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.preferences.DevicePrefs;
 
-public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implements SharedPreferences.OnSharedPreferenceChangeListener {
+public class MakibesHR3DeviceSupport extends AbstractBTLESingleDeviceSupport implements SharedPreferences.OnSharedPreferenceChangeListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(MakibesHR3DeviceSupport.class);
 
@@ -232,7 +232,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
                 sender, message);
 
         try {
-            this.performConnected(transactionBuilder.getTransaction());
+            transactionBuilder.queueConnected();
         } catch (Exception ex) {
             LoggerFactory.getLogger(this.getClass()).error("notification failed");
         }
@@ -245,7 +245,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
         this.setDateTime(transactionBuilder);
 
         try {
-            this.performConnected(transactionBuilder.getTransaction());
+            transactionBuilder.queueConnected();
         } catch (Exception ex) {
             LoggerFactory.getLogger(this.getClass()).error("factory reset failed");
         }
@@ -298,7 +298,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
         }
 
         try {
-            this.performConnected(transactionBuilder.getTransaction());
+            transactionBuilder.queueConnected();
         } catch (Exception ex) {
             LoggerFactory.getLogger(this.getClass()).error("setalarms failed");
         }
@@ -315,7 +315,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
         }
 
         try {
-            this.performConnected(transactionBuilder.getTransaction());
+            transactionBuilder.queueConnected();
         } catch (Exception ex) {
             LoggerFactory.getLogger(this.getClass()).error("call state failed");
         }
@@ -329,7 +329,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
             this.factoryReset(transactionBuilder);
 
             try {
-                this.performConnected(transactionBuilder.getTransaction());
+                transactionBuilder.queueConnected();
             } catch (Exception ex) {
                 LoggerFactory.getLogger(this.getClass()).error("factory reset failed");
             }
@@ -338,7 +338,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
             this.reboot(transactionBuilder);
 
             try {
-                this.performConnected(transactionBuilder.getTransaction());
+                transactionBuilder.queueConnected();
             } catch (Exception ex) {
                 LoggerFactory.getLogger(this.getClass()).error("factory reset failed");
             }
@@ -352,7 +352,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
         this.setEnableRealTimeHeartRate(transactionBuilder, enable);
 
         try {
-            this.performConnected(transactionBuilder.getTransaction());
+            transactionBuilder.queueConnected();
         } catch (Exception e) {
             LOG.debug("ERROR");
         }
@@ -402,7 +402,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
         this.findDevice(transactionBuilder);
 
         try {
-            this.performConnected(transactionBuilder.getTransaction());
+            transactionBuilder.queueConnected();
         } catch (Exception e) {
             LOG.debug("ERROR");
         }
@@ -460,7 +460,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
         }
 
         try {
-            this.performConnected(transactionBuilder.getTransaction());
+            transactionBuilder.queueConnected();
         } catch (Exception ex) {
             LOG.warn(ex.getMessage());
         }
@@ -488,8 +488,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
 
         GB.updateTransferNotification(null, getContext().getString(R.string.busy_task_fetch_activity_data), true, 0, getContext());
 
-        gbDevice.setState(GBDevice.State.INITIALIZING);
-        gbDevice.sendDeviceUpdateIntent(getContext());
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         this.mControlCharacteristic = getCharacteristic(MakibesHR3Constants.UUID_CHARACTERISTIC_CONTROL);
         this.mReportCharacteristic = getCharacteristic(MakibesHR3Constants.UUID_CHARACTERISTIC_REPORT);
@@ -506,8 +505,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
 
         this.requestFitness(builder);
 
-        gbDevice.setState(GBDevice.State.INITIALIZED);
-        gbDevice.sendDeviceUpdateIntent(getContext());
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
 
         getDevice().setFirmwareVersion("N/A");
         getDevice().setFirmwareVersion2("N/A");
@@ -539,7 +537,7 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
 
         } catch (Exception ex) {
             // Why is this a toast? The user doesn't care about the error.
-            GB.toast(getContext(), "Error saving samples: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error saving samples: " + ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
             GB.updateTransferNotification(null, "Data transfer failed", false, 0, getContext());
 
             LOG.error(ex.getMessage());
@@ -649,13 +647,13 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] value) {
+        if (super.onCharacteristicChanged(gatt, characteristic, value)) {
             return true;
         }
 
-        byte[] data = characteristic.getValue();
-        if (data.length < 6)
+        if (value.length < 6)
             return true;
 
         this.fetch(false);
@@ -663,7 +661,6 @@ public class MakibesHR3DeviceSupport extends AbstractBTLEDeviceSupport implement
         UUID characteristicUuid = characteristic.getUuid();
 
         if (characteristicUuid.equals(mReportCharacteristic.getUuid())) {
-            byte[] value = characteristic.getValue();
             byte[] arguments = new byte[value.length - 6];
 
             if (arguments.length >= 0) {

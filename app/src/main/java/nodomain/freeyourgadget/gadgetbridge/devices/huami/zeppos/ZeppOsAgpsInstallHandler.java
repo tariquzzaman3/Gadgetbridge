@@ -16,8 +16,11 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.huami.zeppos;
 
+import android.app.Activity;
 import android.content.Context;
 import android.net.Uri;
+
+import androidx.annotation.NonNull;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,7 +30,8 @@ import java.io.IOException;
 import java.io.InputStream;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.InstallActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.FwAppInstallerActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.InstallActivity;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
@@ -42,6 +46,8 @@ public class ZeppOsAgpsInstallHandler implements InstallHandler {
     protected final Context mContext;
     private ZeppOsAgpsFile file;
 
+    private static final int MAX_EXPECTED_SIZE = 1024 * 1024; // 1MB, they're usually ~128KB
+
     public ZeppOsAgpsInstallHandler(final Uri uri, final Context context) {
         this.mContext = context;
 
@@ -53,8 +59,13 @@ public class ZeppOsAgpsInstallHandler implements InstallHandler {
             return;
         }
 
+        if (uriHelper.getFileSize() > MAX_EXPECTED_SIZE) {
+            LOG.debug("Not agps - file too large");
+            return;
+        }
+
         try (InputStream in = new BufferedInputStream(uriHelper.openInputStream())) {
-            final byte[] rawBytes = FileUtils.readAll(in, 1024 * 1024); // 1MB, they're usually ~128KB
+            final byte[] rawBytes = FileUtils.readAll(in, MAX_EXPECTED_SIZE);
             final ZeppOsAgpsFile agpsFile = new ZeppOsAgpsFile(rawBytes);
             if (agpsFile.isValid()) {
                 this.file = agpsFile;
@@ -64,13 +75,19 @@ public class ZeppOsAgpsInstallHandler implements InstallHandler {
         }
     }
 
+    @NonNull
     @Override
-    public boolean isValid() {
-        return file != null;
+    public Class<? extends Activity> getInstallActivity() {
+        return FwAppInstallerActivity.class;
     }
 
     @Override
-    public void validateInstallation(final InstallActivity installActivity, final GBDevice device) {
+    public boolean isValid() {
+        return file != null && file.isValid();
+    }
+
+    @Override
+    public void validateInstallation(@NonNull final InstallActivity installActivity, @NonNull final GBDevice device) {
         if (device.isBusy()) {
             installActivity.setInfoText(device.getBusyTask());
             installActivity.setInstallEnabled(false);
@@ -78,13 +95,12 @@ public class ZeppOsAgpsInstallHandler implements InstallHandler {
         }
 
         final DeviceCoordinator coordinator = device.getDeviceCoordinator();
-        if (!(coordinator instanceof ZeppOsCoordinator)) {
+        if (!(coordinator instanceof ZeppOsCoordinator zeppOsCoordinator)) {
             LOG.warn("Coordinator is not a ZeppOsCoordinator: {}", coordinator.getClass());
             installActivity.setInfoText(mContext.getString(R.string.fwapp_install_device_not_supported));
             installActivity.setInstallEnabled(false);
             return;
         }
-        final ZeppOsCoordinator zeppOsCoordinator = (ZeppOsCoordinator) coordinator;
         if (!zeppOsCoordinator.supportsAgpsUpdates()) {
             installActivity.setInfoText(mContext.getString(R.string.fwapp_install_device_not_supported));
             installActivity.setInstallEnabled(false);
@@ -118,7 +134,7 @@ public class ZeppOsAgpsInstallHandler implements InstallHandler {
     }
 
     @Override
-    public void onStartInstall(final GBDevice device) {
+    public void onStartInstall(@NonNull final GBDevice device) {
     }
 
     public ZeppOsAgpsFile getFile() {

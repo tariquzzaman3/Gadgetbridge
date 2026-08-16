@@ -16,27 +16,26 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.femometer;
 
-import android.app.Activity;
-
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.regex.Pattern;
 
-import de.greenrobot.dao.query.QueryBuilder;
-import nodomain.freeyourgadget.gadgetbridge.GBException;
+import de.greenrobot.dao.AbstractDao;
+import de.greenrobot.dao.Property;
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.devices.AbstractDeviceCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.devices.AbstractBLEDeviceCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.TimeSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
-import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.FemometerVinca2TemperatureSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.FemometerVinca2TemperatureSampleDao;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.femometer.FemometerVinca2DeviceSupport;
 
-public class FemometerVinca2DeviceCoordinator extends AbstractDeviceCoordinator {
+public class FemometerVinca2DeviceCoordinator extends AbstractBLEDeviceCoordinator {
     @Override
     public String getManufacturer() {
         // Actual manufacturer is Joytech Healthcare
@@ -45,7 +44,7 @@ public class FemometerVinca2DeviceCoordinator extends AbstractDeviceCoordinator 
 
     @NonNull
     @Override
-    public Class<? extends DeviceSupport> getDeviceSupportClass() {
+    public Class<? extends DeviceSupport> getDeviceSupportClass(final GBDevice device) {
         return FemometerVinca2DeviceSupport.class;
     }
 
@@ -71,28 +70,15 @@ public class FemometerVinca2DeviceCoordinator extends AbstractDeviceCoordinator 
     }
 
     @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_thermometer_disabled;
+    public Map<AbstractDao<?, ?>, Property> getAllDeviceDao(@NonNull final DaoSession session) {
+        Map<AbstractDao<?, ?>, Property> map = new HashMap<>(1);
+        map.put(session.getFemometerVinca2TemperatureSampleDao(), FemometerVinca2TemperatureSampleDao.Properties.DeviceId);
+        return map;
     }
-
-
-    @Override
-    protected void deleteDevice(@NonNull GBDevice gbDevice, @NonNull Device device, @NonNull DaoSession session) throws GBException {
-        Long deviceId = device.getId();
-        QueryBuilder<?> qb = session.getFemometerVinca2TemperatureSampleDao().queryBuilder();
-        qb.where(FemometerVinca2TemperatureSampleDao.Properties.DeviceId.eq(deviceId)).buildDelete().executeDeleteWithoutDetachingEntities();
-    }
-
 
     @Override
     public int getBondingStyle(){
         return BONDING_STYLE_NONE;
-    }
-
-    @Nullable
-    @Override
-    public Class<? extends Activity> getPairingActivity() {
-        return null;
     }
 
     @Override
@@ -101,31 +87,13 @@ public class FemometerVinca2DeviceCoordinator extends AbstractDeviceCoordinator 
     }
 
     @Override
-    public boolean supportsTemperatureMeasurement() {
+    public boolean supportsTemperatureMeasurement(@NonNull final GBDevice device) {
         return true;
     }
 
     @Override
-    public boolean supportsActivityTracking() {
+    public boolean supportsCharts(@NonNull GBDevice device) {
         return true;
-    }
-
-    @Override
-    public boolean supportsSleepMeasurement() {
-        return false;
-    }
-
-    @Override
-    public boolean supportsStepCounter() {
-        return false;
-    }
-    @Override
-    public boolean supportsSpeedzones() {
-        return false;
-    }
-    @Override
-    public boolean supportsActivityTabs() {
-        return false;
     }
 
     @Override
@@ -133,8 +101,11 @@ public class FemometerVinca2DeviceCoordinator extends AbstractDeviceCoordinator 
         return new int[]{
                 R.xml.devicesettings_volume,
                 R.xml.devicesettings_femometer,
-                R.xml.devicesettings_temperature_scale_cf,
         };
     }
 
+    @Override
+    public DeviceCoordinator.DeviceKind getDeviceKind(@NonNull GBDevice device) {
+        return DeviceCoordinator.DeviceKind.THERMOMETER;
+    }
 }

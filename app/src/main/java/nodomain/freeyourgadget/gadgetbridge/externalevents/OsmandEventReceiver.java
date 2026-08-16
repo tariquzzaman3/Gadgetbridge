@@ -22,9 +22,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.pm.PackageManager;
 import android.os.IBinder;
-import android.os.PowerManager;
 import android.os.RemoteException;
 import android.view.KeyEvent;
 
@@ -46,6 +44,8 @@ import java.util.List;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.model.NavigationInfoSpec;
+import nodomain.freeyourgadget.gadgetbridge.util.AndroidUtils;
+import nodomain.freeyourgadget.gadgetbridge.util.NavigationUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
 public class OsmandEventReceiver {
@@ -75,10 +75,10 @@ public class OsmandEventReceiver {
 
         @Override
         public void updateNavigationInfo(ADirectionInfo directionInfo) {
-            navigationInfoSpec.nextAction = directionInfo.getTurnType();
-            navigationInfoSpec.distanceToTurn = directionInfo.getDistanceTo()+"m";
+            navigationInfoSpec.setNextAction(directionInfo.getTurnType());
+            navigationInfoSpec.setDistanceToTurn(directionInfo.getDistanceTo() + "m");
 
-            if (shouldSendNavigation()) {
+            if (NavigationUtils.shouldSendNavigation(app, "osmand")) {
                 GBApplication.deviceService().onSetNavigationInfo(navigationInfoSpec);
             }
 
@@ -92,9 +92,9 @@ public class OsmandEventReceiver {
         @Override
         public void onVoiceRouterNotify(OnVoiceNavigationParams params) {
             List<String> played = params.getPlayed();
-            for (String instuction : played) {
-                navigationInfoSpec.instruction = instuction;
-                LOG.debug("instruction: {}", instuction);
+            for (String instruction : played) {
+                navigationInfoSpec.setInstruction(instruction);
+                LOG.debug("instruction: {}", instruction);
                 // only first one for now
                 break;
             }
@@ -107,6 +107,7 @@ public class OsmandEventReceiver {
     };
 
     private final ServiceConnection mConnection = new ServiceConnection() {
+        @Override
         public void onServiceConnected(ComponentName className,
                                        IBinder service) {
             mIOsmAndAidlInterface = IOsmAndAidlInterface.Stub.asInterface(service);
@@ -117,6 +118,7 @@ public class OsmandEventReceiver {
 //            OsmandEventReceiver.this.startActivityForResult(intent,666);
         }
 
+        @Override
         public void onServiceDisconnected(ComponentName className) {
             mIOsmAndAidlInterface = null;
             LOG.info("OsmAnd service disconnected");
@@ -176,27 +178,6 @@ public class OsmandEventReceiver {
         return -1L;
     }
 
-    private boolean shouldSendNavigation() {
-        Prefs prefs = GBApplication.getPrefs();
-
-        boolean navigationForward = prefs.getBoolean("navigation_forward", true);
-        boolean navigationOsmAnd = prefs.getBoolean("navigation_app_osmand", true);
-        if (!navigationForward || !navigationOsmAnd) {
-            return false;
-        }
-
-        boolean navigationScreenOn = prefs.getBoolean("nagivation_screen_on", true);
-        if (!navigationScreenOn) {
-            PowerManager powermanager = (PowerManager) app.getSystemService(Context.POWER_SERVICE);
-            if (powermanager != null && powermanager.isScreenOn()) {
-                LOG.info("Not forwarding navigation instructions, screen seems to be on and settings do not allow this");
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     /**
      * Method to register for Voice Router voice messages during navigation. Notifies user about voice messages.
      *
@@ -220,18 +201,10 @@ public class OsmandEventReceiver {
     public List<CharSequence> findInstalledOsmandPackages() {
         List<CharSequence> installedPackages = new ArrayList<>();
         for (String knownPackage : app.getBaseContext().getResources().getStringArray(R.array.osmand_package_names)) {
-            if (isPackageInstalled(knownPackage)) {
+            if (AndroidUtils.isPackageInstalled(knownPackage)) {
                 installedPackages.add(knownPackage);
             }
         }
         return installedPackages;
-    }
-
-    private boolean isPackageInstalled(final String packageName) {
-        try {
-            return app.getBaseContext().getPackageManager().getApplicationInfo(packageName, 0).enabled;
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
-        }
     }
 }

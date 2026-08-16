@@ -16,7 +16,20 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.deviceevents;
 
-public class GBDeviceEventDisplayMessage {
+import android.content.Context;
+import android.content.Intent;
+
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
+import nodomain.freeyourgadget.gadgetbridge.util.GB;
+
+public class GBDeviceEventDisplayMessage extends GBDeviceEvent {
+    private static final Logger LOG = LoggerFactory.getLogger(GBDeviceEventDisplayMessage.class);
+
     public String message;
     public int duration;
     public int severity;
@@ -25,14 +38,22 @@ public class GBDeviceEventDisplayMessage {
      * An event for displaying a message to the user. How the message is displayed
      * is a detail of the current activity, which needs to listen to the Intent
      * GB.ACTION_DISPLAY_MESSAGE.
-     *
-     * @param message
-     * @param duration
-     * @param severity
      */
     public GBDeviceEventDisplayMessage(String message, int duration, int severity) {
         this.message = message;
         this.duration = duration;
         this.severity = severity;
+    }
+
+    @Override
+    public void evaluate(final Context context, final GBDevice device) {
+        GB.log(LOG, this.message, this.severity, null);
+
+        Intent messageIntent = new Intent(GB.ACTION_DISPLAY_MESSAGE);
+        messageIntent.putExtra(GB.DISPLAY_MESSAGE_MESSAGE, this.message);
+        messageIntent.putExtra(GB.DISPLAY_MESSAGE_DURATION, this.duration);
+        messageIntent.putExtra(GB.DISPLAY_MESSAGE_SEVERITY, this.severity);
+
+        LocalBroadcastManager.getInstance(context).sendBroadcast(messageIntent);
     }
 }

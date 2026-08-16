@@ -64,12 +64,12 @@ import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceService;
+import nodomain.freeyourgadget.gadgetbridge.model.DistanceUnit;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.RecordedDataTypes;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.lefun.requests.FindDeviceRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.lefun.requests.GetActivityDataRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.lefun.requests.GetBatteryLevelRequest;
@@ -98,10 +98,10 @@ import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 /**
  * Device support class for Lefun devices
  */
-public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
+public class LefunDeviceSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(LefunDeviceSupport.class);
 
-    private final List<Request> inProgressRequests = Collections.synchronizedList(new ArrayList<Request>());
+    private final List<Request> inProgressRequests = Collections.synchronizedList(new ArrayList<>());
     private final Queue<Request> queuedRequests = new ConcurrentLinkedQueue<>();
 
     private int lastStepsCount = -1;
@@ -121,10 +121,10 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
         builder.setCallback(this);
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         // Enable notification
-        builder.notify(getCharacteristic(LefunConstants.UUID_CHARACTERISTIC_LEFUN_NOTIFY), true);
+        builder.notify(LefunConstants.UUID_CHARACTERISTIC_LEFUN_NOTIFY, true);
 
         // Init device (get version info, battery level, and set time)
         try {
@@ -163,7 +163,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             SendNotificationRequest request = new SendNotificationRequest(this, builder);
             request.setNotification(notificationSpec);
             request.perform();
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to send notification", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -177,7 +177,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             SetTimeRequest request = new SetTimeRequest(this, builder);
             request.perform();
             inProgressRequests.add(request);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to set time", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -198,7 +198,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
                 request.setMinute(alarm.getMinute());
                 request.perform();
                 inProgressRequests.add(request);
-                performConnected(builder.getTransaction());
+                builder.queueConnected();
             } catch (IOException e) {
                 GB.toast(getContext(), "Failed to set alarm", Toast.LENGTH_SHORT,
                         GB.ERROR, e);
@@ -216,7 +216,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
                     SendCallNotificationRequest request = new SendCallNotificationRequest(this, builder);
                     request.setCallNotification(callSpec);
                     request.perform();
-                    performConnected(builder.getTransaction());
+                    builder.queueConnected();
                 } catch (IOException e) {
                     GB.toast(getContext(), "Failed to send call notification", Toast.LENGTH_SHORT,
                             GB.ERROR, e);
@@ -258,7 +258,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             request.setPpgType(LefunConstants.PPG_TYPE_HEART_RATE);
             request.perform();
             inProgressRequests.add(request);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to start heart rate test", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -273,7 +273,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
                 FindDeviceRequest request = new FindDeviceRequest(this, builder);
                 request.perform();
                 inProgressRequests.add(request);
-                performConnected(builder.getTransaction());
+                builder.queueConnected();
             } catch (IOException e) {
                 GB.toast(getContext(), "Failed to initiate find device", Toast.LENGTH_SHORT,
                         GB.ERROR, e);
@@ -339,7 +339,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
                 }
                 break;
             }
-            case SettingsActivity.PREF_MEASUREMENT_SYSTEM: {
+            case SettingsActivity.PREF_UNIT_DISTANCE: {
                 sendUnitsSetting(null);
                 break;
             }
@@ -358,12 +358,10 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
      * @param builder the transaction builder to append to
      */
     private void sendUnitsSetting(TransactionBuilder builder) {
-        Prefs prefs = GBApplication.getPrefs();
-        String units = prefs.getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM,
-                getContext().getString(R.string.p_unit_metric));
+        final DistanceUnit distanceUnit = GBApplication.getPrefs().getDistanceUnit();
 
         byte lefunUnits;
-        if (getContext().getString(R.string.p_unit_metric).equals(units)) {
+        if (distanceUnit == DistanceUnit.METRIC) {
             lefunUnits = SettingsCommand.MEASUREMENT_UNIT_METRIC;
         } else {
             lefunUnits = SettingsCommand.MEASUREMENT_UNIT_IMPERIAL;
@@ -451,7 +449,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             request.perform();
             inProgressRequests.add(request);
             if (!givenBuilder)
-                performConnected(builder.getTransaction());
+                builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to set settings", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -474,7 +472,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             request.perform();
             inProgressRequests.add(request);
             if (!givenBuilder)
-                performConnected(builder.getTransaction());
+                builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to send profile", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -493,7 +491,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             request.setCmd(cmd);
             request.perform();
             inProgressRequests.add(request);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to set enabled features", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -512,7 +510,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             request.setInterval(period);
             request.perform();
             inProgressRequests.add(request);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to set sedentary reminder interval", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -531,7 +529,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             request.setInterval(period);
             request.perform();
             inProgressRequests.add(request);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to set hydration reminder interval", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -550,7 +548,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             request.setLanguage(language);
             request.perform();
             inProgressRequests.add(request);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to set language", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -650,7 +648,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             getHydrationReminderIntervalRequest.perform();
             inProgressRequests.add(getHydrationReminderIntervalRequest);
 
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
             GB.toast(getContext(), "Failed to retrieve settings", Toast.LENGTH_SHORT,
                     GB.ERROR, e);
@@ -658,9 +656,8 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] data) {
         if (characteristic.getUuid().equals(LefunConstants.UUID_CHARACTERISTIC_LEFUN_NOTIFY)) {
-            byte[] data = characteristic.getValue();
             // Parse response
             if (data.length >= LefunConstants.CMD_HEADER_LENGTH && data[0] == LefunConstants.CMD_RESPONSE_ID) {
                 // Note: full validation is done within the request
@@ -693,7 +690,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             return false;
         }
 
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, data);
     }
 
     /**
@@ -804,8 +801,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
      * Callback when device info has been obtained
      */
     public void completeInitialization() {
-        gbDevice.setState(GBDevice.State.INITIALIZED);
-        gbDevice.sendDeviceUpdateIntent(getContext());
+        gbDevice.setUpdateState(GBDevice.State.INITIALIZED, getContext());
         onReadConfiguration("");
     }
 
@@ -1016,7 +1012,7 @@ public class LefunDeviceSupport extends AbstractBTLEDeviceSupport {
             try {
                 request.perform();
                 if (!request.isSelfQueue())
-                    performConnected(request.getTransactionBuilder().getTransaction());
+                    request.getTransactionBuilder().queueConnected();
             } catch (IOException e) {
                 GB.toast(getContext(), "Failed to run next queued request", Toast.LENGTH_SHORT,
                         GB.ERROR, e);

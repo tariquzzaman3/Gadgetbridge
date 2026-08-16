@@ -26,21 +26,29 @@ import androidx.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 
+import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiPacket;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.FileDownloadService0A;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.FileDownloadService2C;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetFileBlockRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetFileDownloadCompleteRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetFileDownloadInitRequest;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetFileHashRequest;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetFileIncomingAck;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetFileInfoRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetFileParametersRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.Request;
+import nodomain.freeyourgadget.gadgetbridge.util.FileUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
 public class HuaweiFileDownloadManager {
@@ -79,6 +87,12 @@ public class HuaweiFileDownloadManager {
         }
     }
 
+    public static class HuaweiFileDownloadVerifyException extends HuaweiFileDownloadException {
+        HuaweiFileDownloadVerifyException(@Nullable FileRequest fileRequest) {
+            super(fileRequest, "Verify failed");
+        }
+    }
+
     public static class HuaweiFileDownloadFileMismatchException extends HuaweiFileDownloadException {
         HuaweiFileDownloadFileMismatchException(@NonNull FileRequest fileRequest, String filename) {
             super(fileRequest, "Data for wrong file received. Expected name " + fileRequest.filename + ", got name " + filename);
@@ -96,9 +110,9 @@ public class HuaweiFileDownloadManager {
             super(
                     fileRequest,
                     "Data for wrong file received. Expected " +
-                        (newSync ?
-                            "id " + fileRequest.fileId + ", got id " + number :
-                            "packet number " + (fileRequest.lastPacketNumber + 1) + ", got " + number)
+                            (newSync ?
+                                    "id " + fileRequest.fileId + ", got id " + number :
+                                    "packet number " + (fileRequest.lastPacketNumber + 1) + ", got " + number)
             );
         }
     }
@@ -107,12 +121,17 @@ public class HuaweiFileDownloadManager {
         DEBUG,
         SLEEP_STATE,
         SLEEP_DATA,
+        RRI,
         GPS,
+        PDR,
+        SEQUENCE_DATA,
+        ECG_ANALYSIS_DATA,
         UNKNOWN // Never for input!
     }
 
     public static class FileDownloadCallback {
-        public void downloadComplete(FileRequest fileRequest) {  }
+        public void downloadComplete(FileRequest fileRequest, @Nullable File localRawFile) {
+        }
 
         public void downloadException(HuaweiFileDownloadException e) {
             if (e.fileRequest != null)
@@ -129,15 +148,20 @@ public class HuaweiFileDownloadManager {
         private final FileType fileType;
         private final boolean newSync;
 
-        FileDownloadCallback fileDownloadCallback = null;
+        private final FileDownloadCallback fileDownloadCallback;
 
         // Sleep type only - for 2C GPS they are set to zero
         private int startTime = 0;
         private int endTime = 0;
 
+        private int dictId = 0;
+
         // GPS type only
         private short workoutId;
         private Long databaseId;
+
+
+        private boolean initFormDevice = false;
 
         private FileRequest(String filename, FileType fileType, boolean newSync, int startTime, int endTime, FileDownloadCallback fileDownloadCallback) {
             this.filename = filename;
@@ -148,12 +172,39 @@ public class HuaweiFileDownloadManager {
             this.endTime = endTime;
         }
 
+        public static FileRequest IncomingFileRequest(String filename, FileDownloadCallback fileDownloadCallback) {
+            return new FileRequest(filename, FileType.UNKNOWN, true, fileDownloadCallback);
+        }
+
         public static FileRequest sleepStateFileRequest(boolean supportsTruSleepNewSync, int startTime, int endTime, FileDownloadCallback fileDownloadCallback) {
             return new FileRequest("sleep_state.bin", FileType.SLEEP_STATE, supportsTruSleepNewSync, startTime, endTime, fileDownloadCallback);
         }
 
         public static FileRequest sleepDataFileRequest(boolean supportsTruSleepNewSync, int startTime, int endTime, FileDownloadCallback fileDownloadCallback) {
             return new FileRequest("sleep_data.bin", FileType.SLEEP_DATA, supportsTruSleepNewSync, startTime, endTime, fileDownloadCallback);
+        }
+
+        public static FileRequest rriFileRequest(boolean supportsRriNewSync, int startTime, int endTime, FileDownloadCallback fileDownloadCallback) {
+            return new FileRequest("rrisqi_data.bin", FileType.RRI, supportsRriNewSync, startTime, endTime, fileDownloadCallback);
+        }
+
+        public static FileRequest ecgAnalysisFileRequest(int startTime, int endTime, FileDownloadCallback fileDownloadCallback) {
+            return new FileRequest("ecg_analysis_data.bin", FileType.ECG_ANALYSIS_DATA, true, startTime, endTime, fileDownloadCallback);
+        }
+
+
+        private FileRequest(String filename, FileType fileType, int startTime, int endTime, int dictId, FileDownloadCallback fileDownloadCallback) {
+            this.filename = filename;
+            this.fileType = fileType;
+            this.newSync = true;
+            this.fileDownloadCallback = fileDownloadCallback;
+            this.startTime = startTime;
+            this.endTime = endTime;
+            this.dictId = dictId;
+        }
+
+        public static FileRequest sequenceDataFileRequest(int startTime, int endTime, int dictId, FileDownloadCallback fileDownloadCallback) {
+            return new FileRequest("sequence_data", FileType.SEQUENCE_DATA, startTime, endTime, dictId, fileDownloadCallback);
         }
 
         private FileRequest(String filename, FileType fileType, boolean newSync, FileDownloadCallback fileDownloadCallback) {
@@ -183,6 +234,10 @@ public class HuaweiFileDownloadManager {
                 return new FileRequest(null, FileType.GPS, false, workoutId, databaseId, fileDownloadCallback);
         }
 
+        public static FileRequest workoutPdrFileRequest(short workoutId, Long databaseId, FileDownloadCallback fileDownloadCallback) {
+            return new FileRequest(String.format(Locale.getDefault(), "%d_pdr.bin", workoutId), FileType.PDR, true, workoutId, databaseId, fileDownloadCallback);
+        }
+
         // Retrieved
 
         private int fileSize;
@@ -200,6 +255,15 @@ public class HuaweiFileDownloadManager {
         // New sync only
         private byte fileId;
         private boolean noEncrypt;
+        private boolean needVerify = false;
+        private byte[] fileHash = null;
+
+        // Incoming P2P request
+        private byte inFileType;
+        private String srcPackage = null;
+        private String dstPackage = null;
+        private String srcFingerprint = null;
+        private String dstFingerprint = null;
 
         public byte getFileId() {
             return fileId;
@@ -215,7 +279,7 @@ public class HuaweiFileDownloadManager {
 
         public byte[] getData() {
             if (buffer == null)
-                return new byte[] {};
+                return new byte[]{};
             return buffer.array();
         }
 
@@ -250,6 +314,78 @@ public class HuaweiFileDownloadManager {
         public boolean isNoEncrypt() {
             return noEncrypt;
         }
+
+        public boolean isInitFormDevice() {
+            return initFormDevice;
+        }
+
+        public void setInitFormDevice(boolean initFormDevice) {
+            this.initFormDevice = initFormDevice;
+        }
+
+        public String getSrcPackage() {
+            return srcPackage;
+        }
+
+        public void setSrcPackage(String srcPackage) {
+            this.srcPackage = srcPackage;
+        }
+
+        public String getDstPackage() {
+            return dstPackage;
+        }
+
+        public void setDstPackage(String dstPackage) {
+            this.dstPackage = dstPackage;
+        }
+
+        public String getSrcFingerprint() {
+            return srcFingerprint;
+        }
+
+        public void setSrcFingerprint(String srcFingerprint) {
+            this.srcFingerprint = srcFingerprint;
+        }
+
+        public String getDstFingerprint() {
+            return dstFingerprint;
+        }
+
+        public void setDstFingerprint(String dstFingerprint) {
+            this.dstFingerprint = dstFingerprint;
+        }
+
+        public void setFileId(byte fileId) {
+            this.fileId = fileId;
+        }
+
+        public int getFileSize() {
+            return fileSize;
+        }
+
+        public void setFileSize(int fileSize) {
+            this.fileSize = fileSize;
+        }
+
+        public byte getInFileType() {
+            return inFileType;
+        }
+
+        public void setInFileType(byte inFileType) {
+            this.inFileType = inFileType;
+        }
+
+        public boolean isNeedVerify() {
+            return needVerify;
+        }
+
+        public void setNeedVerify(boolean needVerify) {
+            this.needVerify = needVerify;
+        }
+
+        public int getDictId() { return dictId;}
+
+        public void setDictId(int dictId) { this.dictId = dictId;}
     }
 
     /**
@@ -272,9 +408,9 @@ public class HuaweiFileDownloadManager {
         public boolean handleResponse(HuaweiPacket response) {
             if (
                     (response.serviceId == FileDownloadService0A.id &&
-                        response.commandId == FileDownloadService0A.BlockResponse.id) ||
-                    (response.serviceId == FileDownloadService2C.id &&
-                        response.commandId == FileDownloadService2C.BlockResponse.id)
+                            response.commandId == FileDownloadService0A.BlockResponse.id) ||
+                            (response.serviceId == FileDownloadService2C.id &&
+                                    response.commandId == FileDownloadService2C.BlockResponse.id)
             ) {
                 receivedPacket = response;
                 return true;
@@ -350,6 +486,14 @@ public class HuaweiFileDownloadManager {
             if (needSync)
                 this.needSync = true;
         }
+        if (fileRequest.isInitFormDevice()) {
+            GetFileIncomingAck getFileIncomingAck = new GetFileIncomingAck(supportProvider, fileRequest, (byte) 0);
+            try {
+                getFileIncomingAck.doPerform();
+            } catch (IOException e) {
+                LOG.error("Error execute", e);
+            }
+        }
         startDownload();
     }
 
@@ -400,7 +544,25 @@ public class HuaweiFileDownloadManager {
 
         this.currentFileRequest = this.fileRequests.remove(0);
 
+        if (this.currentFileRequest.isInitFormDevice()) {
+            getFileHash();
+            return;
+        }
+
+        sendFileDownloadInit();
+    }
+
+    /**
+     * Sends the FileDownloadInit for {@link #currentFileRequest}. With dual channel active the
+     * request gets a short timeout: the Watch 4 firmware silently ignores 0x2C on the main socket
+     * while dual channel is up (but answers immediately on aux), so on timeout the init is retried
+     * once with 0x2C rerouted to the aux socket for the rest of the connection
+     * (see {@link HuaweiDualChannelHelper#setFileDownloadViaAux}).
+     */
+    private void sendFileDownloadInit() {
         GetFileDownloadInitRequest getFileDownloadInitRequest = new GetFileDownloadInitRequest(supportProvider, currentFileRequest);
+        if (currentFileRequest.newSync && supportProvider.getDualChannelHelper().isActive())
+            getFileDownloadInitRequest.setupTimeoutUntilNext(5000);
         getFileDownloadInitRequest.setFinalizeReq(new Request.RequestCallback() {
             @Override
             public void call(Request request) {
@@ -475,6 +637,25 @@ public class HuaweiFileDownloadManager {
             public void handleException(Request.ResponseParseException e) {
                 currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadRequestException(currentFileRequest, this.getClass(), e));
             }
+
+            @Override
+            public void timeout(Request request) {
+                // Watch never answered the init — drop the stale handler so a late or retried
+                // response cannot be delivered to this dead request.
+                supportProvider.removeInProgressRequests(request);
+                HuaweiDualChannelHelper dualHelper = supportProvider.getDualChannelHelper();
+                if (dualHelper.isActive() && !dualHelper.isFileDownloadViaAux()) {
+                    // Watch 4 firmware: FileDownloadInit is silently ignored on the main socket
+                    // while dual channel is active, but answered immediately on the aux socket.
+                    // Move 0x2C to aux for the rest of this connection and retry once.
+                    LOG.warn("FileDownloadInit got no answer on the main socket, retrying with 0x2C on aux");
+                    dualHelper.setFileDownloadViaAux(true);
+                    sendFileDownloadInit();
+                } else {
+                    currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadTimeoutException(currentFileRequest));
+                    reset();
+                }
+            }
         });
         try {
             getFileDownloadInitRequest.doPerform();
@@ -488,10 +669,23 @@ public class HuaweiFileDownloadManager {
         // Old sync only, can never be multiple at the same time
         // Assuming currentRequest is the correct one the entire time
         // Which may no longer be the case when we implement multi-download for new sync
-        GetFileParametersRequest getFileParametersRequest = new GetFileParametersRequest(supportProvider,
-                currentFileRequest.fileType == FileType.SLEEP_STATE ||
-                        currentFileRequest.fileType == FileType.SLEEP_DATA
-        );
+        byte fileType;
+
+        if (currentFileRequest.fileType == HuaweiFileDownloadManager.FileType.DEBUG)
+            fileType = 0x00;
+        else if (currentFileRequest.fileType == FileType.SLEEP_STATE || currentFileRequest.fileType == FileType.SLEEP_DATA)
+            fileType = 0x01;
+        else if (currentFileRequest.fileType == HuaweiFileDownloadManager.FileType.GPS)
+            fileType = 0x02;
+        else if (currentFileRequest.fileType == HuaweiFileDownloadManager.FileType.RRI)
+            fileType = 0x04;
+        else {
+            currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadException(currentFileRequest, "Unknown download type"));
+            reset();
+            return;
+        }
+
+        GetFileParametersRequest getFileParametersRequest = new GetFileParametersRequest(supportProvider, fileType);
         getFileParametersRequest.setFinalizeReq(new Request.RequestCallback() {
             @Override
             public void call() {
@@ -510,6 +704,39 @@ public class HuaweiFileDownloadManager {
             getFileParametersRequest.doPerform();
         } catch (IOException e) {
             currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadSendException(currentFileRequest, getFileParametersRequest, e));
+            reset();
+        }
+    }
+
+    private void getFileHash() {
+        if (!currentFileRequest.isNeedVerify() || !currentFileRequest.isNewSync()) {
+            getFileInfo();
+            return;
+        }
+        GetFileHashRequest getFileHashRequest = new GetFileHashRequest(supportProvider, currentFileRequest);
+        getFileHashRequest.setFinalizeReq(new Request.RequestCallback() {
+            @Override
+            public void call(Request request) {
+                GetFileHashRequest r = (GetFileHashRequest) request;
+                if (currentFileRequest.fileId != r.fileId) {
+                    currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadFileMismatchException(currentFileRequest, r.fileId, true));
+                    reset();
+                    return;
+                }
+                currentFileRequest.fileHash = r.fileHash;
+                getFileInfo();
+            }
+
+            @Override
+            public void handleException(Request.ResponseParseException e) {
+                currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadRequestException(null, this.getClass(), e));
+                reset();
+            }
+        });
+        try {
+            getFileHashRequest.doPerform();
+        } catch (IOException e) {
+            currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadSendException(currentFileRequest, getFileHashRequest, e));
             reset();
         }
     }
@@ -557,8 +784,19 @@ public class HuaweiFileDownloadManager {
     }
 
     private void downloadNextFileBlock() {
-        if (currentFileRequest.buffer == null) // New file
+        if (currentFileRequest.buffer == null) { // New file
+            if (currentFileRequest.fileSize < 0) {
+                // The watch reported an invalid/negative file size (seen as 0xFFFFFFFF, together with
+                // an error status TLV, for a sequence_data file it has no data for). Fail this file
+                // gracefully instead of ByteBuffer.allocate(-1), which throws and kills the socket
+                // read thread, stalling the whole sync.
+                currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadException(
+                        currentFileRequest, "Invalid file size reported by device: " + currentFileRequest.fileSize));
+                reset();
+                return;
+            }
             currentFileRequest.buffer = ByteBuffer.allocate(currentFileRequest.fileSize);
+        }
         currentFileRequest.lastPacketNumber = -1; // Counts per block
         currentFileRequest.startOfBlockOffset = currentFileRequest.buffer.position();
         currentFileRequest.currentBlockSize = Math.min(
@@ -620,26 +858,90 @@ public class HuaweiFileDownloadManager {
         } // Else we're expecting more data to arrive automatically
     }
 
+    @Nullable
+    private File saveRawFileData(FileRequest fileRequest) {
+        boolean saveRawFilesEnabled = GBApplication
+                .getDeviceSpecificSharedPrefs(supportProvider.getDevice().getAddress())
+                .getBoolean(DeviceSettingsPreferenceConst.PREF_HUAWEI_SAVE_RAW_FILES, false);
+        if (fileRequest.fileType != FileType.GPS && !saveRawFilesEnabled)
+            return null;
+
+        try {
+            String filename = FileUtils.makeValidFileName(System.currentTimeMillis() + "_" + fileRequest.getFileId() + "_" + fileRequest.getFilename());
+            final File writableExportDirectory = supportProvider.getDevice().getDeviceCoordinator().getWritableExportDirectory(supportProvider.getDevice(), true);
+            File rawDir = new File(writableExportDirectory, "raw");
+            File typeDir = new File(rawDir, fileRequest.fileType.name());
+            if (!typeDir.isDirectory()) {
+                if (!typeDir.mkdirs()) {
+                    LOG.error("Error save raw file");
+                    return null;
+                }
+            }
+
+            File targetFile = new File(
+                    typeDir,
+                    filename
+            );
+            try (FileOutputStream fos = new FileOutputStream(targetFile)) {
+                fos.write(fileRequest.getData());
+            }
+            LOG.info("RAW file saved to: {}", targetFile.getAbsolutePath());
+            return targetFile;
+        } catch (IOException e) {
+            LOG.error("Could save RAW file", e);
+            return null;
+        }
+    }
+
     private void fileComplete() {
         // Stop timeout from hitting
         this.handler.removeCallbacks(this.timeout);
 
+
+        byte status = 1;
+        if (currentFileRequest.isNeedVerify() && currentFileRequest.isNewSync()) {
+            status = 2;
+            try {
+                if (currentFileRequest.fileHash != null) {
+                    MessageDigest m = MessageDigest.getInstance("SHA256");
+                    m.update(currentFileRequest.getData(), 0, currentFileRequest.fileSize);
+                    byte[] sha256 = m.digest();
+                    LOG.info("SHA256: {} {}", GB.hexdump(sha256), GB.hexdump(currentFileRequest.fileHash));
+                    if (Arrays.equals(sha256, currentFileRequest.fileHash)) {
+                        status = 1;
+                    }
+                }
+            } catch (Exception e) {
+                LOG.error("Error verify SHA256", e);
+            }
+        }
+
         // File complete request
-        GetFileDownloadCompleteRequest getFileDownloadCompleteRequest = new GetFileDownloadCompleteRequest(supportProvider, currentFileRequest);
+        GetFileDownloadCompleteRequest getFileDownloadCompleteRequest = new GetFileDownloadCompleteRequest(supportProvider, currentFileRequest, status);
         try {
             getFileDownloadCompleteRequest.doPerform();
         } catch (IOException e) {
             currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadSendException(currentFileRequest, getFileDownloadCompleteRequest, e));
             reset();
+            return;
+        }
+
+        if (status != 1) {
+            currentFileRequest.fileDownloadCallback.downloadException(new HuaweiFileDownloadVerifyException(currentFileRequest));
+            reset();
+            return;
         }
 
         // Handle file data
+
+        final File rawFileData = saveRawFileData(currentFileRequest);
+
         try {
-            currentFileRequest.fileDownloadCallback.downloadComplete(currentFileRequest);
+            currentFileRequest.fileDownloadCallback.downloadComplete(currentFileRequest, rawFileData);
         } catch (Exception e) {
             LOG.error("Download complete callback exception.", e);
             LOG.warn("File contents: {}", GB.hexdump(currentFileRequest.getData()));
-            GB.toast("Workout GPX file could not be parsed.",Toast.LENGTH_SHORT, GB.ERROR, e);
+            GB.toast("Workout GPX file could not be parsed.", Toast.LENGTH_SHORT, GB.ERROR, e);
         }
 
         if (!this.currentFileRequest.newSync && !this.fileRequests.isEmpty() && !this.fileRequests.get(0).newSync) {
@@ -660,7 +962,6 @@ public class HuaweiFileDownloadManager {
                 return;
             }
         }
-
         reset();
     }
 

@@ -1,4 +1,4 @@
-/*  Copyright (C) 2021-2024 Arjan Schrijver, Damien Gaignon, Petr Vaněk
+/*  Copyright (C) 2021-2026 Arjan Schrijver, Damien Gaignon, Petr Vaněk
 
     This file is part of Gadgetbridge.
 
@@ -89,8 +89,10 @@ import static nodomain.freeyourgadget.gadgetbridge.devices.fitpro.FitProConstant
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.Intent;
+import android.os.Bundle;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.apache.commons.lang3.ArrayUtils;
@@ -120,6 +122,7 @@ import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSett
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInfo;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventCameraRemote;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventFindPhone;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventMusicControl;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInfo;
@@ -135,14 +138,15 @@ import nodomain.freeyourgadget.gadgetbridge.model.ActivityUser;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceService;
+import nodomain.freeyourgadget.gadgetbridge.model.DistanceUnit;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.model.Weather;
+import nodomain.freeyourgadget.gadgetbridge.model.TemperatureUnit;
+import nodomain.freeyourgadget.gadgetbridge.model.weather.Weather;
+import nodomain.freeyourgadget.gadgetbridge.model.weather.WeatherMapper;
 import nodomain.freeyourgadget.gadgetbridge.model.WeatherSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattService;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceBusyAction;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.IntentListener;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfoProfile;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.deviceinfo.DeviceInfo;
@@ -151,7 +155,7 @@ import nodomain.freeyourgadget.gadgetbridge.util.AlarmUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.DateTimeUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
+public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(FitProDeviceSupport.class);
     public final GBDeviceEventBatteryInfo batteryCmd = new GBDeviceEventBatteryInfo();
     public final GBDeviceEventVersionInfo versionCmd = new GBDeviceEventVersionInfo();
@@ -193,12 +197,12 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
         readCharacteristic = getCharacteristic(UUID_CHARACTERISTIC_RX);
         writeCharacteristic = getCharacteristic(UUID_CHARACTERISTIC_TX);
 
-        builder.notify(getCharacteristic(UUID_CHARACTERISTIC_RX), true);
-        builder.notify(getCharacteristic(GattService.UUID_SERVICE_BATTERY_SERVICE), true);
+        builder.notify(UUID_CHARACTERISTIC_RX, true);
+        builder.notify(GattService.UUID_SERVICE_BATTERY_SERVICE, true);
         builder.setCallback(this);
 
         deviceInfoProfile.requestDeviceInfo(builder);
@@ -214,25 +218,25 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
 
         builder.write(writeCharacteristic, craftData(CMD_GROUP_GENERAL, FitProConstants.CMD_INIT1, (byte) 0x2));
         setTime(builder);
-        builder.wait(200);
+        builder.sleep(200);
         builder.write(writeCharacteristic, craftData(CMD_GROUP_REQUEST_DATA, FitProConstants.CMD_INIT1));
-        builder.wait(200);
+        builder.sleep(200);
         builder.write(writeCharacteristic, craftData(CMD_GROUP_REQUEST_DATA, FitProConstants.CMD_INIT2));
-        builder.wait(200);
+        builder.sleep(200);
         setLanguage(builder);
-        builder.wait(200);
+        builder.sleep(200);
         builder.write(writeCharacteristic, craftData(CMD_GROUP_GENERAL, FitProConstants.CMD_INIT3, VALUE_ON));
-        builder.wait(200);
+        builder.sleep(200);
         builder.write(writeCharacteristic, craftData(CMD_GROUP_REQUEST_DATA, VALUE_ON));
-        builder.wait(200);
+        builder.sleep(200);
         builder.write(writeCharacteristic, craftData(CMD_GROUP_REQUEST_DATA, (byte) 0xf));
-        builder.wait(200);
+        builder.sleep(200);
         builder.write(writeCharacteristic, craftData(CMD_GROUP_REQUEST_DATA, CMD_GET_HW_INFO));
-        builder.wait(200);
+        builder.sleep(200);
         builder.write(writeCharacteristic, craftData(CMD_GROUP_BAND_INFO, CMD_RX_BAND_INFO));
-        builder.wait(200);
+        builder.sleep(200);
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
         return builder;
     }
 
@@ -269,10 +273,10 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        super.onCharacteristicChanged(gatt, characteristic);
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] data) {
+        super.onCharacteristicChanged(gatt, characteristic, data);
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
         debugPrintArray(data, "FitPro received value");
         if (data[0] != FitProConstants.DATA_HEADER) {
             if (debugEnabled) {
@@ -404,9 +408,9 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
         //the band does not like to answer when asked together for both hw info, so ask now,
         // after data is already received
 
-        TransactionBuilder builder = new TransactionBuilder("notification");
+        TransactionBuilder builder = createTransactionBuilder("notification");
         builder.write(writeCharacteristic, craftData(CMD_GROUP_BAND_INFO, CMD_RX_BAND_INFO));
-        builder.queue(getQueue());
+        builder.queue();
 
     }
 
@@ -434,7 +438,7 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
     @Override
     public void onSetCallState(CallSpec callSpec) {
         LOG.debug("FitPro send call notification");
-        TransactionBuilder builder = new TransactionBuilder("CALL");
+        TransactionBuilder builder = createTransactionBuilder("CALL");
 
         if (callSpec.command == CallSpec.CALL_INCOMING) {
 
@@ -463,7 +467,7 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
         } else {
             builder.write(writeCharacteristic, craftData(CMD_GROUP_GENERAL, CMD_NOTIFICATION_CALL, VALUE_OFF));
         }
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
@@ -487,7 +491,7 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
                 case DeviceSettingsPreferenceConst.PREF_DISPLAY_ON_LIFT_END:
                     setDisplayOnLift(builder);
                     break;
-                case SettingsActivity.PREF_MEASUREMENT_SYSTEM:
+                case SettingsActivity.PREF_UNIT_DISTANCE:
                 case ActivityUser.PREF_USER_WEIGHT_KG:
                 case ActivityUser.PREF_USER_GENDER:
                 case ActivityUser.PREF_USER_HEIGHT_CM:
@@ -524,44 +528,48 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
                     setAutoHeartRate(builder);
                     break;
             }
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
-            GB.toast(getContext(), "Error sending configuration: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error sending configuration: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
     public void sendAck(byte command_group, byte length_high, byte length_low, byte command) {
         LOG.debug(" ACKing data: " + nodomain.freeyourgadget.gadgetbridge.util.ArrayUtils.arrayToString(new byte[]{command_group}) + " " + nodomain.freeyourgadget.gadgetbridge.util.ArrayUtils.arrayToString(new byte[]{command}));
-        TransactionBuilder builder = new TransactionBuilder("notification");
+        TransactionBuilder builder = createTransactionBuilder("notification");
         short size = (short) (ByteBuffer.wrap(new byte[]{length_high, length_low}).getShort() + 3);
         byte[] sizeArray = ByteBuffer.allocate(2).putShort(size).array();
         builder.write(writeCharacteristic, new byte[]{FitProConstants.DATA_HEADER_ACK, 0, 5, command_group, 1, sizeArray[0], sizeArray[1], 1});
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
         LOG.debug("Hello FitPro Test function");
     }
 
     @Override
-    public void onSendWeather(ArrayList<WeatherSpec> weatherSpecs) {
-        WeatherSpec weatherSpec = weatherSpecs.get(0);
+    public void onSendWeather() {
+        final WeatherSpec weatherSpec = Weather.getWeatherSpec();
+        if (weatherSpec == null) {
+            LOG.warn("No weather found in singleton");
+            return;
+        }
         LOG.debug("FitPro send weather");
-        short todayMax = (short) (weatherSpec.todayMaxTemp - 273);
-        short todayMin = (short) (weatherSpec.todayMinTemp - 273);
+        short todayMax = (short) (weatherSpec.getTodayMaxTemp() - 273);
+        short todayMin = (short) (weatherSpec.getTodayMinTemp() - 273);
         byte weatherUnit = 0;
-        String units = GBApplication.getPrefs().getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM, GBApplication.getContext().getString(R.string.p_unit_metric));
-        if (units.equals(GBApplication.getContext().getString(R.string.p_unit_imperial))) {
+        final TemperatureUnit temperatureUnit = GBApplication.getPrefs().getTemperatureUnit();
+        if (temperatureUnit == TemperatureUnit.FAHRENHEIT) {
             todayMax = (short) (todayMax * 1.8f + 32);
             todayMin = (short) (todayMin * 1.8f + 32);
             weatherUnit = 1;
         }
 
-        byte currentConditionCode = Weather.mapToFitProCondition(weatherSpec.currentConditionCode);
-        TransactionBuilder builder = new TransactionBuilder("weather");
+        byte currentConditionCode = WeatherMapper.mapToFitProCondition(weatherSpec.getCurrentConditionCode());
+        TransactionBuilder builder = createTransactionBuilder("weather");
         writeChunkedData(builder, craftData(CMD_GROUP_GENERAL, CMD_WEATHER, new byte[]{(byte) todayMin, (byte) todayMax, (byte) currentConditionCode, (byte) weatherUnit}));
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
@@ -572,7 +580,7 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
     @Override
     public void onNotification(NotificationSpec notificationSpec) {
         LOG.debug("FitPro notification: " + notificationSpec.type);
-        TransactionBuilder builder = new TransactionBuilder("notification");
+        TransactionBuilder builder = createTransactionBuilder("notification");
         byte icon = NOTIFICATION_ICON_SMS;
         switch (notificationSpec.type) {
             case GENERIC_SMS:
@@ -642,7 +650,7 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
         }
 
         writeChunkedData(builder, craftData(CMD_GROUP_GENERAL, CMD_NOTIFICATION_MESSAGE, output.getBytes(StandardCharsets.UTF_8)));
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     public FitProDeviceSupport setLanguage(TransactionBuilder builder) {
@@ -725,13 +733,13 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
         int heightCm = activityUser.getHeightCm();
         int weightKg = activityUser.getWeightKg();
 
-        byte distanceUnit = UNIT_METRIC;
-        String units = GBApplication.getPrefs().getString(SettingsActivity.PREF_MEASUREMENT_SYSTEM, GBApplication.getContext().getString(R.string.p_unit_metric));
-        if (units.equals(GBApplication.getContext().getString(R.string.p_unit_imperial))) {
-            distanceUnit = UNIT_IMPERIAL;
+        byte distanceUnitByte = UNIT_METRIC;
+        final DistanceUnit distanceUnit = GBApplication.getPrefs().getDistanceUnit();
+        if (distanceUnit == DistanceUnit.IMPERIAL) {
+            distanceUnitByte = UNIT_IMPERIAL;
         }
 
-        int userData = genderUnit << 31 | age << 24 | heightCm << 15 | weightKg << 5 | distanceUnit;
+        int userData = genderUnit << 31 | age << 24 | heightCm << 15 | weightKg << 5 | distanceUnitByte;
         byte[] data = craftData(CMD_GROUP_GENERAL, CMD_SET_USER_DATA, ByteBuffer.allocate(4).putInt(userData).array());
         builder.write(writeCharacteristic, data);
         return this;
@@ -740,10 +748,10 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
     @Override
     public void onFetchRecordedData(int dataTypes) {
         indicateFinishedFetchingOperation();
-        TransactionBuilder builder = new TransactionBuilder("fetch data1");
-        builder.add(new SetDeviceBusyAction(getDevice(), getContext().getString(R.string.busy_task_fetch_activity_data), getContext()));
+        TransactionBuilder builder = createTransactionBuilder("fetch data1");
+        builder.setBusyTask(R.string.busy_task_fetch_activity_data);
         builder.write(writeCharacteristic, craftData(CMD_GROUP_RECEIVE_SPORTS_DATA, CMD_REQUEST_STEPS_DATA1, VALUE_ON));
-        builder.queue(getQueue());
+        builder.queue();
     }
 
 
@@ -782,7 +790,10 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
 
      */
     public void handleCamera(byte command) {
-        GB.toast(getContext(), "Camera buttons are detected but not further handled.", Toast.LENGTH_SHORT, GB.INFO);
+        LOG.debug("Got camera button: {}", String.format("0x%02x", command));
+        final GBDeviceEventCameraRemote cameraEvent = new GBDeviceEventCameraRemote();
+        cameraEvent.event = GBDeviceEventCameraRemote.Event.TAKE_PICTURE;
+        evaluateGBDeviceEvent(cameraEvent);
     }
 
     public void handleFindPhone() {
@@ -870,9 +881,9 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
     @Override
     public void onSetTime() {
         LOG.debug("FitPro set date and time");
-        TransactionBuilder builder = new TransactionBuilder("Set date and time");
+        TransactionBuilder builder = createTransactionBuilder("Set date and time");
         setTime(builder);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
 
@@ -905,7 +916,7 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
         // this device doesn't have concept of on-off alarm, so use the last slot for this and store
         // this alarm in the database so the user knows what is going on and can disable it
 
-        if (alarms.toArray().length == 1 && alarms.get(0).getRepetition() == 0) { //single shot?
+        if (alarms.size() == 1 && alarms.get(0).getRepetition() == 0) { //single shot?
             Alarm oneshot = alarms.get(0);
             alarms = (ArrayList<? extends Alarm>) AlarmUtils.mergeOneshotToDeviceAlarms(gbDevice, (nodomain.freeyourgadget.gadgetbridge.entities.Alarm) oneshot, 7);
         }
@@ -941,7 +952,7 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
 
             writeChunkedData(builder, craftData(CMD_GROUP_GENERAL, CMD_ALARM, all_alarms));
             //builder.write(writeCharacteristic, craftData(CMD_GROUP_GENERAL, CMD_ALARM, all_alarms));
-            builder.queue(getQueue());
+            builder.queue();
             if (anyAlarmEnabled) {
                 GB.toast(getContext(), getContext().getString(R.string.user_feedback_miband_set_alarms_ok), Toast.LENGTH_SHORT, GB.INFO);
             } else {
@@ -966,25 +977,25 @@ public class FitProDeviceSupport extends AbstractBTLEDeviceSupport {
         }
 
         getQueue().clear();
-        TransactionBuilder builder = new TransactionBuilder("resetting");
+        TransactionBuilder builder = createTransactionBuilder("resetting");
         builder.write(writeCharacteristic, command);
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
     public void onHeartRateTest() {
-        TransactionBuilder builder = new TransactionBuilder("notification");
+        TransactionBuilder builder = createTransactionBuilder("notification");
         builder.write(writeCharacteristic, craftData(CMD_GROUP_GENERAL, CMD_HEART_RATE_MEASUREMENT, VALUE_ON));
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     @Override
     public void onFindDevice(boolean start) {
         getQueue().clear();
         LOG.debug("FitPro find device");
-        TransactionBuilder builder = new TransactionBuilder("searching");
+        TransactionBuilder builder = createTransactionBuilder("searching");
         builder.write(writeCharacteristic, craftData(CMD_GROUP_GENERAL, CMD_FIND_BAND, start ? VALUE_ON : VALUE_OFF));
-        builder.queue(getQueue());
+        builder.queue();
     }
 
     public FitProDeviceSupport setAutoHeartRate(TransactionBuilder builder) {

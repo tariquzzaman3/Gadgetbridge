@@ -20,6 +20,7 @@ import java.time.ZonedDateTime;
 import java.time.ZoneId;
 import java.time.LocalDate;
 import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.widget.Toast;
@@ -42,17 +43,13 @@ import java.util.HashMap;
 import java.util.Locale;
 
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import nodomain.freeyourgadget.gadgetbridge.Logging;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.Logging;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
-import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 import nodomain.freeyourgadget.gadgetbridge.util.preferences.DevicePrefs;
-import nodomain.freeyourgadget.gadgetbridge.util.DeviceHelper;
 import nodomain.freeyourgadget.gadgetbridge.util.AlarmUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.BcdUtil;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
@@ -60,7 +57,6 @@ import nodomain.freeyourgadget.gadgetbridge.model.Reminder;
 import nodomain.freeyourgadget.gadgetbridge.model.DeviceService;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.casio.CasioConstants;
 
 import static nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst.PREF_LANGUAGE;
@@ -109,9 +105,21 @@ public abstract class Casio2C2DSupport extends CasioSupport {
     public static final byte FEATURE_SETTING_FOR_TARGET_VALUE = 0x43;
     public static final byte FEATURE_SETTING_FOR_USER_PROFILE = 0x45;
     public static final byte FEATURE_SERVICE_DISCOVERY_MANAGER = 0x47;
+    public static final byte FEATURE_SESSION_EVENT = 0x48;
+    // GBD-200 specific features
+    public static final byte FEATURE_GPS = 0x24;
+    public static final byte FEATURE_FEAT_2F = 0x2f;
+    public static final byte FEATURE_CONVOY_INIT = 0x1c;
+    public static final byte FEATURE_BLE_PARAM = 0x3d;
 
     protected static Logger LOG;
     LinkedList<RequestWithHandler> requests = new LinkedList<>();
+
+    /** Called when a GetConfigurationOperation finishes. Override in device support subclasses. */
+    public void onGetConfigurationFinished() {}
+
+    /** Sync user profile / settings to the watch. Override in device support subclasses. */
+    public void syncProfile() {}
 
     public Casio2C2DSupport(Logger logger) {
         super(logger);
@@ -120,8 +128,10 @@ public abstract class Casio2C2DSupport extends CasioSupport {
 
     @Override
     public boolean connect() {
-        requests.clear();
-        return super.connect();
+        synchronized (ConnectionMonitor) {
+            requests.clear();
+            return super.connect();
+        }
     }
 
     @Override
@@ -134,11 +144,11 @@ public abstract class Casio2C2DSupport extends CasioSupport {
         if (!requests.isEmpty()) {
             LOG.warn("writing while waiting for a response may lead to incorrect received responses");
         }
-        builder.write(getCharacteristic(CasioConstants.CASIO_ALL_FEATURES_CHARACTERISTIC_UUID), arr);
+        builder.writeLegacy(getCharacteristic(CasioConstants.CASIO_ALL_FEATURES_CHARACTERISTIC_UUID), arr);
     }
 
     public void writeAllFeaturesRequest(TransactionBuilder builder, byte[] arr) {
-        builder.write(getCharacteristic(CasioConstants.CASIO_READ_REQUEST_FOR_ALL_FEATURES_CHARACTERISTIC_UUID), arr);
+        builder.writeLegacy(getCharacteristic(CasioConstants.CASIO_READ_REQUEST_FOR_ALL_FEATURES_CHARACTERISTIC_UUID), arr);
     }
 
     public interface ResponseHandler {
@@ -270,9 +280,9 @@ public abstract class Casio2C2DSupport extends CasioSupport {
     }
 
     public void requestFeature(TransactionBuilder builder, FeatureRequest request, ResponseHandler handler) {
-        builder.notify(getCharacteristic(CasioConstants.CASIO_ALL_FEATURES_CHARACTERISTIC_UUID), true);
+        builder.notify(CasioConstants.CASIO_ALL_FEATURES_CHARACTERISTIC_UUID, true);
         writeAllFeaturesRequest(builder, request.getData());
-        builder.run((gatt) -> requests.add(new RequestWithHandler(request, handler)));
+        builder.run(() -> requests.add(new RequestWithHandler(request, handler)));
     }
 
     public void requestFeatures(TransactionBuilder builder, Set<FeatureRequest> requests, ResponsesHandler handler) {
@@ -296,11 +306,11 @@ public abstract class Casio2C2DSupport extends CasioSupport {
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] response) {
         UUID characteristicUUID = characteristic.getUuid();
 
         if (characteristicUUID.equals(CasioConstants.CASIO_ALL_FEATURES_CHARACTERISTIC_UUID)) {
-            byte[] response = characteristic.getValue();
             Iterator<RequestWithHandler> it = requests.iterator();
             while (it.hasNext()) {
                 RequestWithHandler rh = it.next();
@@ -313,7 +323,7 @@ public abstract class Casio2C2DSupport extends CasioSupport {
             LOG.warn("unhandled response: " + Logging.formatBytes(response));
         }
 
-        return super.onCharacteristicChanged(gatt, characteristic);
+        return super.onCharacteristicChanged(gatt, characteristic, response);
     }
 
     public void writeCurrentTime(TransactionBuilder builder, ZonedDateTime time) {
@@ -323,6 +333,18 @@ public abstract class Casio2C2DSupport extends CasioSupport {
         System.arraycopy(tmp, 0, arr, 1, 10);
 
         writeAllFeatures(builder, arr);
+    }
+
+    /** Writes a full clock-slot set (slot 0 = home, slots 1+ = world) inside the 0x21
+     *  settings-session bracket. withNames=false for devices without 0x1f (e.g. WS-B1000). */
+    protected void writeClocks(TransactionBuilder builder, CasioTimeZone[] zones, boolean withNames) {
+        writeAllFeatures(builder, CasioWorldClockCodec.SESSION_OPEN);
+        for (byte[] frame : CasioWorldClockCodec.clockFrames(zones, withNames)) {
+            writeAllFeatures(builder, frame);
+        }
+        writeAllFeatures(builder, CasioWorldClockCodec.SESSION_CLOSE_A);
+        writeAllFeatures(builder, CasioWorldClockCodec.SESSION_CLOSE_B);
+        writeAllFeatures(builder, CasioWorldClockCodec.SESSION_CLOSE_C);
     }
 
     FeatureCache featureCache = new FeatureCache();
@@ -483,8 +505,8 @@ public abstract class Casio2C2DSupport extends CasioSupport {
         for (byte[] data: settings) {
             writeAllFeatures(builder, data);
         }
-        builder.run((gatt) -> GB.toast(getContext(), getContext().getString(R.string.user_feedback_set_settings_ok), Toast.LENGTH_SHORT, GB.INFO));
-        builder.queue(getQueue());
+        builder.run(() -> GB.toast(getContext(), getContext().getString(R.string.user_feedback_set_settings_ok), Toast.LENGTH_SHORT, GB.INFO));
+        builder.queue();
     }
 
     public abstract class DeviceItems<Item> extends DeviceSetting {
@@ -992,6 +1014,68 @@ public abstract class Casio2C2DSupport extends CasioSupport {
         { name = PREF_HOURLY_CHIME_ENABLE; }
         { feature = FEATURE_SETTING_FOR_ALM; }
         { index = 1; mask = (byte) (0x80 & 0xff); }
+    }
+
+    // ── Interval timer (shared across Casio watches with this feature) ──────
+
+    public CasioIntervalTimerLibrary loadLibrary() {
+        String json = GBApplication.getDeviceSpecificSharedPrefs(getDevice().getAddress())
+                .getString(CasioIntervalTimerLibrary.PREF_INTERVAL_TIMER_LIBRARY, null);
+        return CasioIntervalTimerLibrary.fromJson(json);
+    }
+
+    public void saveLibrary(CasioIntervalTimerLibrary lib) {
+        GBApplication.getDeviceSpecificSharedPrefs(getDevice().getAddress()).edit()
+                .putString(CasioIntervalTimerLibrary.PREF_INTERVAL_TIMER_LIBRARY, lib.toJson()).apply();
+    }
+
+    public void pushActiveTimer() {
+        if (!isInitialized()) {
+            LOG.info("pushActiveTimer skipped: not initialized");
+            return;
+        }
+        CasioIntervalTimer active = loadLibrary().getActive();
+        if (active == null) {
+            LOG.info("pushActiveTimer skipped: no active timer");
+            return;
+        }
+        try {
+            TransactionBuilder b = performInitialized("pushIntervalTimer");
+            for (byte[] packet : CasioIntervalTimerCodec.encode(active)) {
+                writeAllFeatures(b, packet);
+            }
+            b.queue();
+        } catch (IOException e) {
+            LOG.warn("pushActiveTimer failed: {}", e.getMessage());
+        }
+    }
+
+    public void readIntervalTimerFromWatch() {
+        if (!isInitialized()) return;
+        try {
+            TransactionBuilder b = performInitialized("readIntervalTimer");
+            Set<FeatureRequest> reqs = new LinkedHashSet<>();
+            reqs.add(new FeatureRequest(CasioIntervalTimerCodec.FEATURE_CONFIG));
+            for (byte slot = 1; slot <= CasioIntervalTimer.SLOT_COUNT; slot++) {
+                reqs.add(new FeatureRequest(CasioIntervalTimerCodec.FEATURE_NAME, slot));
+            }
+            requestFeatures(b, reqs, responses -> {
+                byte[][] packets = responses.values().toArray(new byte[0][]);
+                CasioIntervalTimer fromWatch = CasioIntervalTimerCodec.decode(packets);
+                if (fromWatch == null) {
+                    LOG.warn("interval-timer read-back: undecodable payload");
+                    return;
+                }
+                CasioIntervalTimerLibrary lib = loadLibrary();
+                if (lib.reconcileFromWatch(fromWatch)) {
+                    saveLibrary(lib);
+                    LOG.info("interval-timer library reconciled from watch");
+                }
+            });
+            b.queue();
+        } catch (IOException e) {
+            LOG.warn("readIntervalTimerFromWatch failed: {}", e.getMessage());
+        }
     }
 
 }

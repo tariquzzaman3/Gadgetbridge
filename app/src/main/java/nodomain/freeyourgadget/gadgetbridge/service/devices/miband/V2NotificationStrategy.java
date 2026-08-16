@@ -20,13 +20,13 @@ import android.bluetooth.BluetoothGattCharacteristic;
 
 import androidx.annotation.Nullable;
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.VibrationProfile;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BtLEAction;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.GattCharacteristic;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.common.SimpleNotification;
 
-public class V2NotificationStrategy<T extends AbstractBTLEDeviceSupport> implements NotificationStrategy {
+public class V2NotificationStrategy<T extends AbstractBTLESingleDeviceSupport> implements NotificationStrategy {
     private final T support;
 
     public V2NotificationStrategy(T support) {
@@ -52,14 +52,14 @@ public class V2NotificationStrategy<T extends AbstractBTLEDeviceSupport> impleme
                 int on = onOffSequence[j];
                 on = Math.min(500, on); // longer than 500ms is not possible
                 builder.write(alert, new byte[]{GattCharacteristic.MILD_ALERT}); //MILD_ALERT lights up GREEN leds, HIGH_ALERT lights up RED leds
-//                builder.wait(on);
+//                builder.sleep(on);
 //                builder.write(alert, new byte[]{GattCharacteristic.HIGH_ALERT});
-                builder.wait(on);
+                builder.sleep(on);
                 builder.write(alert, new byte[]{GattCharacteristic.NO_ALERT});
 
                 if (++j < onOffSequence.length) {
                     int off = Math.max(onOffSequence[j], 25); // wait at least 25ms
-                    builder.wait(off);
+                    builder.sleep(off);
                 }
 
                 if (extraAction != null) {
@@ -77,7 +77,6 @@ public class V2NotificationStrategy<T extends AbstractBTLEDeviceSupport> impleme
 
     @Override
     public void stopCurrentNotification(TransactionBuilder builder) {
-        BluetoothGattCharacteristic alert = support.getCharacteristic(GattCharacteristic.UUID_CHARACTERISTIC_ALERT_LEVEL);
-        builder.write(alert, new byte[]{GattCharacteristic.NO_ALERT});
+        builder.write(GattCharacteristic.UUID_CHARACTERISTIC_ALERT_LEVEL, new byte[]{GattCharacteristic.NO_ALERT});
     }
 }

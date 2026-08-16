@@ -31,19 +31,16 @@ import org.junit.runner.RunWith;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnitRunner;
 
-import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
+import java.util.Map;
 import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEvent;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiPacket;
-import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.Workout;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.service.btbr.Transaction;
 import nodomain.freeyourgadget.gadgetbridge.service.btbr.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetEventAlarmList;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.Request;
@@ -104,16 +101,6 @@ public class TestResponseManager {
         }
 
         @Override
-        public void performConnected(Transaction transaction) throws IOException {
-
-        }
-
-        @Override
-        public void performConnected(nodomain.freeyourgadget.gadgetbridge.service.btle.Transaction transaction) throws IOException {
-
-        }
-
-        @Override
         public void evaluateGBDeviceEvent(GBDeviceEvent deviceEvent) {
 
         }
@@ -154,28 +141,13 @@ public class TestResponseManager {
         }
 
         @Override
-        public void addStepData(int timestamp, short steps, short calories, short distance, byte spo, byte heartrate) {
-
-        }
-
-        @Override
-        public Long addWorkoutTotalsData(Workout.WorkoutTotals.Response packet) {
-            return null;
-        }
-
-        @Override
-        public void addWorkoutSampleData(Long workoutId, List<Workout.WorkoutData.Response.Data> dataList) {
-
-        }
-
-        @Override
         public void sendSetMusic() {
 
         }
     };
 
     Field handlersField;
-    Field receivedPacketField;
+    Field receivedPacketsField;
     Field asynchronousResponseField;
 
     @Before
@@ -186,15 +158,28 @@ public class TestResponseManager {
         asynchronousResponseField = ResponseManager.class.getDeclaredField("asynchronousResponse");
         asynchronousResponseField.setAccessible(true);
 
-        receivedPacketField = ResponseManager.class.getDeclaredField("receivedPacket");
-        receivedPacketField.setAccessible(true);
+        receivedPacketsField = ResponseManager.class.getDeclaredField("receivedPackets");
+        receivedPacketsField.setAccessible(true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<Integer, HuaweiPacket> getReceivedPackets(ResponseManager responseManager) throws IllegalAccessException {
+        return (Map<Integer, HuaweiPacket>) receivedPacketsField.get(responseManager);
+    }
+
+    private HuaweiPacket getReceivedPacket(ResponseManager responseManager) throws IllegalAccessException {
+        return getReceivedPackets(responseManager).get(ResponseManager.MAIN_CHANNEL);
+    }
+
+    private void setReceivedPacket(ResponseManager responseManager, HuaweiPacket packet) throws IllegalAccessException {
+        getReceivedPackets(responseManager).put(ResponseManager.MAIN_CHANNEL, packet);
     }
 
     @Test
     public void testAddHandler() throws IllegalAccessException {
         Request input = new Request(supportProvider);
 
-        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<>());
         expectedHandlers.add(input);
 
         ResponseManager responseManager = new ResponseManager(supportProvider);
@@ -208,12 +193,12 @@ public class TestResponseManager {
         Request input = new Request(supportProvider);
         Request extra = new Request(supportProvider);
 
-        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<>());
         inputHandlers.add(extra);
         inputHandlers.add(input);
         inputHandlers.add(extra);
 
-        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<>());
         expectedHandlers.add(extra);
         expectedHandlers.add(extra);
 
@@ -231,13 +216,13 @@ public class TestResponseManager {
         Request input2 = new GetEventAlarmList(supportProvider);
         Request extra = new Request(supportProvider);
 
-        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<>());
         inputHandlers.add(extra);
         inputHandlers.add(input1);
         inputHandlers.add(extra);
         inputHandlers.add(input2);
 
-        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<>());
         expectedHandlers.add(extra);
         expectedHandlers.add(extra);
 
@@ -259,38 +244,38 @@ public class TestResponseManager {
 
         HuaweiPacket mockHuaweiPacket = Mockito.mock(HuaweiPacket.class);
         mockHuaweiPacket.complete = true;
-        when(mockHuaweiPacket.parse((byte[]) any()))
+        when(mockHuaweiPacket.parse(any()))
                 .thenReturn(mockHuaweiPacket);
 
         Request request1 = Mockito.mock(Request.class);
-        when(request1.handleResponse((HuaweiPacket) any()))
+        when(request1.handleResponse(any()))
                 .thenReturn(true);
         when(request1.autoRemoveFromResponseHandler())
                 .thenReturn(true);
         Request request2 = Mockito.mock(Request.class);
 
-        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<>());
         inputHandlers.add(request1);
         inputHandlers.add(request2);
 
-        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<>());
         expectedHandlers.add(request2);
 
         ResponseManager responseManager = new ResponseManager(supportProvider);
         handlersField.set(responseManager, inputHandlers);
-        receivedPacketField.set(responseManager, mockHuaweiPacket);
+        setReceivedPacket(responseManager, mockHuaweiPacket);
         asynchronousResponseField.set(responseManager, mockAsynchronousResponse);
 
         responseManager.handleData(input);
 
         Assert.assertEquals(expectedHandlers, handlersField.get(responseManager));
-        Assert.assertNull(receivedPacketField.get(responseManager));
+        Assert.assertNull(getReceivedPacket(responseManager));
 
         verify(mockHuaweiPacket, times(1)).parse(input);
-        verify(mockAsynchronousResponse, times(0)).handleResponse((HuaweiPacket) any());
+        verify(mockAsynchronousResponse, times(0)).handleResponse(any());
         verify(request1, times(1)).handleResponse(mockHuaweiPacket);
         verify(request1, times(1)).handleResponse();
-        verify(request2, times(0)).handleResponse((HuaweiPacket) any());
+        verify(request2, times(0)).handleResponse(any());
         verify(request2, times(0)).handleResponse();
     }
 
@@ -304,33 +289,33 @@ public class TestResponseManager {
 
         HuaweiPacket mockHuaweiPacket = Mockito.mock(HuaweiPacket.class);
         mockHuaweiPacket.complete = true;
-        when(mockHuaweiPacket.parse((byte[]) any()))
+        when(mockHuaweiPacket.parse(any()))
                 .thenReturn(mockHuaweiPacket);
 
         Request request1 = Mockito.mock(Request.class);
-        when(request1.handleResponse((HuaweiPacket) any()))
+        when(request1.handleResponse(any()))
                 .thenReturn(false);
         Request request2 = Mockito.mock(Request.class);
-        when(request2.handleResponse((HuaweiPacket) any()))
+        when(request2.handleResponse(any()))
                 .thenReturn(false);
 
-        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<>());
         inputHandlers.add(request1);
         inputHandlers.add(request2);
 
-        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<>());
         expectedHandlers.add(request1);
         expectedHandlers.add(request2);
 
         ResponseManager responseManager = new ResponseManager(supportProvider);
         handlersField.set(responseManager, inputHandlers);
-        receivedPacketField.set(responseManager, mockHuaweiPacket);
+        setReceivedPacket(responseManager, mockHuaweiPacket);
         asynchronousResponseField.set(responseManager, mockAsynchronousResponse);
 
         responseManager.handleData(input);
 
         Assert.assertEquals(expectedHandlers, handlersField.get(responseManager));
-        Assert.assertNull(receivedPacketField.get(responseManager));
+        Assert.assertNull(getReceivedPacket(responseManager));
 
         verify(mockHuaweiPacket, times(1)).parse(input);
         verify(mockAsynchronousResponse, times(1)).handleResponse(mockHuaweiPacket);
@@ -351,55 +336,55 @@ public class TestResponseManager {
 
         HuaweiPacket mockHuaweiPacket = Mockito.mock(HuaweiPacket.class);
         mockHuaweiPacket.complete = false;
-        when(mockHuaweiPacket.parse((byte[]) any()))
+        when(mockHuaweiPacket.parse(any()))
                 .thenReturn(mockHuaweiPacket);
 
         Request request1 = Mockito.mock(Request.class);
-        when(request1.handleResponse((HuaweiPacket) any()))
+        when(request1.handleResponse(any()))
                 .thenReturn(true);
         when(request1.autoRemoveFromResponseHandler())
                 .thenReturn(true);
         Request request2 = Mockito.mock(Request.class);
 
-        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<>());
         inputHandlers.add(request1);
         inputHandlers.add(request2);
 
-        List<Request> expectedHandlers1 = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> expectedHandlers1 = Collections.synchronizedList(new ArrayList<>());
         expectedHandlers1.add(request1);
         expectedHandlers1.add(request2);
 
-        List<Request> expectedHandlers2 = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> expectedHandlers2 = Collections.synchronizedList(new ArrayList<>());
         expectedHandlers2.add(request2);
 
         ResponseManager responseManager = new ResponseManager(supportProvider);
         handlersField.set(responseManager, inputHandlers);
-        receivedPacketField.set(responseManager, mockHuaweiPacket);
+        setReceivedPacket(responseManager, mockHuaweiPacket);
         asynchronousResponseField.set(responseManager, mockAsynchronousResponse);
 
         responseManager.handleData(input1);
 
         Assert.assertEquals(expectedHandlers1, handlersField.get(responseManager));
-        Assert.assertEquals(mockHuaweiPacket, receivedPacketField.get(responseManager));
+        Assert.assertEquals(mockHuaweiPacket, getReceivedPacket(responseManager));
 
         verify(mockHuaweiPacket, times(1)).parse(input1);
-        verify(mockAsynchronousResponse, times(0)).handleResponse((HuaweiPacket) any());
+        verify(mockAsynchronousResponse, times(0)).handleResponse(any());
         verify(request1, times(0)).handleResponse(mockHuaweiPacket);
         verify(request1, times(0)).handleResponse();
-        verify(request2, times(0)).handleResponse((HuaweiPacket) any());
+        verify(request2, times(0)).handleResponse(any());
         verify(request2, times(0)).handleResponse();
 
         mockHuaweiPacket.complete = true;
         responseManager.handleData(input2);
 
         Assert.assertEquals(expectedHandlers2, handlersField.get(responseManager));
-        Assert.assertNull(receivedPacketField.get(responseManager));
+        Assert.assertNull(getReceivedPacket(responseManager));
 
         verify(mockHuaweiPacket, times(1)).parse(input2);
-        verify(mockAsynchronousResponse, times(0)).handleResponse((HuaweiPacket) any());
+        verify(mockAsynchronousResponse, times(0)).handleResponse(any());
         verify(request1, times(1)).handleResponse(mockHuaweiPacket);
         verify(request1, times(1)).handleResponse();
-        verify(request2, times(0)).handleResponse((HuaweiPacket) any());
+        verify(request2, times(0)).handleResponse(any());
         verify(request2, times(0)).handleResponse();
     }
 
@@ -414,52 +399,52 @@ public class TestResponseManager {
 
         HuaweiPacket mockHuaweiPacket = Mockito.mock(HuaweiPacket.class);
         mockHuaweiPacket.complete = false;
-        when(mockHuaweiPacket.parse((byte[]) any()))
+        when(mockHuaweiPacket.parse(any()))
                 .thenReturn(mockHuaweiPacket);
 
         Request request1 = Mockito.mock(Request.class);
-        when(request1.handleResponse((HuaweiPacket) any()))
+        when(request1.handleResponse(any()))
                 .thenReturn(false);
         Request request2 = Mockito.mock(Request.class);
-        when(request2.handleResponse((HuaweiPacket) any()))
+        when(request2.handleResponse(any()))
                 .thenReturn(false);
 
-        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> inputHandlers = Collections.synchronizedList(new ArrayList<>());
         inputHandlers.add(request1);
         inputHandlers.add(request2);
 
-        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<Request>());
+        List<Request> expectedHandlers = Collections.synchronizedList(new ArrayList<>());
         expectedHandlers.add(request1);
         expectedHandlers.add(request2);
 
         ResponseManager responseManager = new ResponseManager(supportProvider);
         handlersField.set(responseManager, inputHandlers);
-        receivedPacketField.set(responseManager, mockHuaweiPacket);
+        setReceivedPacket(responseManager, mockHuaweiPacket);
         asynchronousResponseField.set(responseManager, mockAsynchronousResponse);
 
         responseManager.handleData(input1);
 
         Assert.assertEquals(expectedHandlers, handlersField.get(responseManager));
-        Assert.assertEquals(mockHuaweiPacket, receivedPacketField.get(responseManager));
+        Assert.assertEquals(mockHuaweiPacket, getReceivedPacket(responseManager));
 
         verify(mockHuaweiPacket, times(1)).parse(input1);
-        verify(mockAsynchronousResponse, times(0)).handleResponse((HuaweiPacket) any());
+        verify(mockAsynchronousResponse, times(0)).handleResponse(any());
         verify(request1, times(0)).handleResponse(mockHuaweiPacket);
         verify(request1, times(0)).handleResponse();
-        verify(request2, times(0)).handleResponse((HuaweiPacket) any());
+        verify(request2, times(0)).handleResponse(any());
         verify(request2, times(0)).handleResponse();
 
         mockHuaweiPacket.complete = true;
         responseManager.handleData(input2);
 
         Assert.assertEquals(expectedHandlers, handlersField.get(responseManager));
-        Assert.assertNull(receivedPacketField.get(responseManager));
+        Assert.assertNull(getReceivedPacket(responseManager));
 
         verify(mockHuaweiPacket, times(1)).parse(input2);
-        verify(mockAsynchronousResponse, times(1)).handleResponse((HuaweiPacket) any());
+        verify(mockAsynchronousResponse, times(1)).handleResponse(any());
         verify(request1, times(1)).handleResponse(mockHuaweiPacket);
         verify(request1, times(0)).handleResponse();
-        verify(request2, times(1)).handleResponse((HuaweiPacket) any());
+        verify(request2, times(1)).handleResponse(any());
         verify(request2, times(0)).handleResponse();
     }
 

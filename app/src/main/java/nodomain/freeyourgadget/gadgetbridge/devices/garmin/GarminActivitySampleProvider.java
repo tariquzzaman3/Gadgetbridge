@@ -1,4 +1,4 @@
-/*  Copyright (C) 2024 José Rebelo
+/*  Copyright (C) 2024-2026 José Rebelo, Martin.JM, Thomas Kuehne, trentsuzuki
 
     This file is part of Gadgetbridge.
 
@@ -22,19 +22,24 @@ import androidx.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import de.greenrobot.dao.AbstractDao;
 import de.greenrobot.dao.Property;
 import nodomain.freeyourgadget.gadgetbridge.devices.AbstractSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.devices.GarminNapSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.devices.GarminSleepStageSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.GarminActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.GarminActivitySampleDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.GarminEventSample;
+import nodomain.freeyourgadget.gadgetbridge.entities.GarminNapSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.GarminSleepStageSample;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySample;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.enums.SleepStage;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.garmin.fit.fieldDefinitions.FieldDefinitionSleepStage;
 import nodomain.freeyourgadget.gadgetbridge.util.RangeMap;
 
@@ -98,14 +103,20 @@ public class GarminActivitySampleProvider extends AbstractSampleProvider<GarminA
 
         final long nanoStart = System.nanoTime();
 
+        // Each Garmin sample contains the cumulative value measured up until that specific timestamp. For example the
+        // sample at midnight will actually contain the number of steps taken in the entire previous day.
+        // This goes against what Gb expects (each sample actually corresponds to the value at the end of the minute).
+        // Therefore, we fetch the data with an offset and then adjust by 1 minute
         final List<GarminActivitySample> samples = fillGaps(
-                super.getGBActivitySamples(timestamp_from, timestamp_to),
-                timestamp_from,
-                timestamp_to
+                super.getGBActivitySamples(timestamp_from + 60, timestamp_to + 60),
+                timestamp_from + 60,
+                timestamp_to + 60
         );
 
+        samples.forEach(s -> s.setTimestamp(s.getTimestamp() - 60));
+
         if (!samples.isEmpty()) {
-            convertCumulativeSteps(samples, GarminActivitySampleDao.Properties.Steps);
+            convertCumulativeSteps(samples, GarminActivitySampleDao.Properties.Steps, -60);
         }
 
         convertCalories(samples);
@@ -182,36 +193,60 @@ public class GarminActivitySampleProvider extends AbstractSampleProvider<GarminA
             }
         }
 
+        // Overlap nap samples as light sleep
+        // TODO: Dedicated nap support in Gb?
+        final GarminNapSampleProvider napSampleProvider = new GarminNapSampleProvider(getDevice(), getSession());
+        final List<GarminNapSample> napSamples = new ArrayList<>(napSampleProvider.getAllSamples(
+                timestamp_from * 1000L,
+                timestamp_to * 1000L
+        ));
+        final GarminNapSample lastNapSample = napSampleProvider.getLastSampleBefore(timestamp_from * 1000L);
+        if (lastNapSample != null) {
+            napSamples.add(lastNapSample);
+        }
+        for (final GarminNapSample napSample : napSamples) {
+            stagesMap.put(napSample.getTimestamp(), ActivityKind.UNKNOWN);
+            stagesMap.put(napSample.getEndTimestamp(), ActivityKind.LIGHT_SLEEP);
+        }
+
         if (!stagesMap.isEmpty()) {
-            for (final GarminActivitySample sample : samples) {
-                final long ts = sample.getTimestamp() * 1000L;
-                final ActivityKind sleepType = stagesMap.get(ts);
-                if (sleepType != null && !sleepType.equals(ActivityKind.UNKNOWN)) {
-                    sample.setRawKind(sleepType.getCode());
-                    sample.setRawIntensity(ActivitySample.NOT_MEASURED);
+            if (!samples.isEmpty()) {
+                for (final GarminActivitySample sample : samples) {
+                    final long ts = sample.getTimestamp() * 1000L;
+                    final ActivityKind sleepType = stagesMap.get(ts);
+                    if (sleepType != null && !sleepType.equals(ActivityKind.UNKNOWN)) {
+                        sample.setRawKind(sleepType.getCode());
+                        sample.setRawIntensity(ActivitySample.NOT_MEASURED);
+                    }
+                }
+            } else {
+                for (int ts = timestamp_from; ts <= timestamp_to; ts += 60) {
+                    final GarminActivitySample sample = createDummySample(ts);
+                    final ActivityKind sleepType = stagesMap.get(ts * 1000L);
+                    if (sleepType != null && !sleepType.equals(ActivityKind.UNKNOWN)) {
+                        sample.setRawKind(sleepType.getCode());
+                        sample.setRawIntensity(ActivitySample.NOT_MEASURED);
+                    }
+                    samples.add(sample);
                 }
             }
         }
     }
 
     private ActivityKind toActivityKind(final GarminSleepStageSample stageSample) {
-        final FieldDefinitionSleepStage.SleepStage sleepStage = FieldDefinitionSleepStage.SleepStage.fromId(stageSample.getStage());
+        final SleepStage sleepStage = FieldDefinitionSleepStage.fromId(stageSample.getStage());
         if (sleepStage == null) {
             LOG.error("Unknown sleep stage for {}", stageSample.getStage());
             return ActivityKind.UNKNOWN;
         }
 
-        switch (sleepStage) {
-            case AWAKE:
-                return ActivityKind.AWAKE_SLEEP;
-            case LIGHT:
-                return ActivityKind.LIGHT_SLEEP;
-            case DEEP:
-                return ActivityKind.DEEP_SLEEP;
-            case REM:
-                return ActivityKind.REM_SLEEP;
-        }
+        return switch (sleepStage) {
+            case AWAKE -> ActivityKind.AWAKE_SLEEP;
+            case LIGHT -> ActivityKind.LIGHT_SLEEP;
+            case DEEP -> ActivityKind.DEEP_SLEEP;
+            case REM -> ActivityKind.REM_SLEEP;
+            default -> ActivityKind.UNKNOWN;
+        };
 
-        return ActivityKind.UNKNOWN;
     }
 }

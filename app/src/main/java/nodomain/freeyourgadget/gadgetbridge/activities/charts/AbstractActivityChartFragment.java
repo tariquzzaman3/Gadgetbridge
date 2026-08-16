@@ -33,22 +33,32 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.GregorianCalendar;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Objects;
 
+import de.greenrobot.dao.query.QueryBuilder;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.activities.HeartRateUtils;
+import nodomain.freeyourgadget.gadgetbridge.activities.charts.sleep.SleepDetailsView;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
+import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.SampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.entities.AbstractActivitySample;
+import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummary;
+import nodomain.freeyourgadget.gadgetbridge.entities.BaseActivitySummaryDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySample;
+import nodomain.freeyourgadget.gadgetbridge.model.ActivitySummaryParser;
 import nodomain.freeyourgadget.gadgetbridge.util.Prefs;
 
-public abstract class AbstractActivityChartFragment<D extends ChartsData> extends AbstractChartFragment<D>  {
+public abstract class AbstractActivityChartFragment<D extends ChartsData> extends AbstractChartFragment<D> {
     private static final Logger LOG = LoggerFactory.getLogger(AbstractActivityChartFragment.class);
 
     public static final float Y_VALUE_DEEP_SLEEP = 0.01f;
@@ -60,12 +70,12 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
 
     public boolean supportsRemSleep(GBDevice device) {
         DeviceCoordinator coordinator = device.getDeviceCoordinator();
-        return coordinator.supportsRemSleep();
+        return coordinator.supportsRemSleep(device);
     }
 
     public boolean supportsAwakeSleep(GBDevice device) {
         DeviceCoordinator coordinator = device.getDeviceCoordinator();
-        return coordinator.supportsAwakeSleep();
+        return coordinator.supportsAwakeSleep(device);
     }
 
     protected static final class ActivityConfig {
@@ -112,7 +122,7 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
         CHART_TEXT_COLOR = GBApplication.getSecondaryTextColor(getContext());
         if (prefs.getBoolean("chart_heartrate_color", false)) {
             HEARTRATE_COLOR = ContextCompat.getColor(getContext(), R.color.chart_heartrate_alternative);
-        }else{
+        } else {
             HEARTRATE_COLOR = ContextCompat.getColor(getContext(), R.color.chart_heartrate);
         }
         HEARTRATE_FILL_COLOR = ContextCompat.getColor(getContext(), R.color.chart_heartrate_fill);
@@ -137,7 +147,7 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
         akLightSleep = new ActivityConfig(ActivityKind.LIGHT_SLEEP, getString(R.string.abstract_chart_fragment_kind_light_sleep), AK_LIGHT_SLEEP_COLOR);
         akDeepSleep = new ActivityConfig(ActivityKind.DEEP_SLEEP, getString(R.string.abstract_chart_fragment_kind_deep_sleep), AK_DEEP_SLEEP_COLOR);
         akRemSleep = new ActivityConfig(ActivityKind.REM_SLEEP, getString(R.string.abstract_chart_fragment_kind_rem_sleep), AK_REM_SLEEP_COLOR);
-        akAwakeSleep = new ActivityConfig(ActivityKind.REM_SLEEP, getString(R.string.abstract_chart_fragment_kind_awake_sleep), AK_AWAKE_SLEEP_COLOR);
+        akAwakeSleep = new ActivityConfig(ActivityKind.AWAKE_SLEEP, getString(R.string.abstract_chart_fragment_kind_awake_sleep), AK_AWAKE_SLEEP_COLOR);
         akNotWorn = new ActivityConfig(ActivityKind.NOT_WORN, getString(R.string.abstract_chart_fragment_kind_not_worn), AK_NOT_WORN_COLOR);
     }
 
@@ -146,20 +156,15 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
         return false;
     }
 
-    protected Integer getColorFor(ActivityKind activityKind) {
-        switch (activityKind) {
-            case DEEP_SLEEP:
-                return akDeepSleep.color;
-            case LIGHT_SLEEP:
-                return akLightSleep.color;
-            case REM_SLEEP:
-                return akRemSleep.color;
-            case AWAKE_SLEEP:
-                return akAwakeSleep.color;
-            case ACTIVITY:
-                return akActivity.color;
-        }
-        return akActivity.color;
+    protected int getColorFor(ActivityKind activityKind) {
+        return switch (activityKind) {
+            case DEEP_SLEEP -> akDeepSleep.color;
+            case LIGHT_SLEEP -> akLightSleep.color;
+            case REM_SLEEP -> akRemSleep.color;
+            case AWAKE_SLEEP -> akAwakeSleep.color;
+            case NOT_WORN -> akNotWorn.color;
+            default -> akActivity.color;
+        };
     }
 
     protected SampleProvider<? extends AbstractActivitySample> getProvider(DBHandler db, GBDevice device) {
@@ -170,19 +175,23 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
     /**
      * Returns all kinds of samples for the given device.
      * To be called from a background thread.
-     *
-     * @param device
-     * @param tsFrom
-     * @param tsTo
      */
     protected List<? extends ActivitySample> getAllSamples(DBHandler db, GBDevice device, int tsFrom, int tsTo) {
         SampleProvider<? extends ActivitySample> provider = getProvider(db, device);
+        if (provider == null) {
+            LOG.error("Activity sample provider for all samples is null for {}", device);
+            return new LinkedList<>();
+        }
         return provider.getAllActivitySamples(tsFrom, tsTo);
     }
 
     protected List<? extends ActivitySample> getAllSamplesHighRes(DBHandler db, GBDevice device, int tsFrom, int tsTo) {
         SampleProvider<? extends ActivitySample> provider = getProvider(db, device);
-        // Only retrieve if the provider signals it has high res data, otherwise it is useless
+        if (provider == null) {
+            LOG.error("Activity sample provider for high res samples is null for {}", device);
+            return new LinkedList<>();
+        }
+        // Only retrieve if the provider signals it has high-res data, otherwise it is useless
         if (provider.hasHighResData())
             return provider.getAllActivitySamplesHighRes(tsFrom, tsTo);
         return null;
@@ -190,18 +199,22 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
 
     protected List<? extends AbstractActivitySample> getActivitySamples(DBHandler db, GBDevice device, int tsFrom, int tsTo) {
         SampleProvider<? extends AbstractActivitySample> provider = getProvider(db, device);
+        if (provider == null) {
+            LOG.error("Activity sample provider for activity samples is null for {}", device);
+            return new LinkedList<>();
+        }
         return provider.getActivitySamples(tsFrom, tsTo);
     }
 
     public DefaultChartsData<LineData> refresh(GBDevice gbDevice, List<? extends ActivitySample> samples) {
-        // If there is no high res samples, all the samples are high res samples
+        // If there is no high-res samples, all the samples are high-res samples
         return refresh(gbDevice, samples, samples);
     }
 
     public DefaultChartsData<LineData> refresh(GBDevice gbDevice, List<? extends ActivitySample> samples, List<? extends ActivitySample> highResSamples) {
         TimestampTranslation tsTranslation = new TimestampTranslation();
         LOG.info("{}: number of samples: {}", getTitle(), samples.size());
-        LOG.info("{}: number of high res samples: {}", getTitle(), highResSamples.size());
+        LOG.info("{}: number of high-res samples: {}", getTitle(), highResSamples.size());
         LineData lineData;
 
         if (samples.isEmpty()) {
@@ -226,24 +239,13 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
             final float value;
             if (type != ActivityKind.NOT_WORN) {
                 if (ActivityKind.isSleep(type) && sample.getIntensity() < 0) {
-                    switch (type) {
-                        case SLEEP_ANY:
-                        case AWAKE_SLEEP:
-                            value = 0.25f;
-                            break;
-                        case DEEP_SLEEP:
-                            value = 0.10f;
-                            break;
-                        case LIGHT_SLEEP:
-                            value = 0.15f;
-                            break;
-                        case REM_SLEEP:
-                            value = 0.20f;
-                            break;
-                        default:
-                            value = Y_VALUE_DEEP_SLEEP;
-                            break;
-                    }
+                    value = switch (type) {
+                        case SLEEP_ANY, AWAKE_SLEEP -> 0.25f;
+                        case DEEP_SLEEP -> 0.10f;
+                        case LIGHT_SLEEP -> 0.15f;
+                        case REM_SLEEP -> 0.20f;
+                        default -> Y_VALUE_DEEP_SLEEP;
+                    };
                 } else {
                     value = sample.getIntensity();
                 }
@@ -303,26 +305,26 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
         List<ILineDataSet> lineDataSets = new ArrayList<>();
 
         lineDataSets.add(createDataSet(
-            entries.get(getIndexOfActivity(ActivityKind.ACTIVITY)), akActivity.color, "Activity"
+                entries.get(getIndexOfActivity(ActivityKind.ACTIVITY)), akActivity.color, "Activity"
         ));
         lineDataSets.add(createDataSet(
-            entries.get(getIndexOfActivity(ActivityKind.DEEP_SLEEP)), akDeepSleep.color, "Deep Sleep"
+                entries.get(getIndexOfActivity(ActivityKind.DEEP_SLEEP)), akDeepSleep.color, "Deep Sleep"
         ));
         lineDataSets.add(createDataSet(
-            entries.get(getIndexOfActivity(ActivityKind.LIGHT_SLEEP)), akLightSleep.color, "Light Sleep"
+                entries.get(getIndexOfActivity(ActivityKind.LIGHT_SLEEP)), akLightSleep.color, "Light Sleep"
         ));
         lineDataSets.add(createDataSet(
-            entries.get(getIndexOfActivity(ActivityKind.NOT_WORN)), akNotWorn.color, "Not worn"
+                entries.get(getIndexOfActivity(ActivityKind.NOT_WORN)), akNotWorn.color, "Not worn"
         ));
 
         if (supportsRemSleep(gbDevice)) {
             lineDataSets.add(createDataSet(
-                entries.get(getIndexOfActivity(ActivityKind.REM_SLEEP)), akRemSleep.color, "REM Sleep"
+                    entries.get(getIndexOfActivity(ActivityKind.REM_SLEEP)), akRemSleep.color, "REM Sleep"
             ));
         }
         if (supportsAwakeSleep(gbDevice)) {
             lineDataSets.add(createDataSet(
-                entries.get(getIndexOfActivity(ActivityKind.AWAKE_SLEEP)), akAwakeSleep.color, "Awake Sleep"
+                    entries.get(getIndexOfActivity(ActivityKind.AWAKE_SLEEP)), akAwakeSleep.color, "Awake Sleep"
             ));
         }
         if (hr && !heartRateDataSets.isEmpty()) {
@@ -335,15 +337,41 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
         return new DefaultChartsData<>(lineData, xValueFormatter);
     }
 
-    protected int getIndexOfActivity(ActivityKind kind) {
-        switch (kind) {
-            case DEEP_SLEEP: return 0;
-            case LIGHT_SLEEP: return 1;
-            case REM_SLEEP: return 2;
-            case AWAKE_SLEEP: return 3;
-            case NOT_WORN: return 4;
-            default: return 5; // treated as ActivityKind.ACTIVITY
+    public List<SleepDetailsView.SleepDetail> prepareStages(List<? extends ActivitySample> samples) {
+        List<SleepDetailsView.SleepDetail> result = new ArrayList<>();
+        if (samples.isEmpty()) {
+            return result;
         }
+        int currentType = getIndexOfActivity(samples.get(0).getKind());
+        long timestamp = samples.get(0).getTimestamp() * 1000L;
+        int duration = 0;
+        int color = getColorFor(samples.get(0).getKind());
+
+        for (ActivitySample sample : samples) {
+            int value = getIndexOfActivity(sample.getKind());
+            if (value != currentType) {
+                result.add(new SleepDetailsView.SleepDetail(currentType, duration, timestamp, color));
+                currentType = value;
+                timestamp = sample.getTimestamp() * 1000L;
+                duration = 0;
+                color = getColorFor(sample.getKind());
+            }
+            duration++;
+        }
+
+        result.add(new SleepDetailsView.SleepDetail(currentType, duration, timestamp, color));
+        return result;
+    }
+
+    protected int getIndexOfActivity(ActivityKind kind) {
+        return switch (kind) {
+            case DEEP_SLEEP -> 0;
+            case LIGHT_SLEEP -> 1;
+            case REM_SLEEP -> 2;
+            case AWAKE_SLEEP -> 3;
+            case NOT_WORN -> 4;
+            default -> 5; // treated as ActivityKind.ACTIVITY
+        };
     }
 
     protected Entry createLineEntry(float value, int xValue) {
@@ -382,7 +410,7 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
     protected abstract List<? extends ActivitySample> getSamples(DBHandler db, GBDevice device, int tsFrom, int tsTo);
 
     /**
-     * Implement this to supply high resolution data
+     * Implement this to supply high-resolution data
      */
     protected List<? extends ActivitySample> getSamplesHighRes(DBHandler db, GBDevice device, int tsFrom, int tsTo) {
         throw new NotImplementedException("High resolution samples have not been implemented for this chart.");
@@ -403,6 +431,29 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
         return samples;
     }
 
+    protected List<BaseActivitySummary> getAllWorkouts(DBHandler db, GBDevice device) {
+        Calendar day = Calendar.getInstance();
+        day.setTimeInMillis(getTSEnd() * 1000L); //we need today initially, which is the end of the time range
+        day.set(Calendar.HOUR_OF_DAY, 0); //and we set time for the start and end of the same day
+        day.set(Calendar.MINUTE, 0);
+        day.set(Calendar.SECOND, 0);
+        final int tsFrom = (int) (day.getTimeInMillis() / 1000);
+        final int tsTo = tsFrom + 24 * 60 * 60 - 1;
+        BaseActivitySummaryDao summaryDao = db.getDaoSession().getBaseActivitySummaryDao();
+        Device dbDevice = DBHelper.findDevice(device, db.getDaoSession());
+        QueryBuilder<BaseActivitySummary> qb = summaryDao.queryBuilder();
+        qb.where(BaseActivitySummaryDao.Properties.DeviceId.eq(Objects.requireNonNull(dbDevice).getId()));
+        qb.where(BaseActivitySummaryDao.Properties.StartTime.gt(new Date(tsFrom * 1000L)));
+        qb.where(BaseActivitySummaryDao.Properties.EndTime.lt(new Date(tsTo * 1000L)));
+        qb.orderAsc(BaseActivitySummaryDao.Properties.StartTime);
+        final List<BaseActivitySummary> summaries = qb.build().list();
+        final ActivitySummaryParser summaryParser = device.getDeviceCoordinator().getActivitySummaryParser(device, requireContext());
+        for (BaseActivitySummary summary : summaries) {
+            summaryParser.parseBinaryData(summary, false);
+        }
+        return summaries;
+    }
+
     protected List<? extends ActivitySample> getSamplesHighRes(DBHandler db, GBDevice device) {
         int tsStart = getTSStart();
         int tsEnd = getTSEnd();
@@ -410,7 +461,8 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
     }
 
     protected List<? extends ActivitySample> getSamplesofSleep(DBHandler db, GBDevice device) {
-        int SLEEP_HOUR_LIMIT = 12;
+        final String chartSleepRangeMode = GBApplication.getPrefs().getString("chart_sleep_range_mode", "18:00");
+        final int SLEEP_HOUR_LIMIT = "18:00".equals(chartSleepRangeMode) ? 18 : 12;
 
         int tsStart = getTSStart();
         Calendar day = GregorianCalendar.getInstance();
@@ -421,7 +473,7 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
         tsStart = toTimestamp(day.getTime());
 
         int tsEnd = getTSEnd();
-        day.setTimeInMillis(tsEnd* 1000L);
+        day.setTimeInMillis(tsEnd * 1000L);
         day.set(Calendar.HOUR_OF_DAY, SLEEP_HOUR_LIMIT);
         day.set(Calendar.MINUTE, 0);
         day.set(Calendar.SECOND, 0);
@@ -443,7 +495,7 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
 
         ActivitySample firstSample = samples.get(0);
         if (firstSample.getTimestamp() > tsStart) {
-            samples.add(createTrailingActivitySample(firstSample, tsStart));
+            samples.add(0, createTrailingActivitySample(firstSample, tsStart));
         }
     }
 
@@ -459,4 +511,3 @@ public abstract class AbstractActivityChartFragment<D extends ChartsData> extend
         return sample;
     }
 }
-

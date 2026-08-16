@@ -49,13 +49,12 @@ import nodomain.freeyourgadget.gadgetbridge.model.ActivityKind;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.miband.DeviceInfo;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
-public class XWatchSupport extends AbstractBTLEDeviceSupport {
+public class XWatchSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(XWatchSupport.class);
     private final GBDeviceEventVersionInfo versionCmd = new GBDeviceEventVersionInfo();
     TransactionBuilder builder = null;
@@ -86,7 +85,7 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), State.INITIALIZING, getContext()));
+        builder.setDeviceState(State.INITIALIZING);
 
         enableNotifications(builder)
                 .setDateTime(builder)
@@ -103,7 +102,7 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
      * @param builder
      */
     private void setInitialized(TransactionBuilder builder) {
-        builder.add(new SetDeviceStateAction(getDevice(), State.INITIALIZED, getContext()));
+        builder.setDeviceState(State.INITIALIZED);
     }
 
     @Override
@@ -125,7 +124,6 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
         byte[] data;
 
         LOG.debug("Sending current date to the XWatch");
-        BluetoothGattCharacteristic deviceData = getCharacteristic(XWatchService.UUID_WRITE);
 
         String time = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
         String y = time.substring(2, 4);
@@ -154,15 +152,14 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
 
         data = crcChecksum(data);
 
-        builder.write(deviceData, data);
+        builder.write(XWatchService.UUID_WRITE, data);
 
         return this;
     }
 
     private XWatchSupport enableNotifications(TransactionBuilder builder) {
         LOG.debug("Enabling action button");
-        BluetoothGattCharacteristic deviceInfo = getCharacteristic(XWatchService.UUID_NOTIFY);
-        builder.notify(deviceInfo, true);
+        builder.notify(XWatchService.UUID_NOTIFY, true);
         return this;
     }
 
@@ -175,10 +172,9 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
     public void onNotification(NotificationSpec notificationSpec) {
         try {
             TransactionBuilder builder = performInitialized("xwatch notification");
-            BluetoothGattCharacteristic deviceData = getCharacteristic(XWatchService.UUID_WRITE);
             byte[] data = new byte[]{XWatchService.COMMAND_NOTIFICATION, XWatchService.COMMAND_NOTIFICATION_MESSAGE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-            builder.write(deviceData, crcChecksum(data));
-            builder.queue(getQueue());
+            builder.write(XWatchService.UUID_WRITE, crcChecksum(data));
+            builder.queue();
         } catch (IOException ex) {
             LOG.error("Unable to send message notification on XWatch device", ex);
         }
@@ -194,7 +190,7 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
         try {
             TransactionBuilder builder = performInitialized("Set date and time");
             setDateTime(builder);
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException ex) {
             LOG.error("Unable to set time and date on XWatch device", ex);
         }
@@ -206,10 +202,9 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
             LOG.debug("Incoming call8");
             try {
                 TransactionBuilder builder = performInitialized("callnotification");
-                BluetoothGattCharacteristic deviceData = getCharacteristic(XWatchService.UUID_WRITE);
                 byte[] data = new byte[]{XWatchService.COMMAND_NOTIFICATION, XWatchService.COMMAND_NOTIFICATION_PHONE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-                builder.write(deviceData, crcChecksum(data));
-                builder.queue(getQueue());
+                builder.write(XWatchService.UUID_WRITE, crcChecksum(data));
+                builder.queue();
             } catch (IOException ex) {
                 LOG.error("Unable to send call notification on XWatch device", ex);
             }
@@ -233,43 +228,44 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
                 builder = performInitialized("fetchActivityData");
             }
             requestSummarizedData(builder);
-            performConnected(builder.getTransaction());
+            builder.queueConnected();
         } catch (IOException e) {
-            GB.toast(getContext(), "Error fetching activity data: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+            GB.toast(getContext(), "Error fetching activity data: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
         }
     }
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        super.onCharacteristicChanged(gatt, characteristic);
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] data) {
+        super.onCharacteristicChanged(gatt, characteristic, data);
 
         UUID characteristicUUID = characteristic.getUuid();
         if (XWatchService.UUID_NOTIFY.equals(characteristicUUID)) {
-            byte[] data = characteristic.getValue();
             if (data[0] == XWatchService.COMMAND_ACTIVITY_TOTALS) {
-                handleSummarizedData(characteristic.getValue());
+                handleSummarizedData(data);
             } else if (data[0] == XWatchService.COMMAND_ACTIVITY_DATA) {
-                handleDetailedData(characteristic.getValue());
+                handleDetailedData(data);
             } else if (data[0] == XWatchService.COMMAND_ACTION_BUTTON) {
-                handleButtonPressed(characteristic.getValue());
+                handleButtonPressed(data);
             } else if (data[0] == XWatchService.COMMAND_CONNECTED) {
                 handleDeviceInfo(data, BluetoothGatt.GATT_SUCCESS);
             } else {
                 LOG.info("Handled characteristic with unknown data: " + characteristicUUID);
-                logMessageContent(characteristic.getValue());
+                logMessageContent(data);
             }
         } else {
             LOG.info("Unhandled characteristic changed: " + characteristicUUID);
-            logMessageContent(characteristic.getValue());
+            logMessageContent(data);
         }
         return false;
     }
 
     @Override
     public boolean onCharacteristicRead(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic, int status) {
-        return super.onCharacteristicChanged(gatt, characteristic);
+                                        BluetoothGattCharacteristic characteristic, byte[] value,
+                                        int status) {
+        return super.onCharacteristicChanged(gatt, characteristic, value);
         //TODO: Implement (if necessary)
     }
 
@@ -324,9 +320,9 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
 
             try {
                 requestDetailedData(builder);
-                performConnected(builder.getTransaction());
+                builder.queueConnected();
             } catch (IOException e) {
-                GB.toast(getContext(), "Error fetching activity data: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+                GB.toast(getContext(), "Error fetching activity data: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
             }
         }
     }
@@ -374,14 +370,14 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
                         try {
                             builder = performInitialized("fetchActivityData");
                             requestDetailedData(builder);
-                            builder.queue(getQueue());
+                            builder.queue();
                         } catch (IOException e) {
-                            GB.toast(getContext(), "Error fetching activity data: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR);
+                            GB.toast(getContext(), "Error fetching activity data: " + e.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, e);
                         }
                     }
                 }
             } catch (Exception ex) {
-                GB.toast(getContext(), ex.getMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
+                GB.toast(getContext(), ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
             }
         }
     }
@@ -428,7 +424,7 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
                 (byte) 0};
 
         fetch = XWatchSupport.crcChecksum(fetch);
-        builder.write(getCharacteristic(XWatchService.UUID_WRITE), fetch);
+        builder.write(XWatchService.UUID_WRITE, fetch);
     }
 
     private void requestDetailedData(TransactionBuilder builder) {
@@ -449,7 +445,7 @@ public class XWatchSupport extends AbstractBTLEDeviceSupport {
                 (byte) 0};
 
         fetch = XWatchSupport.crcChecksum(fetch);
-        builder.write(getCharacteristic(XWatchService.UUID_WRITE), fetch);
+        builder.write(XWatchService.UUID_WRITE, fetch);
     }
 
     private int getTimestampFromData(byte year, byte month, byte day, byte hoursminutes) {

@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.text.DateFormat;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
 import java.util.UUID;
@@ -35,7 +36,6 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
-import nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandConst;
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandDateConverter;
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.miband.MiBandService;
@@ -43,7 +43,6 @@ import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.MiBandActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.User;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceBusyAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.miband.MiBandSupport;
 import nodomain.freeyourgadget.gadgetbridge.util.DateTimeUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
@@ -178,20 +177,21 @@ public class FetchActivityOperation extends AbstractMiBand1Operation {
 
         TransactionBuilder builder = performInitialized("fetch activity data");
         getSupport().setLowLatency(builder);
-        builder.add(new SetDeviceBusyAction(getDevice(), getContext().getString(R.string.busy_task_fetch_activity_data), getContext()));
-        builder.write(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT), fetch);
-        builder.queue(getQueue());
+        builder.setBusyTask(R.string.busy_task_fetch_activity_data);
+        builder.write(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT, fetch);
+        builder.queue();
     }
 
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] value) {
         UUID characteristicUUID = characteristic.getUuid();
         if (MiBandService.UUID_CHARACTERISTIC_ACTIVITY_DATA.equals(characteristicUUID)) {
-            handleActivityNotif(characteristic.getValue());
+            handleActivityNotif(value);
             return true;
         } else {
-            return super.onCharacteristicChanged(gatt, characteristic);
+            return super.onCharacteristicChanged(gatt, characteristic, value);
         }
     }
 
@@ -329,8 +329,8 @@ public class FetchActivityOperation extends AbstractMiBand1Operation {
             GB.toast(getContext(), "error buffering activity data: remaining bytes: " + activityStruct.activityDataRemainingBytes + ", received: " + value.length, Toast.LENGTH_LONG, GB.ERROR);
             try {
                 TransactionBuilder builder = performInitialized("send stop sync data");
-                builder.write(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT), new byte[]{MiBandService.COMMAND_STOP_SYNC_DATA});
-                builder.queue(getQueue());
+                builder.write(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT, new byte[]{MiBandService.COMMAND_STOP_SYNC_DATA});
+                builder.queue();
                 GB.updateTransferNotification(null,"Data transfer failed", false, 0, getContext());
                 handleActivityFetchFinish();
 
@@ -390,12 +390,12 @@ public class FetchActivityOperation extends AbstractMiBand1Operation {
                     minutes++;
                     timestampInSeconds += 60;
                 }
-                provider.addGBActivitySamples(samples);
+                provider.addGBActivitySamples(Arrays.asList(samples));
             } finally {
                 activityStruct.bufferFlushed(minutes);
             }
         } catch (Exception ex) {
-            GB.toast(getContext(), ex.getMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
+            GB.toast(getContext(), ex.getLocalizedMessage(), Toast.LENGTH_LONG, GB.ERROR, ex);
         }
     }
 
@@ -435,8 +435,8 @@ public class FetchActivityOperation extends AbstractMiBand1Operation {
         };
         try {
             TransactionBuilder builder = performInitialized("send acknowledge");
-            builder.write(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT), ack);
-            builder.queue(getQueue());
+            builder.write(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT, ack);
+            builder.queue();
 
             // flush to the DB after queueing the ACK
             flushActivityDataHolder();
@@ -447,9 +447,9 @@ public class FetchActivityOperation extends AbstractMiBand1Operation {
                 //if we are not clearing miband's data, we have to stop the sync
                 if (prefs.getBoolean("keep_activity_data_on_device", false)) {
                     builder = performInitialized("send acknowledge");
-                    builder.write(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT), new byte[]{MiBandService.COMMAND_STOP_SYNC_DATA});
+                    builder.write(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT, new byte[]{MiBandService.COMMAND_STOP_SYNC_DATA});
                     getSupport().setHighLatency(builder);
-                    builder.queue(getQueue());
+                    builder.queue();
                 }
                 handleActivityFetchFinish();
             }

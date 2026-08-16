@@ -16,12 +16,16 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.devices.xiaomi;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.net.Uri;
 
+import androidx.annotation.NonNull;
+
 import nodomain.freeyourgadget.gadgetbridge.R;
-import nodomain.freeyourgadget.gadgetbridge.activities.InstallActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.FwAppInstallerActivity;
+import nodomain.freeyourgadget.gadgetbridge.activities.install.InstallActivity;
 import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.GenericItem;
@@ -37,13 +41,19 @@ public class XiaomiInstallHandler implements InstallHandler {
         this.helper = new XiaomiFWHelper(uri, context);
     }
 
+    @NonNull
+    @Override
+    public Class<? extends Activity> getInstallActivity() {
+        return FwAppInstallerActivity.class;
+    }
+
     @Override
     public boolean isValid() {
         return helper.isValid();
     }
 
     @Override
-    public void validateInstallation(final InstallActivity installActivity, final GBDevice device) {
+    public void validateInstallation(@NonNull final InstallActivity installActivity, @NonNull final GBDevice device) {
         if (device.isBusy()) {
             installActivity.setInfoText(device.getBusyTask());
             installActivity.setInstallEnabled(false);
@@ -74,6 +84,9 @@ public class XiaomiInstallHandler implements InstallHandler {
         } else if (helper.isFirmware()) {
             installItem.setIcon(R.drawable.ic_firmware);
             installItem.setName(mContext.getString(R.string.kind_firmware));
+        } else if (helper.isRpk()) {
+            installItem.setIcon(R.drawable.ic_watchapp);
+            installItem.setName(mContext.getString(R.string.kind_app));
         } else {
             installItem.setIcon(R.drawable.ic_device_unknown);
             installItem.setName(mContext.getString(R.string.kind_invalid));
@@ -87,7 +100,7 @@ public class XiaomiInstallHandler implements InstallHandler {
     }
 
     @Override
-    public void onStartInstall(final GBDevice device) {
+    public void onStartInstall(@NonNull final GBDevice device) {
         helper.unsetFwBytes(); // free up memory
     }
 }

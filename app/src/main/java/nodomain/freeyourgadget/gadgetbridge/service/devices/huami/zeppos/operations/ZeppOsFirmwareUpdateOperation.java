@@ -16,8 +16,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.operations;
 
-import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCharacteristic;
+import static nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport.calcMaxWriteChunk;
+
 import android.net.Uri;
 import android.widget.Toast;
 
@@ -26,7 +26,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventDisplayMessage;
@@ -36,13 +35,10 @@ import nodomain.freeyourgadget.gadgetbridge.devices.huami.zeppos.ZeppOsCoordinat
 import nodomain.freeyourgadget.gadgetbridge.devices.huami.zeppos.ZeppOsFwHelper;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BLETypeConversions;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceBusyAction;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetProgressAction;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.HuamiFirmwareType;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.operations.update.UpdateFirmwareOperation2020;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsSupport;
-import nodomain.freeyourgadget.gadgetbridge.service.devices.miband.operations.AbstractMiBandOperation;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huami.zeppos.ZeppOsTransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.util.ArrayUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
@@ -56,13 +52,13 @@ import nodomain.freeyourgadget.gadgetbridge.util.GB;
  * - buildFirmwareInfoCommand is slightly different
  * - at the end of the update, we request display items / watchfaces depending on what was installed, to refresh the
  * preferences in the UI
+ * <p>
+ * As of btrfcomm support, it also decouples the operation from the abstract ble operation classes.
  */
-public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppOsSupport> {
+public class ZeppOsFirmwareUpdateOperation extends AbstractZeppOsOperation<ZeppOsSupport> {
     private static final Logger LOG = LoggerFactory.getLogger(ZeppOsFirmwareUpdateOperation.class);
 
     private final Uri uri;
-    private final BluetoothGattCharacteristic fwCControlChar;
-    private final BluetoothGattCharacteristic fwCDataChar;
     private ZeppOsFwHelper fwHelper;
     private RandomAccessFile raf;
 
@@ -71,20 +67,16 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
     public ZeppOsFirmwareUpdateOperation(final Uri uri, final ZeppOsSupport support) {
         super(support);
         this.uri = uri;
-        this.fwCControlChar = getCharacteristic(HuamiService.UUID_CHARACTERISTIC_FIRMWARE);
-        this.fwCDataChar = getCharacteristic(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_DATA);
     }
 
-    @Override
-    protected void enableNeededNotifications(TransactionBuilder builder, boolean enable) {
-        builder.notify(fwCControlChar, enable);
+    protected void enableNeededNotifications(ZeppOsTransactionBuilder builder, boolean enable) {
+        builder.notify(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_CONTROL, enable);
     }
 
-    @Override
-    protected void enableOtherNotifications(final TransactionBuilder builder, final boolean enable) {
+    protected void enableOtherNotifications(final ZeppOsTransactionBuilder builder, final boolean enable) {
         // Disable 2021 chunked reads, otherwise firmware upgrades and activity sync get interrupted
         // FIXME is this still needed?
-        builder.notify(getCharacteristic(HuamiService.UUID_CHARACTERISTIC_CHUNKEDTRANSFER_2021_READ), enable);
+        builder.notify(HuamiService.UUID_CHARACTERISTIC_CHUNKEDTRANSFER_2021_READ, enable);
     }
 
     @Override
@@ -95,10 +87,16 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
             throw new IOException("Not a Zepp OS coordinator for " + getDevice().getAddress());
         }
 
+        getDevice().setBusyTask(R.string.updating_firmware, getContext()); // mark as busy quickly to avoid interruptions from the outside
+        ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("fw update starting");
+        enableOtherNotifications(builder, false);
+        enableNeededNotifications(builder, true);
+        builder.queue();
+
         fwHelper = new ZeppOsFwHelper(
                 uri,
                 getContext(),
-                ((ZeppOsCoordinator) coordinator).getDeviceBluetoothName(),
+                ((ZeppOsCoordinator) coordinator).getDeviceBluetoothNames(),
                 ((ZeppOsCoordinator) coordinator).getDeviceSources()
         );
 
@@ -108,10 +106,17 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
 
         raf = new RandomAccessFile(fwHelper.getFile(), "r");
 
-        if (!requestParameters()) {
-            displayErrorMessage("Error requesting parameters, aborting.");
-            done();
-        }
+        requestParameters();
+    }
+
+    @Override
+    protected void operationFinished() {
+        super.operationFinished();
+        getSupport().onFirmwareUpdateFinished();
+        ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("fw update finish");
+        enableNeededNotifications(builder, false);
+        enableOtherNotifications(builder, true);
+        builder.queue();
     }
 
     protected void done() {
@@ -120,32 +125,11 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
         unsetBusy();
     }
 
-    @Override
-    public boolean onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-        if (status != BluetoothGatt.GATT_SUCCESS) {
-            operationFailed();
-        }
-        return super.onCharacteristicWrite(gatt, characteristic, status);
-    }
-
     void operationFailed() {
         GB.updateInstallNotification(getContext().getString(R.string.updatefirmwareoperation_write_failed), false, 0, getContext());
     }
 
-    @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        UUID characteristicUUID = characteristic.getUuid();
-        if (fwCControlChar.getUuid().equals(characteristicUUID)) {
-            handleNotificationNotif(characteristic.getValue());
-            return true; // don't let anyone else handle it
-        } else {
-            super.onCharacteristicChanged(gatt, characteristic);
-        }
-        return false;
-    }
-
-    protected void handleNotificationNotif(byte[] value) {
+    public void handleControlNotification(final byte[] value) {
         boolean success = (value[2] == HuamiService.SUCCESS) || ((value[1] == UpdateFirmwareOperation2020.REPLY_UPDATE_PROGRESS) && value.length >= 6); // ugly
 
         if (value[0] == HuamiService.RESPONSE && success) {
@@ -169,7 +153,7 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
                     //    break;
                     case UpdateFirmwareOperation2020.REPLY_UPDATE_PROGRESS:
                         int offset = (value[2] & 0xff) | ((value[3] & 0xff) << 8) | ((value[4] & 0xff) << 16) | ((value[5] & 0xff) << 24);
-                        LOG.info("update progress " + offset + " bytes");
+                        LOG.info("update progress {} bytes", offset);
                         sendFirmwareDataChunk(offset);
                         break;
                     case UpdateFirmwareOperation2020.COMMAND_COMPLETE_TRANSFER:
@@ -177,9 +161,9 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
                         break;
                     case UpdateFirmwareOperation2020.COMMAND_FINALIZE_UPDATE: {
                         if (fwHelper.getFirmwareType() == HuamiFirmwareType.FIRMWARE) {
-                            TransactionBuilder builder = performInitialized("reboot");
-                            getSupport().sendReboot(builder);
-                            builder.queue(getQueue());
+                            ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("reboot");
+                            builder.write(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_CONTROL, new byte[]{HuamiService.COMMAND_FIRMWARE_REBOOT});
+                            builder.queue();
                         } else {
                             GB.updateInstallNotification(getContext().getString(R.string.updatefirmwareoperation_update_complete), false, 100, getContext());
                             done();
@@ -193,8 +177,7 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
                         break;
                     }
                     default: {
-                        LOG.error("Unexpected response during firmware update: ");
-                        getSupport().logMessageContent(value);
+                        LOG.error("Unexpected response during firmware update: {}", GB.hexdump(value));
                         operationFailed();
                         displayErrorMessage(getContext().getString(R.string.updatefirmwareoperation_updateproblem_do_not_reboot));
                         done();
@@ -205,9 +188,8 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
                 done();
             }
         } else {
-            LOG.error("Unexpected notification during firmware update: ");
+            LOG.error("Unexpected notification during firmware update: {}", GB.hexdump(value));
             operationFailed();
-            getSupport().logMessageContent(value);
             int errorMessage = R.string.updatefirmwareoperation_metadata_updateproblem;
             // Display a more specific error message for known errors
 
@@ -225,24 +207,16 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
         if (ArrayUtils.startsWith(value, new byte[]{HuamiService.RESPONSE, UpdateFirmwareOperation2020.COMMAND_FINALIZE_UPDATE, HuamiService.SUCCESS})) {
             if (fwHelper.getFirmwareType() == HuamiFirmwareType.APP) {
                 // After an app is installed, request the display items from the band (new app will be at the end)
-                try {
-                    TransactionBuilder builder = performInitialized("request display items and apps");
-                    getSupport().requestDisplayItems(builder);
-                    getSupport().requestApps(builder);
-                    builder.queue(getQueue());
-                } catch (final IOException e) {
-                    LOG.error("Failed to request display items after app install", e);
-                }
+                ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("request display items and apps");
+                getSupport().requestDisplayItems(builder);
+                getSupport().requestApps(builder);
+                builder.queue();
             } else if (fwHelper.getFirmwareType() == HuamiFirmwareType.WATCHFACE) {
                 // After a watchface is installed, request the watchfaces from the band (new watchface will be at the end)
-                try {
-                    TransactionBuilder builder = performInitialized("request watchfaces and apps");
-                    getSupport().requestWatchfaces(builder);
-                    getSupport().requestApps(builder);
-                    builder.queue(getQueue());
-                } catch (final IOException e) {
-                    LOG.error("Failed to request watchfaces after watchface install", e);
-                }
+                ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("request watchfaces and apps");
+                getSupport().requestWatchfaces(builder);
+                getSupport().requestApps(builder);
+                builder.queue();
             }
         }
     }
@@ -252,14 +226,10 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
     }
 
     public void sendFwInfo() {
-        try {
-            TransactionBuilder builder = performInitialized("send firmware info");
-            builder.add(new SetDeviceBusyAction(getDevice(), getContext().getString(R.string.updating_firmware), getContext()));
-            builder.write(fwCControlChar, buildFirmwareInfoCommand());
-            builder.queue(getQueue());
-        } catch (IOException e) {
-            LOG.error("Error sending firmware info: " + e.getLocalizedMessage(), e);
-        }
+        ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("send firmware info");
+        builder.setBusy(R.string.updating_firmware);
+        builder.write(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_CONTROL, buildFirmwareInfoCommand());
+        builder.queue();
     }
 
     protected byte[] buildFirmwareInfoCommand() {
@@ -288,23 +258,17 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
         };
     }
 
-    public boolean requestParameters() {
-        try {
-            TransactionBuilder builder = performInitialized("get update capabilities");
-            byte[] bytes = new byte[]{UpdateFirmwareOperation2020.COMMAND_REQUEST_PARAMETERS};
-            builder.write(fwCControlChar, bytes);
-            builder.queue(getQueue());
-            return true;
-        } catch (IOException e) {
-            LOG.error("Error sending firmware info: " + e.getLocalizedMessage(), e);
-            return false;
-        }
+    public void requestParameters() {
+        ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("get update capabilities");
+        byte[] bytes = new byte[]{UpdateFirmwareOperation2020.COMMAND_REQUEST_PARAMETERS};
+        builder.write(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_CONTROL, bytes);
+        builder.queue();
     }
 
     private void sendFirmwareDataChunk(int offset) {
         int len = fwHelper.getSize();
         int remaining = len - offset;
-        final int packetLength = getSupport().getMTU() - 3;
+        final int packetLength = calcMaxWriteChunk(getSupport().getMTU());
 
         int chunkLength = mChunkLength;
         if (remaining < mChunkLength) {
@@ -320,14 +284,14 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
                 return;
             }
 
-            TransactionBuilder builder = performInitialized("send firmware packets");
+            ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("send firmware packets");
 
             for (int i = 0; i < packets; i++) {
                 raf.seek(offset + (long) i * packetLength);
                 byte[] fwChunk = new byte[packetLength];
                 raf.read(fwChunk);
 
-                builder.write(fwCDataChar, fwChunk);
+                builder.write(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_DATA, fwChunk);
                 chunkProgress += packetLength;
             }
 
@@ -335,14 +299,14 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
                 raf.seek(offset + (long) packets * packetLength);
                 byte[] lastChunk = new byte[chunkLength - chunkProgress];
                 raf.read(lastChunk);
-                builder.write(fwCDataChar, lastChunk);
+                builder.write(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_DATA, lastChunk);
             }
 
             int progressPercent = (int) ((((float) (offset + chunkLength)) / len) * 100);
 
-            builder.add(new SetProgressAction(getContext().getString(R.string.updatefirmwareoperation_update_in_progress), true, progressPercent, getContext()));
+            builder.setProgress(R.string.updatefirmwareoperation_update_in_progress, true, progressPercent);
 
-            builder.queue(getQueue());
+            builder.queue();
 
         } catch (final IOException e) {
             LOG.error("Unable to send fw to device", e);
@@ -350,27 +314,27 @@ public class ZeppOsFirmwareUpdateOperation extends AbstractMiBandOperation<ZeppO
         }
     }
 
-    protected void sendTransferStart() throws IOException {
-        final TransactionBuilder builder = performInitialized("transfer complete");
-        builder.write(fwCControlChar, new byte[]{
+    private void sendTransferStart() {
+        final ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("transfer complete");
+        builder.write(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_CONTROL, new byte[]{
                 UpdateFirmwareOperation2020.COMMAND_START_TRANSFER, 1,
         });
-        builder.queue(getQueue());
+        builder.queue();
     }
 
-    protected void sendTransferComplete() throws IOException {
-        final TransactionBuilder builder = performInitialized("transfer complete");
-        builder.write(fwCControlChar, new byte[]{
+    private void sendTransferComplete() {
+        final ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("transfer complete");
+        builder.write(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_CONTROL, new byte[]{
                 UpdateFirmwareOperation2020.COMMAND_COMPLETE_TRANSFER,
         });
-        builder.queue(getQueue());
+        builder.queue();
     }
 
-    protected void sendFinalize() throws IOException {
-        final TransactionBuilder builder = performInitialized("finalize firmware");
-        builder.write(fwCControlChar, new byte[]{
+    private void sendFinalize() {
+        final ZeppOsTransactionBuilder builder = getSupport().createZeppOsTransactionBuilder("finalize firmware");
+        builder.write(HuamiService.UUID_CHARACTERISTIC_FIRMWARE_CONTROL, new byte[]{
                 UpdateFirmwareOperation2020.COMMAND_FINALIZE_UPDATE,
         });
-        builder.queue(getQueue());
+        builder.queue();
     }
 }

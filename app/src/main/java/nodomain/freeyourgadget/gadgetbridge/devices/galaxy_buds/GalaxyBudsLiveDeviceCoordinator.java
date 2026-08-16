@@ -32,7 +32,7 @@ public class GalaxyBudsLiveDeviceCoordinator extends GalaxyBudsGenericCoordinato
     }
 
     @Override
-    public int getBatteryCount() {
+    public int getBatteryCount(final GBDevice device) {
         return 3;
     }
 
@@ -59,14 +59,8 @@ public class GalaxyBudsLiveDeviceCoordinator extends GalaxyBudsGenericCoordinato
         return R.string.devicetype_galaxybuds_live;
     }
 
-
     @Override
     public int getDefaultIconResource() {
         return R.drawable.ic_device_galaxy_buds_live;
-    }
-
-    @Override
-    public int getDisabledIconResource() {
-        return R.drawable.ic_device_galaxy_buds_live_disabled;
     }
 }

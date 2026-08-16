@@ -1,4 +1,4 @@
-/*  Copyright (C) 2021-2024 Daniel Dakhno
+/*  Copyright (C) 2021-2026 Daniel Dakhno
 
     This file is part of Gadgetbridge.
 
@@ -24,7 +24,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.os.Bundle;
 
+import androidx.annotation.Nullable;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.slf4j.Logger;
@@ -38,12 +40,12 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.devices.vesc.VescCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
-import nodomain.freeyourgadget.gadgetbridge.model.DeviceType;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.actions.SetDeviceStateAction;
 import nodomain.freeyourgadget.gadgetbridge.util.CheckSums;
 
 public class VescDeviceSupport extends VescBaseDeviceSupport {
+    private static final Logger LOG = LoggerFactory.getLogger(VescDeviceSupport.class);
+
     BluetoothGattCharacteristic serialWriteCharacteristic, serialReadCharacteristic;
 
     public static final String COMMAND_SET_RPM = "nodomain.freeyourgadget.gadgetbridge.vesc.command.SET_RPM";
@@ -56,17 +58,12 @@ public class VescDeviceSupport extends VescBaseDeviceSupport {
 
     public static final String ACTION_GOT_VALUES = "nodomain.freeyourgadget.gadgetbridge.vesc.action.GOT_VALUES";
 
-    private Logger logger = LoggerFactory.getLogger(getClass());
+    private final ByteBuffer responseBuffer = ByteBuffer.allocate(100);
 
-    private DeviceType deviceType;
-
-    private ByteBuffer responseBuffer = ByteBuffer.allocate(100);
-
-    public VescDeviceSupport(DeviceType type) {
+    public VescDeviceSupport() {
         super();
         responseBuffer.order(ByteOrder.BIG_ENDIAN);
 
-        deviceType = type;
         addSupportedService(UUID.fromString(VescCoordinator.UUID_SERVICE_SERIAL_NRF));
         addSupportedService(UUID.fromString(VescCoordinator.UUID_SERVICE_SERIAL_HM10));
     }
@@ -78,9 +75,9 @@ public class VescDeviceSupport extends VescBaseDeviceSupport {
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        logger.debug("initializing device");
+        LOG.debug("initializing device");
 
-        builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZING, getContext()));
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         initBroadcast();
 
@@ -94,7 +91,7 @@ public class VescDeviceSupport extends VescBaseDeviceSupport {
 
         builder.notify(this.serialReadCharacteristic, true);
 
-        return builder.add(new SetDeviceStateAction(getDevice(), GBDevice.State.INITIALIZED, getContext()));
+        return builder.setDeviceState(GBDevice.State.INITIALIZED);
     }
 
     @Override
@@ -106,17 +103,17 @@ public class VescDeviceSupport extends VescBaseDeviceSupport {
     }
 
     @Override
-    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-        handleRxCharacteristic(characteristic);
+    public boolean onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
+        handleRxCharacteristic(characteristic, value);
 
         return true;
     }
 
-    private void handleRxCharacteristic(BluetoothGattCharacteristic characteristic) {
+    private void handleRxCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
         if (characteristic != serialReadCharacteristic) return;
 
-        responseBuffer.put(characteristic.getValue());
-        short length = 0;
+        responseBuffer.put(value);
+        short length;
         int oldPosition = responseBuffer.position();
         responseBuffer.position(0);
         byte lengthType = responseBuffer.get();
@@ -199,8 +196,8 @@ public class VescDeviceSupport extends VescBaseDeviceSupport {
         fullnessPercent = Math.max(fullnessPercent, 0);
         fullnessPercent = Math.min(fullnessPercent, 100);
 
-        getDevice().setBatteryLevel(fullnessPercent);
-        getDevice().setBatteryVoltage(voltage);
+        getDevice().setBatteryLevel(fullnessPercent, 0);
+        getDevice().setBatteryVoltage(voltage, 0);
         getDevice().sendDeviceUpdateIntent(getContext());
     }
 
@@ -217,7 +214,7 @@ public class VescDeviceSupport extends VescBaseDeviceSupport {
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
         getValues();
         // getDecodedADC();
     }
@@ -240,13 +237,19 @@ public class VescDeviceSupport extends VescBaseDeviceSupport {
 
     @Override
     public void dispose() {
-        super.dispose();
-        LocalBroadcastManager.getInstance(getContext()).unregisterReceiver(commandReceiver);
+        synchronized (ConnectionMonitor) {
+            super.dispose();
+            LocalBroadcastManager.getInstance(getContext()).unregisterReceiver(commandReceiver);
+        }
     }
 
     BroadcastReceiver commandReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            if (intent.getAction() == null) {
+                LOG.warn("Null action, ignoring");
+                return;
+            }
             if (intent.getAction().equals(COMMAND_SET_RPM)) {
                 VescDeviceSupport.this.setRPM(
                         intent.getIntExtra(EXTRA_RPM, 0)
@@ -287,9 +290,9 @@ public class VescDeviceSupport extends VescBaseDeviceSupport {
     }
 
     public void queryPacket(byte[] data) {
-        new TransactionBuilder("write serial packet")
+        createTransactionBuilder("write serial packet")
                 .write(this.serialWriteCharacteristic, data)
-                .queue(getQueue());
+                .queue();
     }
 
     public byte[] buildPacket(CommandType commandType, Object... args) {

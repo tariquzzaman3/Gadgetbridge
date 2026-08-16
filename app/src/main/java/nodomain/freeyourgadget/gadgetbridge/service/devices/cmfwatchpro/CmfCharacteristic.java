@@ -16,6 +16,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 package nodomain.freeyourgadget.gadgetbridge.service.devices.cmfwatchpro;
 
+import static nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport.calcMaxWriteChunk;
+
 import android.bluetooth.BluetoothGattCharacteristic;
 
 import androidx.annotation.Nullable;
@@ -57,6 +59,7 @@ public class CmfCharacteristic {
     private int mtu = 247;
 
     private final Map<CmfCommand, ChunkBuffer> chunkBuffers = new HashMap<>();
+    private final ByteArrayOutputStream packetBuffer = new ByteArrayOutputStream();
 
     public CmfCharacteristic(final BluetoothGattCharacteristic bluetoothGattCharacteristic,
                              final Handler handler) {
@@ -115,7 +118,8 @@ public class CmfCharacteristic {
     }
 
     private byte[][] makeChunksPlaintext(final byte[] payload) {
-        final int chunkSize = mtu - 20;
+        // exclude general protocol overhead (11 bytes), our CRC32 (4 bytes) and ??? (2 bytes)
+        final int chunkSize = calcMaxWriteChunk(mtu) - 11 - 4 - 2;
         final int numChunks = (int) Math.ceil(payload.length / (float) chunkSize);
         final byte[][] chunks = new byte[numChunks][];
 
@@ -145,7 +149,7 @@ public class CmfCharacteristic {
         }
 
         // AES will output 16-byte blocks, exclude the protocol overhead (11 bytes)
-        final int maxEncryptedPayloadSize = ((mtu - 11) / 16) * 16;
+        final int maxEncryptedPayloadSize = ((calcMaxWriteChunk(mtu) - 11) / 16) * 16;
         final int maxPayloadSize = maxEncryptedPayloadSize - 4 - 1; // exclude 4 bytes for crc and 1 byte of aes padding
         final int numChunks = (int) Math.ceil(payload.length / (float) (maxPayloadSize));
         final byte[][] chunks = new byte[numChunks][];
@@ -185,6 +189,7 @@ public class CmfCharacteristic {
             case AUTH_PAIR_REQUEST:
             case AUTH_PAIR_REPLY:
             case DATA_CHUNK_WRITE_AGPS:
+            case DATA_CHUNK_WRITE_FIRMWARE:
             case DATA_CHUNK_WRITE_WATCHFACE:
                 return false;
         }
@@ -193,15 +198,30 @@ public class CmfCharacteristic {
     }
 
     public void onCharacteristicChanged(final byte[] value) {
-        final ByteBuffer buf = ByteBuffer.wrap(value).order(ByteOrder.BIG_ENDIAN);
+        final ByteBuffer buf;
+        if (packetBuffer.size() > 0) {
+            // We're already in the middle of a packet
+            packetBuffer.write(value, 0, value.length);
+            buf = ByteBuffer.wrap(packetBuffer.toByteArray()).order(ByteOrder.BIG_ENDIAN);
+        } else {
+            buf = ByteBuffer.wrap(value).order(ByteOrder.BIG_ENDIAN);
+        }
 
         final byte header = buf.get();
         if (header != PAYLOAD_HEADER) {
             LOG.error("Unexpected first byte {}", String.format("0x%02x", header));
+            packetBuffer.reset();
             return;
         }
 
         final int payloadLength = buf.getShort();
+        if (payloadLength > buf.remaining()) {
+            LOG.debug("Got partial payload - waiting for more bytes");
+            // First chunk
+            packetBuffer.write(value, 0, value.length);
+            return;
+        }
+
         final int cmd1 = buf.getShort() & 0xFFFF;
         final int chunkCount = buf.getShort();
         final int chunkIndex = buf.getShort();
@@ -243,6 +263,8 @@ public class CmfCharacteristic {
                     chunkBuffers.remove(cmd);
                 }
                 return;
+            } finally {
+                packetBuffer.reset();
             }
         } else {
             payload = new byte[0];

@@ -1,4 +1,4 @@
-/*  Copyright (C) 2019-2024 Arjan Schrijver, Damien Gaignon, Sophanimus
+/*  Copyright (C) 2019-2026 Arjan Schrijver, Damien Gaignon, Sophanimus
 
     This file is part of Gadgetbridge.
 
@@ -53,14 +53,17 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.jyou;
 
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
+import android.os.Bundle;
 import android.widget.Toast;
+
+import androidx.annotation.Nullable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.UUID;
@@ -72,13 +75,13 @@ import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.model.Alarm;
 import nodomain.freeyourgadget.gadgetbridge.model.CallSpec;
 import nodomain.freeyourgadget.gadgetbridge.model.NotificationSpec;
-import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.util.AlarmUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 import nodomain.freeyourgadget.gadgetbridge.util.StringUtils;
 
-public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
+public class BFH16DeviceSupport extends AbstractBTLESingleDeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(BFH16DeviceSupport.class);
 
     public BluetoothGattCharacteristic ctrlCharacteristic = null;
@@ -102,8 +105,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
         LOG.info("Initializing BFH16");
 
-        gbDevice.setState(GBDevice.State.INITIALIZING);
-        gbDevice.sendDeviceUpdateIntent(getContext());
+        builder.setDeviceState(GBDevice.State.INITIALIZING);
 
         measureCharacteristic = getCharacteristic(BFH16Constants.BFH16_SERVICE1_NOTIFY);
         ctrlCharacteristic = getCharacteristic(BFH16Constants.BFH16_SERVICE1_WRITE);
@@ -113,8 +115,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
 
         syncSettings(builder);
 
-        gbDevice.setState(GBDevice.State.INITIALIZED);
-        gbDevice.sendDeviceUpdateIntent(getContext());
+        builder.setDeviceState(GBDevice.State.INITIALIZED);
 
         LOG.info("Initialization BFH16 Done");
 
@@ -127,13 +128,13 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
     //TODO check TODOs in method
     @Override
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        if (super.onCharacteristicChanged(gatt, characteristic)) {
+                                           BluetoothGattCharacteristic characteristic,
+                                           byte[] data) {
+        if (super.onCharacteristicChanged(gatt, characteristic, data)) {
             return true;
         }
 
         UUID characteristicUUID = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
         if (data.length == 0)
             return true;
 
@@ -201,7 +202,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
                         alarms.get(i).getEnabled() ? cal.get(Calendar.MINUTE) : -1
                 ));
             }
-            builder.queue(getQueue());
+            builder.queue();
             GB.toast(getContext(), "Alarm settings applied - do note that the current device does not support day specification", Toast.LENGTH_LONG, GB.INFO);
         } catch(IOException e) {
             LOG.warn(e.getMessage());
@@ -214,7 +215,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
         try {
             TransactionBuilder builder = performInitialized("SetTime");
             syncDateAndTime(builder);
-            builder.queue(getQueue());
+            builder.queue();
         } catch(IOException e) {
             LOG.warn(e.getMessage());
         }
@@ -228,7 +229,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
             builder.write(ctrlCharacteristic, commandWithChecksum(
                     BFH16Constants.CMD_VIBRATE, 0, start ? 1 : 0
             ));
-            builder.queue(getQueue());
+            builder.queue();
         } catch(Exception e) {
             LOG.warn(e.getMessage());
         }
@@ -286,7 +287,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
             builder.write(ctrlCharacteristic, commandWithChecksum(
                     BFH16Constants.CMD_ACTION_REBOOT_DEVICE, 0, 0
             ));
-            builder.queue(getQueue());
+            builder.queue();
         } catch(Exception e) {
             LOG.warn(e.getMessage());
         }
@@ -300,7 +301,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
             builder.write(ctrlCharacteristic, commandWithChecksum(
                     BFH16Constants.CMD_MEASURE_HEART, 0, 1
             ));
-            builder.queue(getQueue());
+            builder.queue();
         } catch(Exception e) {
             LOG.warn(e.getMessage());
         }
@@ -315,7 +316,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
             builder.write(ctrlCharacteristic, commandWithChecksum(
                     BFH16Constants.CMD_MEASURE_HEART, 0, enable ? 1 : 0
             ));
-            builder.queue(getQueue());
+            builder.queue();
         } catch(Exception e) {
             LOG.warn(e.getMessage());
         }
@@ -329,14 +330,14 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
             builder.write(ctrlCharacteristic, commandWithChecksum(
                     BFH16Constants.CMD_VIBRATE, 0, 1
             ));
-            builder.queue(getQueue());
+            builder.queue();
         } catch(Exception e) {
             LOG.warn(e.getMessage());
         }
     }
 
     @Override
-    public void onTestNewFunction() {
+    public void onTestNewFunction(@Nullable Bundle options) {
 
         showNotification((byte)0xFF, "", "");
 
@@ -393,7 +394,7 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
                 }
                 builder.write(ctrlCharacteristic, currentPacket);
             }
-            builder.queue(getQueue());
+            builder.queue();
         } catch (IOException e) {
             LOG.warn(e.getMessage());
         }
@@ -516,26 +517,22 @@ public class BFH16DeviceSupport extends AbstractBTLEDeviceSupport {
     }
 
     private byte[] stringToUTF8Bytes(String src, int byteCount) {
-        try {
-            if (src == null)
-                return null;
+        if (src == null)
+            return null;
 
-            for (int i = src.length(); i > 0; i--) {
-                String sub = src.substring(0, i);
-                byte[] subUTF8 = sub.getBytes("UTF-8");
+        for (int i = src.length(); i > 0; i--) {
+            String sub = src.substring(0, i);
+            byte[] subUTF8 = sub.getBytes(StandardCharsets.UTF_8);
 
-                if (subUTF8.length == byteCount) {
-                    return subUTF8;
-                }
-
-                if (subUTF8.length < byteCount) {
-                    byte[] largerSubUTF8 = new byte[byteCount];
-                    System.arraycopy(subUTF8, 0, largerSubUTF8, 0, subUTF8.length);
-                    return largerSubUTF8;
-                }
+            if (subUTF8.length == byteCount) {
+                return subUTF8;
             }
-        } catch (UnsupportedEncodingException e) {
-            LOG.warn(e.getMessage());
+
+            if (subUTF8.length < byteCount) {
+                byte[] largerSubUTF8 = new byte[byteCount];
+                System.arraycopy(subUTF8, 0, largerSubUTF8, 0, subUTF8.length);
+                return largerSubUTF8;
+            }
         }
         return null;
     }

@@ -61,10 +61,9 @@ public class AmazfitNeoSupport extends MiBand5Support {
     }
 
     @Override
-    protected AmazfitNeoSupport setFitnessGoal(TransactionBuilder builder) {
+    protected void setFitnessGoal(TransactionBuilder builder) {
         LOG.info("Attempting to set Fitness Goal...");
         setNeoFitnessGoal(builder);
-        return this;
     }
 
     @Override
@@ -87,19 +86,18 @@ public class AmazfitNeoSupport extends MiBand5Support {
     }
 
     @Override
-    protected AmazfitNeoSupport requestAlarms(TransactionBuilder builder) {
-        return this; //Neo always returns response array with '03' in it which marks alarms unused on connect
+    protected void requestAlarms(TransactionBuilder builder) {
+        //Neo always returns response array with '03' in it which marks alarms unused on connect
     }
 
     @Override
     public boolean supportsHourlyChime() { return true; }
 
     @Override
-    protected AmazfitNeoSupport setHeartrateSleepSupport(TransactionBuilder builder) {
+    protected void setHeartrateSleepSupport(TransactionBuilder builder) {
         final boolean enableHrSleepSupport = MiBandCoordinator.getHeartrateSleepSupport(gbDevice.getAddress());
         LOG.info("Setting Amazfit Neo heartrate sleep support to " + enableHrSleepSupport);
         writeToConfiguration(builder, new byte[] {0x06, 0x3c, 0x00, (byte) (enableHrSleepSupport ? 1 : 0 )});
-        return this;
     }
 
     @Override
@@ -111,7 +109,7 @@ public class AmazfitNeoSupport extends MiBand5Support {
             TransactionBuilder builder = performInitialized("HeartRateTest");
             enableNotifyHeartRateMeasurements(true, builder);
             builder.write(characteristicHRControlPoint, new byte[]{ 0x15, 0x01, 0x01 });
-            builder.queue(getQueue());
+            builder.queue();
             heartRateTestStarted = true;
         } catch (IOException ex) {
             LOG.error("Unable to read heart rate from Huami device", ex);
@@ -144,7 +142,7 @@ public class AmazfitNeoSupport extends MiBand5Support {
                 builder.write(characteristicHRControlPoint, new byte[] { 0x15, 0x01, 0x00 });
                 heartRateRealtimeStarted = false;
             }
-            builder.queue(getQueue());
+            builder.queue();
             enableRealtimeSamplesTimer(enable);
         } catch (IOException ex) {
             LOG.error("Unable to enable realtime heart rate measurement", ex);

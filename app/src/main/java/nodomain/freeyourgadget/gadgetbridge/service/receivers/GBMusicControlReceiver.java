@@ -23,8 +23,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.media.AudioManager;
 import android.media.session.MediaController;
+import android.media.session.MediaSession;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
+import android.os.Build;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 
@@ -75,10 +77,12 @@ public class GBMusicControlReceiver extends BroadcastReceiver {
                 keyCode = KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
                 break;
             case VOLUMEUP:
+                LOG.debug("Adjusting volume up");
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0);
                 sendPhoneVolume(audioManager);
                 return;
             case VOLUMEDOWN:
+                LOG.debug("Adjusting volume down");
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, 0);
                 sendPhoneVolume(audioManager);
                 return;
@@ -89,10 +93,10 @@ public class GBMusicControlReceiver extends BroadcastReceiver {
 
         final GBPrefs prefs = GBApplication.getPrefs();
 
-        if (prefs.getBoolean("pref_deprecated_media_control", false)) {
-            // Deprecated path - mb_intents works for some players and not others, and vice-versa
+        final long eventTime = SystemClock.uptimeMillis();
 
-            final long eventTime = SystemClock.uptimeMillis();
+        if (prefs.getBoolean("pref_deprecated_media_control", false)) {
+            // Deprecated path - mb_intents works for some players and not others, and vice versa
 
             if (prefs.getBoolean("mb_intents", false)) {
                 String audioPlayer = getAudioPlayer(context);
@@ -116,11 +120,7 @@ public class GBMusicControlReceiver extends BroadcastReceiver {
                 context.sendOrderedBroadcast(upIntent, null);
             } else {
                 LOG.debug("Sending key press {} generally", musicCmd);
-                final KeyEvent downEvent = new KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, 0);
-                audioManager.dispatchMediaKeyEvent(downEvent);
-
-                final KeyEvent upEvent = new KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, keyCode, 0);
-                audioManager.dispatchMediaKeyEvent(upEvent);
+                broadcastMediaKeyEvent(eventTime, keyCode, audioManager);
             }
         } else {
             try {
@@ -129,12 +129,30 @@ public class GBMusicControlReceiver extends BroadcastReceiver {
                         new ComponentName(context, NotificationListener.class)
                 );
 
+                final MediaController controller;
+
                 if (controllers.isEmpty()) {
-                    LOG.warn("No media controller found to handle {}", musicCmd);
-                    return;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        // Fallback to the one that would handle the media key event, if any
+                        final MediaSession.Token mediaKeyEventSession = mediaSessionManager.getMediaKeyEventSession();
+                        if (mediaKeyEventSession != null) {
+                            LOG.debug("Got media key event session controller");
+                            controller = new MediaController(context, mediaKeyEventSession);
+                        } else {
+                            LOG.warn("No fallback media controller found to handle {}, dispatching media key event", musicCmd);
+                            broadcastMediaKeyEvent(eventTime, keyCode, audioManager);
+                            return;
+                        }
+                    } else {
+                        LOG.warn("No media controller found to handle {}, dispatching media key event", musicCmd);
+                        broadcastMediaKeyEvent(eventTime, keyCode, audioManager);
+                        return;
+                    }
+                } else {
+                    controller = controllers.get(0);
                 }
 
-                final MediaController controller = controllers.get(0);
+                LOG.debug("Will send {} to media controller for {}", musicCmd, controller.getPackageName());
 
                 switch (musicCmd) {
                     case NEXT:
@@ -152,6 +170,7 @@ public class GBMusicControlReceiver extends BroadcastReceiver {
                     case PLAYPAUSE:
                         final PlaybackState playbackState = controller.getPlaybackState();
                         if (playbackState != null) {
+                            LOG.debug("Current playback state for media controller: {}", playbackState);
                             switch (playbackState.getState()) {
                                 case PlaybackState.STATE_NONE:
                                 case PlaybackState.STATE_STOPPED:
@@ -164,6 +183,7 @@ public class GBMusicControlReceiver extends BroadcastReceiver {
                                     controller.getTransportControls().pause();
                                     return;
                                 default:
+                                    LOG.error("Unknown playback state {}", playbackState);
                                     return;
                             }
                         } else {
@@ -185,10 +205,20 @@ public class GBMusicControlReceiver extends BroadcastReceiver {
         }
     }
 
+    private static void broadcastMediaKeyEvent(final long eventTime, final int keyCode, final AudioManager audioManager) {
+        final KeyEvent downEvent = new KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, 0);
+        audioManager.dispatchMediaKeyEvent(downEvent);
+
+        final KeyEvent upEvent = new KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, keyCode, 0);
+        audioManager.dispatchMediaKeyEvent(upEvent);
+    }
+
     private static void sendPhoneVolume(final AudioManager audioManager) {
         final int volumeLevel = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
         final int volumeMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
         final int volumePercentage = (byte) Math.round(100 * (volumeLevel / (float) volumeMax));
+
+        LOG.debug("Sending volume to phone: {}", volumePercentage);
 
         GBApplication.deviceService().onSetPhoneVolume(volumePercentage);
     }
